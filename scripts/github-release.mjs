@@ -16,8 +16,12 @@
  *  node scripts/github-release.mjs            # 在 plugin/ 下跑；默认从当前分支取代码
  *  node scripts/github-release.mjs --dry-run  # 只校验和构建，不推仓库、不建 Release
  *
- * 流程：校验版本 → build 三件套 → subtree split（只取 plugin/，带历史）→
- * 推公开库 main → gh release create 挂三件套（tag 由 gh 在 main 上建，不单独推）。
+ * 流程：校验版本 → build 三件套 → 以 `<分支>:plugin` 当前内容造提交（父提交 =
+ * 公开库当前 main 顶端，首次为空仓库则无父）→ 推公开库 main → gh release create
+ * 挂三件套（tag 由 gh 在 main 上建）。
+ * 历史策略（2026-10-13 用户拍板）：公开库是**新起点**——第一次提交干净（不带
+ * monorepo 开发史），之后每次发版在上一个提交上正常接续，历史里只有「发布快照」
+ * 一种提交（父链从 Initial commit 起，永不接回 monorepo）。
  * 任何一步失败，已成功的步骤不自动回滚（Release 可手工删），但会明确报出断点。
  *
  * ⚠️ 环境坑（2026-10-12 首发实测）：本机沙箱代理拦 github.com 的 CONNECT（502），
@@ -26,7 +30,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,6 +51,7 @@ function run(cmd, args, opts = {}) {
     cwd: opts.cwd ?? REPO_ROOT,
     encoding: "utf8",
     stdio: opts.silent ? "pipe" : "inherit",
+    env: opts.env ?? process.env,
   });
 }
 
@@ -60,13 +65,17 @@ function step(msg) {
 }
 
 /**
- * git push 专用：剥掉 proxy 环境变量直连。理由见文件头「环境坑」——
- * 沙箱代理拦 github.com 的 CONNECT，gh（api.github.com）不受影响，只有 push 要绕。
+ * git 走 github.com 的命令专用：剥掉 proxy 环境变量直连。理由见文件头「环境坑」
+ * —— 沙箱代理拦 github.com 的 CONNECT，gh（api.github.com）不受影响，push/fetch 要绕。
  */
-function pushDirect(args) {
+function directGit(args, opts = {}) {
   const env = { ...process.env };
   for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) delete env[key];
-  execFileSync("git", ["push", ...args], { cwd: REPO_ROOT, encoding: "utf8", stdio: "inherit", env });
+  return execFileSync("git", args, { cwd: opts.cwd ?? REPO_ROOT, encoding: "utf8", stdio: opts.silent ? "pipe" : "inherit", env });
+}
+
+function pushDirect(args) {
+  directGit(["push", ...args]);
 }
 
 // ── 1. 分支守卫（分支即环境，见文件头） ──────────────────────────────────────
@@ -110,32 +119,58 @@ if (!existsSync(mainJs) || readFileSync(mainJs).length < 10_000) {
 }
 const assets = ["main.js", "manifest.json", "styles.css"].map((f) => join(PLUGIN_DIR, f));
 
-// ── 5. remote 就位 ─────────────────────────────────────────────────────────
+// ── 5. remote 就位（不存在则添加，URL 不对则校正） ──────────────────────────
 let remotes = "";
 try {
   remotes = run("git", ["remote", "-v"], { silent: true });
 } catch {
   fail("不在 git 仓库里？");
 }
-if (!remotes.split("\n").some((l) => l.startsWith(`${REMOTE}\t`))) {
+const remoteLines = remotes.split("\n").filter((l) => l.startsWith(`${REMOTE}\t`));
+if (remoteLines.length === 0) {
   step(`添加 remote ${REMOTE} → ${REMOTE_URL}`);
   run("git", ["remote", "add", REMOTE, REMOTE_URL]);
+} else if (!remoteLines.some((l) => l.includes(REMOTE_URL))) {
+  // 旧仓库名/地址残留（换过 PUBLIC_REPO）：不校正的话 push 会推到已删的旧库
+  step(`校正 remote ${REMOTE} → ${REMOTE_URL}（原指向别的仓库）`);
+  run("git", ["remote", "set-url", REMOTE, REMOTE_URL]);
 }
 
-// ── 6. subtree split + 推送 ────────────────────────────────────────────────
+// ── 6. 发布提交（新起点 + 正常接续历史）+ 推送 ──────────────────────────────
 if (DRY_RUN) {
-  console.log("\n--dry-run：跳过 subtree 推送与 Release 创建。以上校验与构建已通过。\n");
+  console.log("\n--dry-run：跳过提交推送与 Release 创建。以上校验与构建已通过。\n");
   process.exit(0);
 }
-// split 前清掉上次留下的本地分支：-b 遇到已存在的分支会直接失败
+// 为什么不直接用 subtree split：split 会把 monorepo 全部提交历史（几百条、含作者
+// 邮箱）原样推公开库。正确姿势 = 公开库是**新起点**：每次发布以 `<分支>:plugin`
+// 当前树造一个提交，父提交 = 公开库当前 main 顶端（fetch 拿），首次发布仓库为空
+// 则无父 = Initial commit。之后历史正常接续，diff 即两次发布间的真实修改。
+step(`fetch 公开库 main（拿父提交）`);
+let parent = "";
 try {
-  run("git", ["branch", "-D", "plugin-public"], { silent: true });
+  directGit(["fetch", REMOTE, "main"], { silent: true });
+  parent = directGit(["rev-parse", "FETCH_HEAD"], { silent: true }).trim();
+  console.log(`父提交 ${parent.slice(0, 8)}（公开库当前 main 顶端）`);
 } catch {
-  /* 没有旧分支，正常 */
+  console.log("公开库还没有 main（首次发布）→ 造无父的 Initial commit");
 }
-step(`subtree split --prefix=plugin → ${REMOTE}:main`);
-run("git", ["subtree", "split", "--prefix=plugin", "-b", "plugin-public"]);
-pushDirect([REMOTE, "plugin-public:main"]);
+
+const IDX = "/tmp/yl-release-orphan.index";
+try {
+  rmSync(IDX);
+} catch {
+  /* 上次的残留，正常 */
+}
+// GIT_INDEX_FILE 指向临时索引：read-tree 默认写 .git/index，会弄脏用户工作区
+const idxEnv = { ...process.env, GIT_INDEX_FILE: IDX };
+run("git", ["read-tree", `${branch}:plugin`], { silent: true, env: idxEnv });
+const tree = run("git", ["write-tree"], { silent: true, env: idxEnv }).trim();
+const commitArgs = ["commit-tree", tree, "-m", `younglook-japanese ${VERSION}`];
+if (parent) commitArgs.push("-p", parent);
+const commit = execFileSync("git", commitArgs, { cwd: REPO_ROOT, encoding: "utf8", env: idxEnv }).trim();
+console.log(`提交 ${commit.slice(0, 8)}（作者取当前 git config）`);
+// 普通 push（快进）：历史是接续的，不需要 force
+pushDirect([REMOTE, `${commit}:refs/heads/main`]);
 
 // ── 7. Release 挂三件套 ───────────────────────────────────────────────────
 // tag 不单独 git push：gh release create --target main 会在 main 顶端直接建 tag
