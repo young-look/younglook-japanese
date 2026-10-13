@@ -1,0 +1,5116 @@
+/* ══════════════════════════════════════════════════════════════════
+   配色板（2026-10-01 定稿）：**单色相** —— 浅青蓝 193°
+   ──────────────────────────────────────────────────────────────────
+   🔥 全站只有一个色相。**完成 / 通过不再用绿色**
+   （用户 2026-10-01 原话："颜色都改成偏蓝色（主题色），不要绿的了"）。
+   状态之间的差异靠**浓淡层次 + 图形**表达 —— 实心圈 vs 描边圈、勾 vs 数字，
+   而不是靠第二个色相。这才是"紫配绿不协调"的根治办法：不是把两个颜色调近，
+   而是根本不要再有第二个颜色。
+
+   演变：紫 254° + 荧光绿 #3fb950（相距 120°，明度还撞车）
+        → 青蓝 193° + 浅绿 158°（差 35°，同冷色轴）
+        → 只有青蓝（现在）。
+
+   ⚠️ 铁律：**面可以浅，承载文字的那层不能浅。**
+   浅色系用一个色值打天下必然翻车（实测 11px 字只有 2.4:1，读不清），
+   所以每个颜色都分五层，按用途取，不要跨层乱用：
+
+     ink   文字 / 图标          —— 对白底 ≥ 5:1，小字专用
+     mid   细进度条 / 小图形     —— 非文字信息，1.5~2.5:1 够
+     soft  面（小圆点底色等）
+     line  描边 / 虚线
+     tint  极淡底（hero 晕、标签底）
+     halo  卡片边缘的晕圈色（alpha，跟任何主题背景融合）
+     solid 实心底 + 白字（**只给状态指示**，见下）
+
+   ⚠️ 红 / 黄**保留**（判错 = 红、兜底放行 = 黄）：那是"异常"，本来就该跳出来，
+   跟"完成"不是一类信息。全站**彩色**只剩青蓝一个色相 + 这两个异常色。
+
+   ⚠️ 别再引入 var(--interactive-accent)：它会跟着用户 Obsidian 主题的
+   accent 跑，把定死的青蓝冲成紫 —— 正是当初"紫配绿不协调"的来源。
+   中性色（背景 / 文字 / 边框）**继续**用 Obsidian 变量，这样插件的底色
+   始终跟用户主题融合，只有强调色是我们定死的。
+
+   ⚠️ 改完记得重建插件：`npm run build:dev`（样式是源文件 styles.css，
+   不参与 esbuild 打包，但 release/ 下的产物要一起更新）。
+   ══════════════════════════════════════════════════════════════════ */
+:root {
+  /* 青蓝 accent */
+  --yl-acc-ink: hsl(193 66% 32%);      /* #1c7087 · 白底 5.6:1 */
+  --yl-acc-mid: hsl(193 60% 46%);      /* 细条 / 实心小控件 */
+  --yl-acc-soft: hsl(193 64% 72%);     /* 面（完成圈的面 / 小圆点底色） */
+  --yl-acc-line: hsl(193 52% 80%);
+  --yl-acc-tint: hsl(193 62% 95%);     /* #eaf7fa */
+  /* 实心青蓝 + 白字 —— 🔥 **只用于状态指示**：校准已开 / 罗马音已开 / 台词正在播 /
+     助手未读气泡 / 对话气泡。这些是"当前状态"，需要一眼分得开的视觉信号。
+     ⚠️ **不要拿它做按钮悬停**：白字压实心底，底色被 AA 卡在 36%（再亮字就虚），
+        于是"悬停要看得出来"只剩变深一条路，而变深正是用户 2026-09-30 否掉的。
+        按钮统一走描边款，见下方「按钮」区注释。
+     ⚠️ 白字亮度上限 **36%**：40% 只有 4.00:1、38% 只有 4.37:1，都不达标。
+        （早先注释写的「5.6:1」是 --yl-acc-ink 压在白**底**上的值，被抄错到这儿了。） */
+  --yl-acc-solid: hsl(193 62% 36%);        /* #237c95 · 白字 4.78:1 */
+
+  /* （此处原有两个 --yl-acc-solid-hover / --yl-acc-glow，专为"悬停加深"而生。
+      2026-09-30 悬停改为全站中性后失去最后一个使用点，已删 ——
+      留着只是等着被下一个改样式的人捡起来用回去。） */
+
+  /* 完成 / 通过 —— 直接指向主色（2026-10-01 起不再有独立的第二色相）。
+     保留这层名字，只是让"这是完成态"在代码里读得出来：
+     看到 var(--yl-ok-ink) 就知道是"完成态的字色"，而不是随便哪个字色。
+     ⚠️ 别名本体挪到上方 body 块里了 —— var() 是「定义处求值」，放 :root 会让
+        暗色主题拿到的永远是浅色值（2026-10-02 实测），别挪回去。 */
+  /* 完成卡的边缘晕要"整块晕开"才看得出来，所以比 hero 的极淡底浓一档。
+     用 alpha 而不是实色，才能跟着用户的主题背景融合。
+     别拿 --yl-ok-tint 顶替 —— 它只有 95% 亮度，画出来的晕几乎看不见。 */
+  --yl-ok-halo: hsl(193 60% 46% / 0.20);
+
+  /* 原句卡"变了"的那道扫光（2026-10-08，E 方案）。
+     比 ok-halo 浓一档：halo 是躺着不动的晕，扫光只有 1.1s 一闪而过，
+     太淡就白扫了。用 alpha 同上，跟用户主题底融合。
+     ⚠️ 别拿 --yl-acc-tint 顶替 —— 它 95% 亮度，扫过白底等于没扫。 */
+  --yl-sweep: hsl(193 88% 58% / 0.42);
+
+  --yl-on-solid: #ffffff;
+
+  /* 提醒 —— 全站唯一允许的第二色相（与 .yl-warn-text 同源）。
+     只用于"还能继续、但少点东西"的提示（比如少一份中文字幕），
+     **不用于错误**：错误本身拦得住导入，底栏那行字已经说清了。
+     值不是简单取反：暗底上要重新对一遍对比度。 */
+  --yl-warn-ink: hsl(38 92% 28%);
+  --yl-warn-line: hsl(38 70% 72%);
+  --yl-warn-tint: hsl(38 88% 95%);
+
+  /* 判错（未通过）—— 2026-10-09 从"按钮危险态"提升为**状态色**。
+     三步学习卡要在「正解 / 未通过 / 已完成」之间拉开区分度，红必须有自己的一族。
+     ⚠️ 用户原话「做错了，要浅红色」：**浅的是面和描边**，承载文字的字仍取 ink 档
+        （对白底 ≈5:1）—— 沿用顶部那条铁律"面可以浅，承载文字的那层不能浅"。
+     值比旧的 --text-error(#e5534b) / --yl-btn-danger-ink(#cf3d3d) 都柔一档，
+     但不再走那两个变量：它们一个跟宿主主题跑、一个是按钮皮肤，都不是状态口径。 */
+  --yl-bad-ink: hsl(4 58% 45%);        /* 白底 ≈5.0:1 */
+  --yl-bad-line: hsl(4 62% 84%);
+  --yl-bad-tint: hsl(4 76% 97%);
+  /* 卡片边缘的晕（alpha，跟任何主题背景融合）。比 ok-halo 淡一点：红本来就比青蓝抢眼 */
+  --yl-bad-halo: hsl(4 62% 58% / 0.16);
+
+  /* 笔记卡（我的笔记锁态卡 / 大家的笔记卡）的「纸张」投影：
+     静置一层极淡的阴影托起，悬停再抬 2px、阴影加深 —— 见 .yl-nd-locked / .yl-nd-card。
+     ⚠️ 用 alpha 而不是实色，跟任何主题底色融合；暗色在 .theme-dark 里另给一组。 */
+  --yl-note-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 2px 6px rgb(0 0 0 / 0.05);
+  --yl-note-shadow-hover: 0 3px 8px rgb(0 0 0 / 0.08), 0 7px 16px rgb(0 0 0 / 0.08);
+}
+
+/* 暗色主题整套反过来：面更深、字更亮。
+   数值不是简单把亮色取反 —— 暗底上要重新对一遍对比度。 */
+.theme-dark {
+  --yl-acc-ink: hsl(193 62% 72%);
+  --yl-acc-mid: hsl(193 50% 55%);
+  --yl-acc-soft: hsl(193 45% 30%);
+  --yl-acc-line: hsl(193 35% 36%);
+  --yl-acc-tint: hsl(193 38% 17%);
+  --yl-acc-solid: hsl(193 48% 38%);        /* 白字 4.79:1（40% 只剩 4.40:1）*/
+
+  /* ok 系列**不在这里重复定义** —— 它们是指向 --yl-acc-* 的别名，
+     会跟着上面几行自动走暗色。只有 halo 要单独给（alpha 不同）。 */
+  --yl-ok-halo: hsl(193 50% 45% / 0.26);
+  /* 扫光（暗色）：暗底上要降饱和降亮度，否则那道带子白得刺眼、像页面烂了 */
+  --yl-sweep: hsl(193 72% 52% / 0.26);
+
+  --yl-warn-ink: hsl(38 90% 72%);
+  --yl-warn-line: hsl(38 42% 36%);
+  --yl-warn-tint: hsl(38 46% 16%);
+  /* 判错（未通过）暗色版：面更深、字更亮 —— 数值不是简单取反，暗底上要重对对比度 */
+  --yl-bad-ink: hsl(4 72% 74%);
+  --yl-bad-line: hsl(4 40% 40%);
+  --yl-bad-tint: hsl(4 44% 17%);
+  --yl-bad-halo: hsl(4 58% 50% / 0.24);
+  /* E 方案悬停描边（暗色）：比底色浅一档，提对比的方向和浅色主题相反 */
+  --yl-hover-ring: hsl(254deg 12% 34%);
+  /* 按钮皮肤（方案二 · 描边白底）暗色版：只换值，结构不动 */
+  --yl-btn-bg: #262626;
+  --yl-btn-fg: #e8e8e8;
+  --yl-btn-border: #3f3f3f;
+  --yl-btn-shadow: 0 0 transparent;
+  --yl-btn-hover-bg: #303030;
+  --yl-btn-hover-fg: #f2f2f2;
+  --yl-btn-hover-border: #5a5a5a;
+  --yl-btn-press-bg: #3a3a3a;
+  --yl-btn-muted-fg: #b4b4b4;
+  --yl-btn-danger-ink: #f07171;
+  --yl-btn-danger-solid: #c0392b;
+
+  /* 笔记卡的「纸张」投影（暗色版）：暗底上阴影要更深才看得见，字面才不会"贴地" */
+  --yl-note-shadow: 0 1px 2px rgb(0 0 0 / 0.30), 0 2px 6px rgb(0 0 0 / 0.28);
+  --yl-note-shadow-hover: 0 3px 8px rgb(0 0 0 / 0.42), 0 8px 18px rgb(0 0 0 / 0.40);
+}
+
+.yl-study-root,
+.yl-study-view {
+  padding: var(--size-4-2, 8px);
+}
+
+.yl-study-view h3 {
+  margin-top: 0;
+}
+
+/* ── 切片学习视图 ─────────────────────────────────────────────── */
+
+.yl-study-root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  /*
+   * ⚠️ 两侧留白**不在这层**，在里面的 `.yl-study-wrap` 上。
+   *
+   * 这里是 Obsidian 的 `.view-content`，它自带 padding 规则，插件在这层写的
+   * padding 可能被它盖掉 —— 表现出来是"改了样式、重启了 Obsidian，页面一点没变"。
+   * 所以留白交给插件自己包的那一层（见下面的 .yl-study-wrap），由插件说了算。
+   */
+  /* 容器查询的锚点：下面两栏/单栏的断点按**这个视图自己的宽度**判断，
+     不能用 @media —— 那看的是窗口宽度，视图挤在侧边栏里窗口再宽也是窄条，
+     两栏样式会把视频压成 0 宽（实测截图 2026-09-25）。 */
+  container-type: inline-size;
+}
+
+/* 视图里的文字要能选中、能复制。
+   ⚠️ Obsidian 在 `body` 上是 `user-select: none`（只给笔记区 / contenteditable
+   重新放开），插件自绘的视图整片继承到 none —— 表现就是解析出来的释义、语法
+   选不中、复制不了（2026-09-28 用户反馈）。
+   这里把整片视图放开，只把按钮收回：按钮上的字没有复制的意义，
+   放开反而会在拖拽时选出一片高亮。 */
+.yl-study-root {
+  user-select: text;
+  -webkit-user-select: text;
+}
+.yl-study-root button {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/*
+ * 学习卡片的内容包裹层（两侧留白 = 这里的 padding-inline）。
+ *
+ * 为什么单独包一层：见上面 .yl-study-root 的说明 —— 换成一个完全属于插件的元素，
+ * Obsidian 的 .view-content 规则就管不着了。
+ *
+ * ⚠️ 必须 `box-sizing: border-box` + `flex: 1`：这层要撑满 .yl-study-root 的
+ * 内容盒，里面的 .yl-card-grid 才能靠 flex:1 吃掉剩余高度。
+ */
+.yl-study-wrap {
+  width: 100%;
+  box-sizing: border-box;
+  padding-inline: 40px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* 学习内容（顶部导航 + 两栏栅格）共同的限宽旋钮：超宽时全部居中对齐。
+     2026-09-26 用户要求"顶部导航区域也跟下面对齐"。
+     2026-09-27 1280 → 1120：视频要缩到上一版的 80%（详见 .yl-card-grid 的注释）。 */
+  --yl-content-max: 1120px;
+}
+
+.yl-muted-sm {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.yl-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.yl-warn-text {
+  color: var(--color-orange, #d29922);
+}
+
+.yl-invisible {
+  visibility: hidden;
+}
+
+/* ══ 按钮 · 全站统一（2026-10-01 定稿）══════════════════════════════════
+   一套基底、三档语义、两种形状。**插件里每一颗 <button> 都必须挂这里的类**。
+
+   ── 为什么全部写成 `button.yl-*`（0-1-1）─────────────────────────────
+   宿主 app.css 有这条：
+     `button:not(.clickable-icon) { background-color: var(--interactive-normal);
+                                    color: var(--text-color);
+                                    box-shadow: var(--input-shadow) }`  ← 0-1-1
+   任何**单类名**（0-1-0）给 <button> 写的底色 / 字色 / 投影**全部不生效**，
+   只有宿主没声明的 border / border-radius / padding / font-size 能留下来。
+   ⇒ 后果：每颗按钮都是同一个原生底，却各自顶着一圈不同颜色的边框 ——
+     2026-10-01 用户说的"按钮花里胡哨"就是这么来的。改版前实测：
+       .yl-pc-btn        青蓝边 + 药丸 + 5px 16px 内距（宣称的白字/主色底全失效）
+       .yl-pc-btn-solid  本该是实心主色，长得跟上面一模一样（主按钮根本不主）
+       .yl-video-button  灰边 + 6px 圆角 + 26px 方
+       .yl-pc-exit       灰边 + 药丸 + 3px 12px 内距
+       .yl-btn-primary   只剩青蓝边，字色被压成宿主黑字
+       .yl-episode-remove / .yl-assistant-close / .yl-account-trigger
+                         写的 `background: none` 全被压成**原生白底**
+   ⇒ **新增按钮别退回单类名**；只改 border-color 不等于改了外观。
+
+   ── 四条外观纪律 ──────────────────────────────────────────────────
+   1. 🔥 **皮肤全部写死**（2026-10-04 用户拍板「方案二 · 描边白底」）：
+      底 / 字 / 描边 / 悬停全走 `--yl-btn-*` 这一组**写死的值**，
+      **一个宿主变量都不读**（--interactive-* / --text-normal / --input-shadow /
+      --input-height / 宿主字体全不碰）。理由：读宿主变量 = 换平台 / 换主题 /
+      换第三方配色就跟着变，正是"跨平台不一致"的来源。
+      深色主题在 `.theme-dark` 里换一组值 —— 跟随明暗，但不跟随平台。
+   2. 🔥 **描边用真 border**（1px solid `--yl-btn-border`），不再拿宿主那圈
+      inset 投影当描边。真边框跨平台表现一致，也顺手绕开 macOS 上
+      `--input-shadow` 为 `none`、而 `none` 不能出现在 box-shadow 列表中间
+      导致整条声明被静默丢弃的老坑。
+   3. 🔥 **悬停 = 底微亮 + 描边加深**（写死的 --yl-btn-hover-*，120ms 过渡）。
+      锁定态（.yl-locked）不参与悬停 —— 不能装得像能点，且要摁住宿主的
+      button:hover（见下面 .yl-locked 那段的特异性说明）。
+   4. 🔥 **只剩一种按钮**（2026-10-02 用户拍板「彻底统一」）：全站每一颗 <button>
+      都共用上面这套底 —— 不再有"带底药丸 vs 透明幽灵"两种皮。
+      已并入：yl-btn / primary / danger / lg / block、yl-btn-icon、yl-btn-text、
+      yl-assistant-launcher、yl-assistant-send、yl-alert-act、modal-close-button、yl-v3-edit。
+      **两处例外**（别顺手"统一"掉，都是角色决定的）：
+        · 原句卡片的 yl-hero-chip —— 用户明确点名排除，维持淡灰叠层；
+        · yl-hint-link —— 它是**提示句里的一个词**（inline，不是控件），
+          套按钮底会把句子撕成两截；它是"可点的文字"，靠下划线提示（实线=出口，
+          虚线的 `is-dashed`=入口）。
+      形状上的差异（28px 方图标钮 / 46px 悬浮球 / 24px 紧凑药丸 / 满宽导航条）是
+      **角色**定的，不是第二套皮肤。
+   5. 🔥🔥 **颜色也只有一种**（2026-10-02 三轮，用户拿实机截图回来："这些按钮颜色
+      还是不对啊，我让你改成一样啊"）：**主操作不再有 accent 字色 / accent 描边** ——
+      `yl-btn-primary` 与 `yl-btn` 逐像素相同。主次靠**位置与文案**，不靠颜色。
+      ⇒ 全站按钮的字色只有 `--yl-btn-fg` 一种（次要档 yl-btn-text / yl-v3-edit
+        走 --yl-btn-muted-fg）。
+      ⇒ `--yl-acc-*` 从此**只服务状态**：`.is-active` / `.is-on` / `.is-confirming`
+        （以及原句卡片的 hero-chip）—— "现在是什么状态"可以上色，
+        "这是不是主操作"不许上色。**别再加回青字青边。**
+        ═══════════════════════════════════════════════════════════════ */
+:root {
+  --yl-btn-r: 8px;
+  /* 🔥 2026-10-04 跨平台统一：高度**写死 30px**，不再读 --input-height。
+     原先它跟宿主输入框同高（"天然对得齐"），代价是宿主/主题一改这个值，
+     按钮就跟着变高变矮 —— 跨平台不一致的来源之一。 */
+  --yl-btn-h: 30px;
+  --yl-btn-h-lg: 34px;
+  --yl-btn-pad: 0 12px;
+  --yl-btn-fs: 12.5px;
+  /* 🔥 2026-10-04 用户拍板「方案二 · 描边白底」：按钮的底 / 字 / 描边 / 悬停
+     全部**写死**，不再读 --interactive-* / --text-normal / --input-shadow /
+     --input-height / 宿主字体。这样换平台、换主题、换第三方配色，按钮都不走形。
+     深色主题在 .theme-dark 里换一组值（跟随明暗，但不跟随平台）。 */
+  --yl-btn-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --yl-btn-bg: #ffffff;
+  --yl-btn-fg: #2b2b2b;
+  --yl-btn-border: #d9d9d9;
+  --yl-btn-shadow: 0 1px 1px rgb(0 0 0 / 0.02);
+  --yl-btn-hover-bg: #f6f6f6;
+  --yl-btn-hover-fg: #1f1f1f;
+  --yl-btn-hover-border: #b8b8b8;
+  --yl-btn-press-bg: #ededed;
+  /* 次要档的字色（紧凑药丸 yl-v3-edit 等用），同样写死 */
+  --yl-btn-muted-fg: #5d5d5d;
+  /* 危险态：写死的红。别退回 --text-error —— 那是宿主主题色，会被用户配色带跑 */
+  --yl-btn-danger-ink: #cf3d3d;
+  --yl-btn-danger-solid: #cf3d3d;
+  /* E 方案悬停描边 —— 按钮改用真边框后已不依赖它，只剩状态栏同步胶囊在用 */
+  --yl-hover-ring: hsl(254deg 12% 80%);
+}
+/* 完成/通过别名 —— **必须定义在 body 上，不能放 :root**。
+   实测规律（2026-10-02，Chromium）：自定义属性里的 var() 是「定义处求值」——
+   变量在哪个元素上声明，就在哪个元素上解析，解析完的结果原样被后代继承。
+   ok 别名放 :root 会在 html 上就解析成浅色值、原样带进暗色主题（实测）；
+   放 body 上则跟 .theme-dark 对 --yl-acc-* 的覆盖同层，明暗各自求出正确的值。 */
+body {
+  --yl-ok-ink: var(--yl-acc-ink);
+  --yl-ok-soft: var(--yl-acc-soft);
+  --yl-ok-line: var(--yl-acc-line);
+  --yl-ok-tint: var(--yl-acc-tint);
+}
+/* 基底：形状 + 皮肤全部写死（方案二 · 描边白底），一个宿主变量都不读 */
+button.yl-btn,
+button.yl-btn-primary,
+button.yl-btn-danger,
+button.yl-btn-lg,
+button.yl-btn-block {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--yl-btn-h);
+  padding: var(--yl-btn-pad);
+  /* 🔥 2026-10-04：描边改用**真 border**，不再拿 inset 投影当描边。
+     真边框在所有平台表现一致，也顺手绕开了下面那条老坑 ——
+     macOS 上 --input-shadow 是 none，而 `none` 不能出现在 box-shadow 列表中间，
+     整条声明会被静默丢弃（2026-10-02 悬停零反馈的元凶）。改用真边框后这个坑不存在了。 */
+  border: 1px solid var(--yl-btn-border);
+  border-radius: var(--yl-btn-r);
+  background-color: var(--yl-btn-bg);
+  box-shadow: var(--yl-btn-shadow);
+  color: var(--yl-btn-fg);
+  font-family: var(--yl-btn-font);
+  font-size: var(--yl-btn-fs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease, color 120ms ease;
+}
+/* 悬停：底色微亮 + 描边加深。写死的值，跟平台/主题无关。
+   :not(.yl-locked) —— 锁住的按钮悬停保持原样（锁定态不参与悬停） */
+button.yl-btn:hover:not(:disabled):not(.yl-locked),
+button.yl-btn-primary:hover:not(:disabled):not(.yl-locked),
+button.yl-btn-danger:hover:not(:disabled):not(.yl-locked),
+button.yl-btn-lg:hover:not(:disabled):not(.yl-locked),
+button.yl-btn-block:hover:not(:disabled):not(.yl-locked) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+button.yl-btn:disabled,
+button.yl-btn-primary:disabled,
+button.yl-btn-danger:disabled,
+button.yl-btn-lg:disabled,
+button.yl-btn-block:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* 🔥 2026-10-02 三轮：主操作**不再有任何自己的颜色** —— 与 `yl-btn` 逐像素相同。
+   经过：① 用户先令"所有按钮都改成顶栏那排的风格"（当时改的是底与悬停，青字青边留着）；
+         ② 用户拿实机截图回来："这些按钮颜色还是不对啊，我让你改成一样啊"——
+            指的就是这一档的 accent 字色 + accent 描边（核对 / AI 核对 / 开始录音 /
+            导入视频 / 接着学），跟顶栏那排灰按钮不是一个颜色。
+   ⇒ 参照物 = 学习页顶栏：灰底、深灰字、静息无描边。accent 字色与 accent 描边**一并撤掉**。
+   ⇒ 主次从此不靠颜色，靠**位置与文案**（"核对"永远在"提示"左边）。
+   ⚠️ 别自作主张加回来 —— 这件事用户已经说过两轮。真要给某处重新突出（例如
+      "登录 / 注册"），先把提议摆出来问，别拿这一条开刀。
+   ⚠️ accent 语言仍然留给**状态**：`.is-active`（词库筛选器选中）/ `.is-on`（校准开、
+      罗马音开、正在播）/ `.is-confirming`（二次确认删除）—— 那些说的是"现在是什么状态"，
+      跟"这是不是主操作"是两件事，别混。
+   （原是两条规则：`button.yl-btn-primary{color:--yl-acc-ink;box-shadow:inset…--yl-acc-line}`
+    + 一条 hover 的 `--yl-acc-mid` 描边 —— 10-02 三轮**整段删除**。
+    类名保留：TS 里到处在用它标"这是主操作"，将来要恢复主次也是改这里一处。）
+   🔥🔥 **踩过的坑（10-02，务必引以为戒）**：这次编辑时这里少了一对注释收尾，
+      结果下面紧跟的 `button.yl-btn-danger{...}` 被**吞进选择器**整条丢掉 ——
+      不报错、不警告，「移除」按钮于是静默回落到基底的 --text-normal，
+      肉眼几乎看不出来（只差一档灰），是逐按钮读 computed 才抓到的。
+      ⇒ **CSS 注释可以出现在选择器中间**，一个没配对的注释收尾符不会报错，
+        只会把后面的正文一路吞掉。改完 CSS 必须用 `temp/css-audit.mjs` 扫一遍
+        "选择器里有没有中文/注释残片"，别靠肉眼看括号平衡。 */
+/* 危险：静息跟别的按钮**逐像素一样**（10-02 三轮，连 --text-muted 也撤了 ——
+   用户要的是"只剩一种按钮"，浅一档的灰同样是"颜色不一样"）；
+   hover 才显红，点了进入"再点一次真删"的红底态（那是状态，不是主次）。
+   ⚠️ 红也写死（--yl-btn-danger-*），别退回 --text-error（宿主主题色）。 */
+button.yl-btn-danger:hover:not(:disabled) {
+  color: var(--yl-btn-danger-ink);
+}
+/* 确认删除：底色走写死的错误红，字直接给白色 ——
+   不要用 var(--text-on-accent)（用户主题的 accent 是浅色时它会变成深字） */
+button.yl-btn-danger.is-confirming,
+button.yl-btn-danger.is-confirming:hover:not(:disabled) {
+  color: #fff;
+  background-color: var(--yl-btn-danger-solid);
+  border-color: var(--yl-btn-danger-solid);
+}
+/* 选中态（分段筛选器 / 开关组）：比 `is-on`（实心，留给"正在跑"的状态）轻一档 ——
+   tint 面 + line 描边 + ink 字。一眼看得出选了哪个，又不至于抢过主操作。 */
+button.yl-btn.is-active,
+button.yl-btn-lg.is-active {
+  color: var(--yl-acc-ink);
+  background-color: var(--yl-acc-tint);
+  border-color: var(--yl-acc-line);
+  font-weight: 600;
+}
+button.yl-btn-primary.is-active { color: var(--yl-acc-ink); }
+/* 选中态悬停必须还是选中态：通用 hover 的中性描边不许盖掉 accent 选中语言 */
+button.yl-btn.is-active:hover:not(:disabled),
+button.yl-btn-lg.is-active:hover:not(:disabled) {
+  color: var(--yl-acc-ink);
+  background-color: var(--yl-acc-tint);
+  border-color: var(--yl-acc-line);
+}
+/* 「开着的开关」类：校准已调过 / 罗马音已开 —— 实心主色是**状态指示**，
+   不是装饰，所以不给 hover 加深（仍走通用的底变化） */
+button.yl-btn.is-on,
+button.yl-btn-danger.is-on,
+button.yl-btn-icon.is-on {
+  color: var(--yl-on-solid);
+  background-color: var(--yl-acc-solid);
+  border-color: var(--yl-acc-solid);
+}
+button.yl-btn-icon.is-on:hover:not(:disabled) {
+  color: var(--yl-on-solid);
+  background-color: var(--yl-acc-solid);
+}
+/* 大号 / 满宽：只放大，**形状语言不变** */
+button.yl-btn-lg { height: var(--yl-btn-h-lg); padding: 0 18px; font-size: 13.5px; }
+button.yl-btn-block { width: 100%; }
+
+/* 纯文字钮：次要出口（"手动记一笔"、"更换"、"返回上一步"、账号气泡里的"去充值/退出登录"）。
+   🔥 2026-10-02 用户拍板「彻底统一，只剩一种按钮」：跟 yl-btn **同底同高同圆角**，
+      不再靠"透明无底 + 悬停才冒出虚下划线"表达次要 —— 次要现在只由**字色**承担
+      （--text-muted，指上去才升到 --text-normal）。
+      ⚠️ 原先的 `text-decoration: underline dotted` 一并去掉：它已经是一颗按钮了，
+         再挂下划线等于两套"能点"的暗示叠在一起（跟 yl-btn 的观感也不一致）。
+   2026-10-04：皮肤跟 yl-btn 一起改成写死值（方案二 · 描边白底），逐像素相同。 */
+button.yl-btn-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--yl-btn-h);
+  padding: var(--yl-btn-pad);
+  border: 1px solid var(--yl-btn-border);
+  border-radius: var(--yl-btn-r);
+  background-color: var(--yl-btn-bg);
+  box-shadow: var(--yl-btn-shadow);
+  /* 10-02 三轮：字色由 --text-muted 提回 --text-normal —— 次要档不再靠"浅一档的灰"
+     表达，全站按钮的字色也是同一个值（用户令「改成一样」）。 */
+  color: var(--yl-btn-fg);
+  font-family: var(--yl-btn-font);
+  font-size: var(--yl-btn-fs);
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease, color 120ms ease;
+}
+button.yl-btn-text:hover:not(:disabled) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+button.yl-btn-text:disabled { opacity: 0.55; cursor: default; }
+
+/* 提示语行内的可点词（「充值」/「内置模型」，见 views/study/hintText.ts）。
+   ⚠️ 2026-10-02「只剩一种按钮」**不适用于它**：它是**句子里的一个词**（display:inline、
+      字号行高全继承所在提示行），不是一颗独立控件 —— 套上按钮底会把提示句撕成两截。
+      它是"可点的文字"，不是"按钮"，所以保持下划线这条线索。
+   常驻下划线 —— 2026-10-02 用户口径："充值两个字要留一个下划线，表示它是可以
+   点击的"，而且跳充值页只能发生在点它这一下，界面不许自己跳。字色字号都继承
+   所在提示行（灰提示里是灰字、警告色里跟着变橙），不另起一套颜色。
+   2026-10-03：类名由 `yl-hint-recharge` 改成中性的 `yl-hint-link` —— 同一个位置
+   现在也放「内置模型」（虚线版），再叫 recharge 就是骗人。
+   ⚠️ 它必须在 styles.css:222 那份「入口清单」里同步改名，别只改一头。 */
+button.yl-hint-link {
+  display: inline;
+  height: auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* 虚线版（2026-10-03）：「可以点」但不是「必须点」的入口（如「内置模型」）。
+   实线是出口、虚线是入口 —— 同一句话里两者的分量本来就不一样。 */
+button.yl-hint-link.is-dashed {
+  text-decoration-style: dashed;
+}
+button.yl-hint-link:hover:not(:disabled) {
+  color: inherit;
+  background-color: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+/* ⚠️ 悬停那条会补回实线，虚线版必须自己再声明一次 —— 否则鼠标一上去就变实线，
+   看着像"悬停把入口升级成出口了"。特异性靠多一个类压过去。 */
+button.yl-hint-link.is-dashed:hover:not(:disabled) {
+  text-decoration-style: dashed;
+}
+
+/* 方形图标钮：关闭 / 返回 / 播放这类只有一个图标的。
+   🔥 2026-10-02 用户拍板「彻底统一，只剩一种按钮」：外观整体并入 yl-btn 基底 ——
+      同底色、同圆角、同描边悬停；跟 yl-btn 只差**尺寸（28px 方）与内容（纯图标）**，
+      不再是"两种按钮"（带底药丸 vs 透明幽灵）。
+   2026-10-04：跟 yl-btn 一起改成写死皮肤 + 真边框（方案二 · 描边白底）。 */
+button.yl-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--yl-btn-border);
+  border-radius: var(--yl-btn-r);
+  background-color: var(--yl-btn-bg);
+  box-shadow: var(--yl-btn-shadow);
+  color: var(--yl-btn-fg);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease, color 120ms ease;
+}
+/* 悬停：底微亮 + 描边加深。:not(.is-on) —— 开着的实心状态钮不长中性描边 */
+button.yl-btn-icon:hover:not(:disabled):not(.is-on) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+button.yl-btn-icon svg { width: 16px; height: 16px; }
+/* 小号的（贴在标题行里不该比标题还壮） */
+button.yl-btn-icon.is-sm { width: 22px; height: 22px; }
+button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
+
+/* ── 状态栏的同步小提示（裸排，不套壳）──
+   Obsidian 自带的 Sync 核心插件在插件加载时会被关掉（见 main.ts
+   disableObsidianSync），状态栏里关于"同步"的灯只剩这一颗。
+   颜色只说最近一次推送的结局：青蓝勾=成功，红=失败，灰=还没推过/推送中；
+   未登录时这颗灯不出现 —— 本地功能免费，没连账号的人不该顶着一盏灯过日子。 */
+.yl-sync-status {
+  cursor: pointer;
+  background: none;
+  border: none;
+  box-shadow: none;
+  /* 顶满整条：用负外边距抵消 .status-bar 容器自带的内边距，
+     hover 高亮才能铺到外框边上，而不是缩在里圈留一圈白边 */
+  margin: calc(-1 * var(--size-4-1)) calc(-1 * var(--size-4-2)) calc(-1 * var(--size-4-1)) 0;
+  padding: calc(var(--size-4-1) + 3px) var(--size-2-2);
+}
+.yl-sync-status:hover {
+  background: var(--background-modifier-hover);
+  /* 右侧贴着状态栏的圆角外框，右侧跟着圆，左侧平直像一条整体分段 */
+  border-radius: 0 var(--status-bar-radius) var(--status-bar-radius) 0;
+}
+.yl-sync-icon {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 5px;
+}
+.yl-sync-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.yl-sync-icon-ok {
+  color: var(--yl-ok-ink);
+}
+.yl-sync-icon-bad {
+  color: var(--text-error, #e5534b);
+}
+/* 「云同步已暂停」那颗 = 警示黄（与存储页那条提醒带同色）。
+   为什么不用 --yl-sync-icon-bad 的红：余额用尽不是故障 —— 学习功能一切照旧、
+   数据都在本机，只是云端那份停在原地等充值。红是"出错了"的语义，用在这儿会
+   让人以为数据坏了。 */
+.yl-sync-icon-warn {
+  color: var(--yl-warn-ink);
+}
+.yl-sync-icon-idle {
+  color: var(--text-faint);
+}
+/* 推送中的转圈：让"同步中"看起来在动，而不是又一个静态图标 */
+.yl-sync-spin svg {
+  animation: yl-spin 1.2s linear infinite;
+}
+@keyframes yl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 选集页 */
+/* 留白 + 滚动：与学习页同款（外层 .yl-study-root 8px + 本层 40px = 左边缘 48px）。
+   ⚠️ 顶部不补内边距：顶栏按钮行（标题/导入/账号位）要跟学习页、个人中心的
+   .yl-card-header 落在**同一水平线**（2026-10-03 用户反馈：切页时鼠标得上下找按钮）。
+   三个页面的顶距统一只由 contentEl 的 8px 决定，这里再垫 16px 就高出一截。 */
+.yl-list-root {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 0 40px 40px;
+}
+/* 内容限宽 1120：与学习页 --yl-content-max 同一档（2026-10-02 用户拍板，原 860） */
+.yl-list-wrap {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+.yl-list-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* 顶栏（logo + 按钮）跟下面的概览数字拉开一档距离（2026-10-04 用户反馈）；
+     拉开后仍嫌大，当晚再收 30%：20 → 14。 */
+  margin-bottom: 14px;
+}
+/* 顶栏按钮顶端对齐行首 —— 不同页面右上角的按钮要落在同一个位置（2026-10-04 用户）：
+   学习页/个人中心的 .yl-card-header 行高就是按钮的 30px，选集页品牌徽标 56px，
+   按钮若跟着居中会比别的页面低约 13px，切页时按钮跳位。顶端对齐后中心点逐像素重合。 */
+.yl-list-header > button { align-self: flex-start; }
+/* 品牌区（2026-10-04 定稿 = temp/demo/home 方案2 双行徽标）：海獭线稿**裸放**，
+   不加圆角边框/底色（用户拍板）。中文在上、英文小字大字距在下。
+   两轮放大定稿（36→43→56 / 14.5→17.5→22 / 9.5→11.5→13），当页门面。 */
+.yl-list-header h3.yl-brand {
+  margin: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  font-weight: 600;
+  /* 整块可点：打开官网（点击绑定见 StudyView.buildList 的 brand.onclick） */
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+/* 只给一点透明度反馈，别的都不动：海獭徽标是用户拍板过的"裸放不加边框/底色"，
+   悬停冒描边或换底会破坏那条定稿；也不加位移，免得跟右侧按钮的顶端对齐打架。 */
+.yl-list-header h3.yl-brand:hover {
+  opacity: 0.72;
+}
+.yl-brand-mark {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  display: block;
+}
+/* 黑线稿在深色主题下会隐形：整体反色，透明底不受影响 */
+.theme-dark .yl-brand-mark {
+  filter: invert(1);
+}
+.yl-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.yl-brand-cn {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.yl-brand-en {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+/* 横条：圆角跟学习页卡片统一到 12；底纹取消，靠描边承担分块 */
+.yl-episode-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  margin-bottom: 8px;
+  background: transparent;
+}
+.yl-episode-info {
+  flex: 1;
+  min-width: 0;
+}
+.yl-episode-title {
+  font-weight: 500;
+  font-size: 13.5px;
+}
+.yl-mini-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  margin-top: 6px;
+  max-width: 280px;
+  overflow: hidden;
+}
+.yl-mini-progress-fill {
+  height: 100%;
+  background: var(--yl-acc-mid);
+  border-radius: 999px;
+}
+
+/* 卡片骨架 */
+.yl-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  /* 跟两栏栅格一起限宽居中（⚠️ 列向 flex item，width:100% 不能省，否则塌成 fit-content） */
+  width: 100%;
+  max-width: var(--yl-content-max, 1280px);
+  margin-inline: auto;
+}
+.yl-card-title {
+  flex: 1;
+  min-width: 200px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+/* 个人中心页签下的灰色小字说明（词库 / 存储，2026-10-04）。
+   站在标题行**外面**、正文**上面**：标题行的几何一个像素不动，
+   被往下挤的是正文。限宽与 .yl-card-header 同一套，左缘跟「个人中心」对齐。 */
+.yl-card-sub {
+  display: none;
+  width: 100%;
+  max-width: var(--yl-content-max, 1280px);
+  margin-inline: auto;
+  margin-bottom: 8px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.yl-card-sub.on { display: block; }
+.yl-card-nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* 页签组/功能钮与出口钮之间的切分线：出口是动作、不是又一个目的地，
+   别让它排在功能钮中间（个人中心 / 学习页标题行，2026-10-04）。 */
+.yl-card-nav-sep {
+  width: 1px;
+  height: 18px;
+  align-self: center;
+  margin: 0 5px;
+  background: var(--background-modifier-border);
+}
+.yl-progress-row {
+  /* 悬停时间气泡的锚点（气泡是 absolute，靠 left 定位到指到的那一格上方） */
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  /* 跟两栏栅格一起限宽居中（同 .yl-card-header） */
+  width: 100%;
+  max-width: var(--yl-content-max, 1280px);
+  margin-inline: auto;
+}
+.yl-progress {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+/*
+ * 色块轨道：条的内层，专门负责裁圆角。
+ *
+ * ⚠️ 为什么拆出这一层（10-02 实机 bug 修的）：原先 `overflow: hidden` 挂在 .yl-progress 上，
+ *    于是三处标记（游标 / 悬停段 / 残留回标）要么被裁掉一截（首末格少 1~2px），
+ *    要么就得搬到条外那一行去 —— 搬出去后纵向位置只能靠 JS 量
+ *    `barRect.top - rowRect.top` 算，而卡片刚建、行还没完成布局时量到的值是错的，
+ *    标记就飘到了条的**上方**（用户实机截图）。
+ * 现在：裁切交给内层轨道，标记留在条里当兄弟，纵向对齐由下面的
+ * `top: 0; bottom: 0` 纯CSS 完成，横向用百分比 —— 全程不量 rect，布局时序不再有影响。
+ */
+.yl-progress-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+/*
+ * 悬停反馈不是整条描边，而是"鼠标指到的那一句"那一段亮起来（2026-10-02 用户改口径）。
+ * 位置与宽度由 StudyView.placeProgressMarkAt 现算（格中心 + max(5px, 一格宽%）），
+ * 所以鼠标跨过格边界就是整段跳一格 —— 不打任何补间，跳跃式。
+ *
+ * 四个细节：
+ *  · ⚠️ `top: 0; bottom: 0` —— 纵向对齐**必须**由 CSS 承担。别用 JS 量条在行内的位置
+ *    再写 `top`（"一次性测量"）：布局时序一变就飘，10-02 实机踩过。
+ *  · 宽度**不在 CSS 里写死** —— 由 JS 写 `max(5px, 100/total %)`：
+ *    三处标记（游标 / 悬停段 / 残留回标）永远同宽，且窗口拖宽变窄会自动跟随；
+ *  · 蓝色 `--yl-acc-mid`：与当前句游标同色相，用户明确要"移动时也是蓝色"；
+ *  · 内白描边：指到**已学**那一段时底下本来就是同一个青蓝（`--yl-acc-mid`），
+ *    光靠底色分不出来，加一道很轻的白边让"指到了"看得见。
+ */
+.yl-progress-hover {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  transform: translateX(-50%);
+  background: var(--yl-acc-mid);
+  box-shadow: inset 0 0 0 1px hsl(0 0% 100% / 0.45);
+  pointer-events: none;
+  z-index: 5;
+}
+/*
+ * 悬停时间气泡：浮在"指到的那一格"正上方，写这一句的时间（用户指定格式 00:00:00）。
+ *
+ * ⚠️ 它挂在 `.yl-progress-row` 上，**不搬进进度条** —— 气泡要浮到条**上方**，
+ *    搬进条里就得连裁切/层级一起处理，纵向定位反而更绕。
+ * 位置由 StudyView.placeProgressTip 现算并收边（首/末格不越界），这里只负责长相。
+ * 阴影用自带 alpha 的 hsl，不引宿主变量 —— 免得踩 --input-shadow 为 none 那类坑。
+ */
+.yl-progress-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px hsl(0 0% 0% / 0.16);
+}
+.yl-progress-run {
+  height: 100%;
+  flex-basis: 0;
+}
+.yl-progress-done {
+  background: var(--yl-acc-mid);
+}
+/*
+ * 当前句游标：**蓝色**（用户 10-02 改口径）。
+ *
+ * 为什么不是黑：残留回标 `.yl-progress-mark` 是黑的（那是"刚刚离开的地方"），
+ * 两者同色的话鼠标一移开就分不清谁是当前、谁是残留。
+ *
+ * 为什么用 `--yl-acc-solid` 而不是悬停段那个 `--yl-acc-mid`：
+ * 已学段本身就是 `--yl-acc-mid`，游标要是也用它，压在已学段上完全看不出位置。
+ * `--yl-acc-solid`（hsl 193 62% 36%）比它深一档，同色相但明度差得开。
+ *
+ * ⚠️ 元素挂在 **.yl-progress（条）里**，与 .yl-progress-track 同级当兄弟（同悬停段）：
+ * 裁圆角交给内层轨道，条本身不裁，所以首/末格不会被削掉。
+ * 纵向靠 `top: 0; bottom: 0` 由 CSS 对齐条（**不要**用 JS 量 rect 写 top，10-02 实机踩过）；
+ * 横向 left 与宽度由 StudyView.placeProgressMarkAt 写成百分比 / `max(5px, 一格%)`，
+ * 居中靠 `transform: translateX(-50%)` —— 宽度会变时减常数就永远对不上格中心。
+ */
+.yl-progress-cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  transform: translateX(-50%);
+  background: var(--yl-acc-solid);
+  pointer-events: none;
+  z-index: 3;
+}
+/*
+ * 误跳回标：点进度条跳走之前，在"原来那一句"那一格留一枚**黑**标，10 秒内慢慢淡出。
+ * 用途是给用户留回头路 —— 手滑点到别处，一眼还能看见自己刚待在哪、点得回去。
+ *
+ * 为什么是黑：与当前句游标（深蓝）刻意区分 —— 同色的话鼠标一移开就分不清
+ * 哪个是"现在"、哪个是"刚刚离开的地方"（用户 10-02 明确要求）。
+ *
+ * 四个要点：
+ *  · 挂在 .yl-progress 里（与轨道同级的兄弟）；每次留标**新建**一个——
+ *    淡出是 CSS 动画，被摘掉重插会重置计时，所以不复用节点；
+ *  · 纵向 `top: 0; bottom: 0` 由 CSS 对齐条，横向 left/width 由
+ *    StudyView.placeProgressMarkAt 写百分比（相对条宽，不会被行内文字带偏）；
+ *  · 宽度与游标、悬停段同源（`max(5px, 一格%)`）：三处永远同宽；
+ *  · 淡出用 CSS 动画，JS 另有 10s 定时器兜底移除（标签页隐藏时动画会停）。
+ */
+.yl-progress-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--text-normal);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 4;
+  animation: yl-progress-mark-fade 10s linear forwards;
+}
+@keyframes yl-progress-mark-fade {
+  from {
+    opacity: 0.85;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.yl-card-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  overflow-y: auto;
+}
+/* 左栏：视频按栏宽铺满（16:9），**解析区吃掉剩下的空间**（解析是学习主体） */
+.yl-left-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* 右栏可以滚，但滚动条不显示（2026-10-02 用户要求）：细滚动条压在卡片边缘
+   显得脏。滚动能力不动，只藏指示条 —— Obsidian 桌面端是 Chromium，两条都要。 */
+.yl-right-col {
+  scrollbar-width: none; /* Firefox */
+}
+.yl-right-col::-webkit-scrollbar {
+  display: none; /* Chromium / WebKit */
+}
+/*
+ * ⚠️ 断点**不跟着留白往上抬**（改留白时也别顺手改它）。
+ *
+ * 看着"应该"抬：留白把栅格挤窄了 80px，抬 80 就能让左栏宽度维持原样。
+ * 但实测那样更糟 —— 1002px 的视图会被推到单栏，视频一下子从 490 宽变成 904 宽
+ * （高度 276 → 509），解析区露出反而从 77% 掉到 33%。
+ * 这个页面排在第一位的是"解析区尽量多露出来"，而**留在两栏**才是让它露出来的关键：
+ * 左栏窄一点 → 视频按 16:9 更小 → 解析往上走。所以宁可左栏窄，也不抬断点。
+ */
+@container (min-width: 950px) {
+  .yl-card-grid {
+    /*
+     * 🔥 视频想变小只能走这里：右栏每次都顶满 max(30rem=480)，左栏拿走剩下全部，
+     * 视频宽度 = 左栏宽 —— 抬右栏的 min 没用（2026-09-26 实测：右栏本来就吃到 480）。
+     * 所以给**整个栅格**限宽 + 居中：右栏卡片保持 480 不变，左栏（视频+解析卡，等宽）
+     * 一起缩，两侧空出来就是留白。
+     *
+     * 2026-09-27 用户要求"画面再缩到现在的 80%，右栏不变，两侧留白再大一点，让底部解析卡多露出来"
+     * → 限宽 1280 → 1120（1120 - 480 - 14 = 626，视频 784 → 624 ≈ 80%；16:9 高度 441 → 351，
+     *   解析卡因此多露出 ~90px；1512 窗口两侧留白 116 → 196）。
+     * 想再小/大只动 .yl-study-wrap 上的 --yl-content-max 一个变量（顶部导航两行共用）。
+     * ⚠️ width:100% 不能省：本层是列方向 flex（.yl-study-wrap）的 item，只写
+     * margin-inline:auto 会塌成按内容宽（实测栅格缩到 796、视频只剩 300）——
+     * 和下面 .yl-video-panel 是同一个坑。
+     */
+    width: 100%;
+    max-width: var(--yl-content-max, 1280px);
+    margin-inline: auto;
+    grid-template-columns: minmax(0, 1fr) minmax(330px, 30rem);
+    overflow: hidden;
+  }
+  .yl-left-col,
+  .yl-right-col {
+    overflow-y: auto;
+    min-height: 0;
+  }
+}
+
+@container (max-width: 949.5px) {
+  /* 窄面板：40px 侧留白会把正文挤没（与原型 @container 949.5 同源） */
+  .yl-list-root {
+    padding-inline: 24px;
+  }
+  /* 单列时左栏拆开排：视频 → 练习 → 解析区（词表是回头查的，不占练习前的位置） */
+  .yl-left-col {
+    display: contents;
+  }
+  .yl-video-panel {
+    order: 1;
+  }
+  .yl-right-col {
+    order: 2;
+  }
+  .yl-analysis {
+    order: 3;
+  }
+}
+
+/* 视频 */
+.yl-video-panel {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+  margin-bottom: 10px;
+  /*
+   * ⚠️ 这里**不能**写 overflow: hidden —— 时间校准浮层挂在控制条里的按钮上、
+   * 要溢出到面板下方，一裁就整个看不见（2026-09-28）。视频画面的四角改由
+   * .yl-video-box 自己裁（见下），面板自己的背景与圆角不受影响。
+   */
+  /* 视频让位给下面的解析区：解析是本插件的学习主体，画面只用来"看这一句怎么演的" */
+  flex: 0 0 auto;
+  /* ⚠️ 显式 border-box：下面要写 width:100%，content-box 下 1px 边框会额外加上去，
+     整块面板比解析卡片宽 2px、右边缘差一丝（实测 510 vs 508）。 */
+  box-sizing: border-box;
+  /*
+   * 高度上限 —— **比例安全**地写。
+   *
+   * ⚠️ 别再写成 `max-height`：只压高度时浏览器会保留整栏宽度、把画面压扁
+   * （object-fit: contain 顶上左右两条黑边）。实测 1440 宽的栏里旧写法得到
+   * 944×500 = 比例 1.888，而 16:9 是 1.778 —— 就是"视频好扁"的来源。
+   * 把高上限换算成宽度上限（高 × 16/9）就永远破不了 16:9：够宽时按栏宽铺满，
+   * 超过上限就**整块等比缩小并居中**。
+   *
+   * ⚠️ 这个上限必须**足够高，平时够不着**：一旦它生效，视频就比下面的解析卡片窄，
+   * 用户明确要求的那条"等宽对齐"当场破掉（实测上限设成 46vh/430 时，1440 的栏里
+   * 视频只有 764 而卡片 866，两边各差 100px）。所以取 60vh / 620px —— 真要生效
+   * 得是 2000px 以上的栏，那时宁可牺牲等宽也不能让画面吃满整屏。
+   * （2026-09-26 栅格加了限宽居中后，左栏最宽只有 ~626（2026-09-27 从 786 再收到 626），
+   *   这条 vh 封顶只在视口矮于 ~590 时才会先碰到 —— 矮窗口下视频会比解析卡略窄。）
+   *
+   * ⚠️ 居中必须用 `align-self: center` + **显式 `width: 100%`**，不能只写
+   * `margin-inline: auto`：这是**列方向**的 flex 容器（.yl-left-col 是
+   * flex-direction: column），`margin-inline: auto` 会让这个 item 从"被拉伸铺满"
+   * 塌成"按内容宽" —— 实测视频掉到 343px，跟解析卡片立刻不等宽。
+   * `width: 100%` 顶住拉伸，`max-width` 再封顶，两者一起才对。
+   */
+  width: 100%;
+  max-width: calc(min(60vh, 620px) * 16 / 9);
+  align-self: center;
+}
+.yl-video-box {
+  position: relative;
+  /*
+   * ⚠️ width: 100% 不能省（2026-09-25 用户截图 + 无头浏览器实测）：
+   * 只写 aspect-ratio + max-height 时，Chrome 会**拿被 max-height 夹住的高度反推宽度**，
+   * 画面只占栏宽的 43%（1002px 的栏里只有 427px，右边空出一大片），用户报"视频太小"。
+   * 写成 100% 才会按栏宽铺满。
+   */
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /*
+   * 画面自己的圆角与裁切：面板那层不能再写 overflow: hidden（校准浮层要从那里溢出），
+   * 视频的黑底四角就靠这里收。半径 11px = 面板 12px 圆角 − 1px 边框。
+   */
+  border-radius: 11px 11px 0 0;
+  overflow: hidden;
+}
+.yl-video-box video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/*
+ * 暂停提示：画面中央的播放图标（高约视频区的 20%）。
+ * 切句后视频一定是停着的，图标告诉用户"从这里开始，要你自己点"。
+ * 只做视觉 —— pointer-events:none 让点击穿透到画面（点它 = 点播放），
+ * 显隐由 refreshClipControls 按暂停态切换（.yl-on）。
+ */
+.yl-video-playhint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  color: #ffffff;
+}
+.yl-video-playhint.yl-on {
+  opacity: 1;
+}
+.yl-video-playhint svg {
+  height: 20%;
+  width: auto;
+  max-width: 45%;
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.55));
+}
+/*
+ * 自建的播放控制条。
+ * 刻意不用原生 controls：那条读的是**整个文件**的时长（3 分多钟），
+ * 用户会以为"切片没生效"；而且句尾之后原生播放键按下去没反应。
+ * 详情见 src/services/clipPlayback.ts 的文件头。
+ */
+.yl-video-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+/* 播放 / 重看 / 静音 / 校准：统一图标钮（见顶部「按钮」区），不再单独一套。
+   「有偏移」的体态 = `yl-btn-icon is-on`（实心主色，属状态指示）。 */
+
+/*
+ * 时间校准：按钮 + 浮层共用的定位锚。
+ * 浮层以这个锚为参照（right:0 就是贴着校准按钮的右边缘），所以控制条里前后
+ * 增删别的控件都不会让浮层跑偏 —— 不必去数「静音按钮多宽、间距多少」。
+ */
+.yl-calib-anchor {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+/*
+ * 时间校准浮层：从按钮正下方弹出（2026-09-28 用户要求"明显是从按钮这里弹出"）。
+ *
+ * ⚠️ 定稿前的两条弯路别再踩：
+ *  ① 挂在右栏三步练习下面 —— 离按钮老远，用户找不到（原话"不要放到老远的地方"）；
+ *  ② 挂进控制条、靠 right 数值对齐按钮 —— 数值要跟着控制条的内边距/按钮宽度一起
+ *     算，动一个就偏；现在改成锚在按钮自己身上（见上 .yl-calib-anchor）。
+ * 位置在**视频下方、盖住解析区顶部**，不是盖在画面上 —— 校准要盯着画面判断，
+ * 浮层不能挡掉要看的那一帧。
+ */
+.yl-calib-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 280px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+}
+.yl-calib-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.yl-calib-spacer {
+  flex: 1 1 auto;
+}
+.yl-calib-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* 按钮不许被压缩：窄栏里宁可换行，也别把「−0.5 秒」挤成两行 */
+.yl-calib-row button.yl-btn {
+  flex: 0 0 auto;
+}
+/* 说明那一句：跟按钮拉开一点，别让人误以为也是能点的 */
+.yl-calib-note {
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.yl-calib-value {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+.yl-calib-value-on {
+  color: var(--yl-acc-ink);
+  font-weight: 500;
+}
+
+/*
+ * 「笔记」按钮的"有东西"下划线（2026-10-05 调参台定稿参数，原样沿用）：
+ * 这句写过笔记 → 按钮文字下挂一条比主题青浅一档、65% 微透的下划线。
+ * ⚠️ 别"归一化"回 --yl-acc-ink —— 变浅变透正是用户嫌深色难看之后特意调的。
+ */
+.yl-card-nav button.has-note {
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: hsl(193 55% 61% / 0.65);
+  text-decoration-thickness: 3.5px;
+  text-underline-offset: 1.5px;
+}
+
+.yl-clip-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--yl-acc-solid);
+  cursor: pointer;
+}
+.yl-clip-slider:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.yl-clip-clock {
+  flex: 0 0 auto;
+  min-width: 84px;
+  text-align: right;
+}
+.yl-video-controls button.yl-btn-text {
+  flex: 0 0 auto;
+}
+.yl-video-error {
+  padding: 8px 12px;
+  color: var(--text-error, #e5534b);
+  font-size: 12px;
+}
+.yl-video-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 8px;
+}
+
+/* 解析区：**一张卡片** —— 顶上一行「AI 解析」按钮 + 提示；解析后卡片内部冒出
+   一根灰色分界线，线下是打字机输出的「解读」，分四段各带小标题
+   （核心单词 / 核心语法 / 使用场景 / 口语与书面语）。
+   ⚠️ 外面这层（.yl-analysis）只负责排布与滚动，**卡片本身是 .yl-analysis-block**。
+   逐词释义不在卡上列，改由句子卡片上的词点击弹卡展示（见下方 .yl-wordpop）。 */
+.yl-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.yl-analysis-block {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 不许被压扁：里面是分界线 + 解读文本，压扁了就只剩一条缝 */
+  flex: 0 0 auto;
+}
+/* 动作行：AI 解析按钮 + 费用/状态提示。按钮管的就是下面那块解读，所以同一张卡。 */
+.yl-analysis-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.yl-analysis-toolbar button.yl-btn {
+  flex: 0 0 auto;
+}
+.yl-analysis-toolbar .yl-analysis-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.yl-analysis-translation {
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+/* 解析后出现的灰色分界线：把"按钮"与"解读"分开。很弱，只是一道分隔 */
+.yl-analysis-divider {
+  height: 1px;
+  background: var(--background-modifier-border);
+  margin: 2px 0;
+}
+/* 解读：两段（核心单词 / 核心语法）各带小标题，打字机逐节吐字。
+   ⚠️ 小标题用 accent（不是灰）——它是"这块讲什么"的路标，两段并排时会连着
+   出现，全做成灰色就是两条一模一样的细线，扫读时反而找不到分段。
+   没内容的段压根不会被建出来（JS 侧筛），所以这里不用管空段的间距。 */
+.yl-analysis-explanation {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 🔥 2026-10-09：解读还没生成时，这一层是**空壳也必须整层收起**。
+   父级 .yl-analysis-block 是 flex 列 + gap: 8px，空 div 照样算一项 ——
+   于是它在按钮下面白占一个 8px 间距，卡片"上紧下松"，按钮那一行看着不垂直居中
+   （实机 2x 截图实测：卡片上间距 10.5px、下间距 18.5px，按钮中线比卡片中线高 4px）。
+   `:empty` 只认"一个子节点都没有"，而它平时就是 createDiv() 出来的空 div、
+   流式分节全由 pushFields 挂进来 ⇒ 一有内容立刻自动显示，TS 里不用手动 show/hide。
+   ⚠️ 别改成 margin-top:-8px 之类的抵消写法：那只是把偏差藏起来，
+   一旦以后新增兄弟节点，间距口径又对不上。 */
+.yl-analysis-explanation:empty {
+  display: none;
+}
+.yl-analysis-section-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--yl-acc-ink);
+  letter-spacing: 0.02em;
+  margin-bottom: 2px;
+}
+/* 正文：打字机逐字写进来（pre-wrap 保留模型给的分行） */
+.yl-analysis-section-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* AI 仿写判定 */
+.yl-verdict {
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  display: grid;
+  gap: 4px;
+}
+.yl-verdict-ok {
+  background: var(--yl-ok-tint);
+}
+.yl-verdict-bad {
+  background: rgba(229, 83, 75, 0.1);
+}
+.yl-verdict-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.yl-verdict-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.yl-verdict-suggest {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+/* 建议句下面那行「改了哪里」：单独一行、灰字小字 —— 建议句要能一眼看到、能抄，
+   区别说明是补充（2026-10-09 用户拍板：先给完整说法，再说和用户那句的差别） */
+.yl-verdict-suggest-note {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 三步练习：右栏就是"原句区 + 时间线"的竖排，不套外框 ——
+   原句区和三步卡各自带边框，再包一层就是框中框中框（v4 方案，2026-09-30） */
+.yl-practice-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* ── 原句区（hero）：句子/注音/翻译独立成区 ──
+   **默认白底 + 灰边**（"只是原句"的静态态）；点了「AI 解析」之后由 JS 加
+   `.yl-analyzed`，才变成淡青蓝晕的"舞台"态 —— 与"这句已经被讲过了"呼应，
+   也顺带提示"卡片里的词现在可以点了"（2026-10-07 用户定）。
+   注音走渐进增强：分词/AI 读音没到时只有句子和翻译（JS 侧控制显隐）。
+   ⚠️ 青蓝态的颜色走插件自己的 --yl-acc-* 色板，**不要**退回去用 Obsidian 的
+   accent h/s/l 变量：那会跟着用户主题的 accent 跑，把定死的青蓝冲成紫 ——
+   2026-09-30 那次"紫配绿不协调"就是它俩凑出来的。 */
+.yl-hero {
+  /* 🔥 相对钉住（2026-10-04 用户要求）：往下滚到仿写时原句卡也要看得见 ——
+     "照着原句做"的三步练习，原句是全程的参照物，不能滚出视野。
+     宽屏滚动发生在 .yl-right-col、窄屏在 .yl-card-grid，sticky 对两种都成立：
+     hero 的父块 .yl-practice-panel（hero + 三步 timeline）比它高，有完整的滑行距离。
+     ⚠️ 必须垫实底：下面那层晕是"渐隐到 transparent"的，钉住后三步卡会从透明处透上来。 */
+  position: sticky;
+  top: 0;
+  z-index: 5; /* 钉住时盖住从底下穿过的三步卡（timeline 的序号圈才 z-index:1） */
+  /* 默认态：中性白底 + 灰边（浅色白、暗色深，跟随主题） */
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-primary);
+  /* 实底垫一层（解析后换成晕时，靠它在下面兜底） */
+  background-color: var(--background-primary);
+  padding: 16px 20px 16px;
+  display: grid;
+  gap: 7px;
+  /* 2026-09-29 定稿：左对齐、28px 固定字号（长短句一致，长句自然换行） */
+  justify-items: start;
+  text-align: left;
+}
+/* 解析过这一句：卡片变成淡青蓝晕（从右上角晕开，跟完成卡的边缘晕同一套语言）。
+   ⚠️ 必须再写一次 background-color 把实底垫在晕下面（shorthand 会把 transparent 留在底下，
+   不垫的话钉住时三步卡会从透明处透上来）。 */
+.yl-hero.yl-analyzed {
+  border-color: var(--yl-acc-line);
+  background: radial-gradient(
+    120% 130% at 78% 12%,
+    var(--yl-acc-tint) 0%,
+    transparent 76%
+  );
+  background-color: var(--background-primary);
+}
+/* 解析进行中（点了「AI 解析」、两块结果还没都落地）：句子压灰 ——
+   "上面这张卡正在变"。两块到齐才回到正文色（2026-10-07 用户拍板：
+   "解析完成之前文字偏灰，解析完成之后才变成现在这种深色"）。
+   ⚠️ 只压日文，不压翻译——翻译这时已经是对的，跟着变灰会像"翻译也失效了"。
+   过渡挂在 .yl-hero-ja 上（常驻），不是只在灰态挂 —— 恢复时才走得动。 */
+.yl-hero-ja {
+  transition: color 240ms ease;
+}
+.yl-hero.yl-words-pending .yl-hero-ja {
+  color: var(--text-muted);
+}
+/* 逐词释义落地：把"右上角这张卡变了"推到用户眼前（2026-10-08 用户挑的 E 方案）。
+   两条通道同时说话，缺一条都不够：
+     · 一道斜光带从左扫到右 —— 回答"**哪里**变了"（横扫整张卡，不是在边上蹭）；
+     · 一圈加粗描边脉冲一次 —— 回答"就是**这张**卡"（环用 mid 色、扩到 10px，
+       同时描边自己从 line 提到 mid 再落回 line，等于边上也亮了一下）。
+   ⚠️ **不整块闪**：整块闪读起来像故障。扫光是一条有方向的带子，不是整卡变色。
+   ⚠️ 扫光靠 ::after + overflow:hidden 裁。**只在 .yl-flash 那一下开 overflow**，
+      平时不挂 —— 这张卡是 sticky 的，常态下的渲染别去动它。
+      （卡里没有会溢出的东西；词卡是 position:fixed 挂 body 的，不受影响。）
+   z-index 5 的 sticky 卡加 box-shadow 不会溢出父级裁切（阴影跟着元素走）。 */
+@keyframes yl-hero-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--yl-acc-mid);
+    border-color: var(--yl-acc-mid);
+  }
+  60% {
+    box-shadow: 0 0 0 8px transparent;
+    border-color: var(--yl-acc-mid);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+    /* 落回解析态本来的边色，动画结束时不会"啪"地跳一下 */
+    border-color: var(--yl-acc-line);
+  }
+}
+/* 扫光带：一条窄的亮青蓝斜带（不是渐变底色），起点在卡外左侧。
+   ⚠️ 缓动**必须是 linear**（2026-10-08 实测，别改回去）：带子的"可见窗口"
+   = 它有多少时间露在卡里。任何"前快后慢"的缓动（ease-out / cubic-bezier(.25,.6,.3,1)）
+   都会让带子在前 300ms 一口气扫完，之后动画还在跑但屏幕上什么都没有 ——
+   实测可见窗口只有 250ms，等于白闪一下（那是"不够明显"的老毛病）。
+   同一套参数下各缓动的可见窗口：linear@1100ms = 560ms，linear@950ms = 490ms，
+   cubic-bezier(.35,.2,.65,.8) = 410ms，现状的 cubic-bezier(.25,.6,.3,1) = 250ms。
+   量法见 temp/hero-sweep-timing.cjs（Web Animations API 暂停逐帧采样，不是抓帧猜）。
+   ⚠️ 带宽固定占元素 40%（30%~70%），改宽度要重跑上面那份量测。 */
+@keyframes yl-hero-sweep {
+  0% {
+    transform: translateX(-130%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(130%);
+    opacity: 0;
+  }
+}
+.yl-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    var(--yl-sweep) 50%,
+    transparent 70%
+  );
+  transform: translateX(-130%);
+  opacity: 0;
+}
+.yl-hero.yl-flash {
+  overflow: hidden;
+  animation: yl-hero-pulse 0.95s cubic-bezier(0.2, 0.75, 0.3, 1) 1;
+}
+.yl-hero.yl-flash::after {
+  animation: yl-hero-sweep 1.1s linear 1;
+}
+/* 关掉动效的人不该看到脉冲/扫光，但**变化本身要看得出来**：直接把青蓝描边压深一档，
+   闪的那一下等于"强调一下已经是解析态了"（类的摘除由 JS 的定时器兜底）。 */
+@media (prefers-reduced-motion: reduce) {
+  .yl-hero.yl-flash {
+    animation: none;
+    border-color: var(--yl-acc-mid);
+  }
+  /* 扫光是纯动效：关掉动效就没有它，也不该留一道静止的带子横在卡上 */
+  .yl-hero::after {
+    display: none;
+  }
+}
+/* ── 卡片头一排（.yl-hero-head）：全部操作按钮同一行 ──
+   喇叭(重播) / 慢(0.5x 慢放) | 弹性空隙 | 纠(注音纠错) / あ⇄Aa(罗马音开关)。
+   慢放按钮的图标几轮试下来（亀字 / OpenMoji 线稿 / Twemoji 彩色），
+   2026-10-02 定稿就用一个「慢」字，跟「纠」同一套 chip 样式。
+   「原句」小标签 2026-10-02 去掉了，这排就是纯按钮。
+   按钮共用 button.yl-hero-chip 一套外观（药丸、描边、ink 字）。
+   ⚠️ 必须带元素前缀（button.，0-1-1）：宿主对裸 button 有同特异性规则，
+   单类名的底色/字色会被压掉（见登录页那段的说明）。
+   ⚠️ justify-self: stretch 是纠/あ右对齐的关键：.yl-hero 是 grid 且
+   justify-items: start（句子定稿左对齐时加的），grid item 默认会跟着收缩成
+   内容宽度，spacer 就没有空间可撑 —— 必须显式让这一行占满整行。 */
+.yl-hero-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: stretch;
+}
+.yl-hero-spacer {
+  flex: 1;
+}
+button.yl-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  min-width: 26px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--yl-acc-line);
+  border-radius: 999px;
+  background: var(--background-primary);
+  color: var(--yl-acc-ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: none;
+}
+/* 原句卡片不参与全站 E 悬停（用户 2026-10-02 明确「原句卡片除外」）：
+   维持淡灰叠层这一种，别给它加 --yl-hover-ring 描边 */
+button.yl-hero-chip:hover {
+  background: var(--background-modifier-hover);
+}
+button.yl-hero-chip svg {
+  width: 15px;
+  height: 15px;
+}
+/* 罗马音开着（Aa 态）用实心主色提示"当前显示的是罗马音"，跟状态按钮同一语言 */
+button.yl-hero-chip.active {
+  background: var(--yl-acc-solid);
+  border-color: transparent;
+  color: var(--yl-on-solid);
+}
+.yl-hero-ja {
+  font-size: 28px;
+  line-height: 1.75;
+  font-weight: 600;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.yl-hero-ja rt {
+  font-size: 12px;
+  /* 注音跟正文一个颜色（2026-10-05 用户拍板：灰太淡看不清），加粗同正文 */
+  color: var(--text-normal);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  /* 与正文的间距：注音和字面贴太近，垫 3px（2026-10-05） */
+  margin-bottom: 3px;
+}
+/* 罗马音关掉时假名词的注音位是空的：整个 rt 收掉，不留空隙 */
+.yl-hero-ja rt:empty {
+  display: none;
+}
+/* ⚠️ 两种注音（汉字词的平假名 / 罗马音开关开的拉丁转写）共用这一条 rt 样式，
+   刻意不再给罗马音模式换色 —— 2026-10-05 用户拍板「样式要一致」：
+   开没开罗马音由 Aa 钮的实心态表达，注音文字本身不参与。 */
+/* 可点词（.yl-hero-w，标点除外）：**解析成功后才亮出虚线 + 手型**。
+   默认没有下划线 —— 换句话说"出现了虚线"本身就是"这词被讲过了、可以点"的信号。
+   虚线用 ::after 画、两端各收进 3px：直接画 border 的话相邻词的虚线花纹会
+   首尾相连成一整条，看不出词的边界。
+   ⚠️ position/padding 对所有词**常驻**（不分解析前后）—— 只在解析后才加，
+   会让整句在解析完成那一刻轻微跳一下。 */
+.yl-hero-ja .yl-hero-w {
+  position: relative;
+  padding: 0 1px 3px;
+}
+.yl-hero.yl-analyzed .yl-hero-w {
+  cursor: pointer;
+  border-radius: 3px;
+}
+.yl-hero.yl-analyzed .yl-hero-w:hover {
+  background: var(--background-modifier-hover);
+}
+.yl-hero.yl-analyzed .yl-hero-ja .yl-hero-w::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 0;
+  border-bottom: 1.5px dashed var(--yl-acc-line);
+}
+/* 点词弹出的小白卡（多邻国风）：词形 · 读音 · 词性 · 意思。
+   ⚠️ 位置由 JS 写 top/left（position:fixed，挂在 body 上，避开右栏溢出裁切）； */
+.yl-wordpop {
+  position: fixed;
+  /* 40：高过视图内的自有浮层（目录抽屉 20 / 助手面板 30），
+     又低于宿主的 modal（Obsidian --layer-modal 50）—— 开弹窗时不该压在上面 */
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 108px;
+  max-width: 220px;
+  padding: 10px 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 14%);
+}
+.theme-dark .yl-wordpop {
+  box-shadow: 0 6px 20px rgb(0 0 0 / 50%);
+}
+.yl-wordpop-surface {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.yl-wordpop-reading {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.yl-wordpop-pos {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--yl-acc-ink);
+}
+.yl-wordpop-meaning {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-normal);
+}
+/* 英语外来语的词源（「外来语 · 英语 video」）：补充信息，压小压淡，
+   别和释义抢位置。只有英语借词才出这一行。 */
+.yl-wordpop-origin {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.yl-hero-zh {
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+/* ── 纠错弹窗（`.yl-corr-*`，结构见 views/CorrectionModal.ts）─────────────
+   2026-10-03：从「原句卡片里就地展开的面板」搬进页正中的弹窗。
+   ⚠️ 壳（宽度/圆角/标题行/底栏）归 `.yl-dialog` 那套，**这里一条都不写**
+      —— 全站弹窗的唯一壳在 `src/ui/dialog.ts`（用户 10-02 拍板统一 v2）。
+      本段只管弹窗**里面**的排布。
+
+   ⚠️ `.yl-corr-help` 刻意**不复用 `.yl-note`**：那个是移除确认框的
+      「学习记录不会被删除」，语义是"最怕误伤的东西"；这里要的是
+      "跟字段一家的补充说明"，两者混用会让后写的看不出是哪一类。 */
+
+/* 原句预览（静态）。整句都铺，ruby 只挂带汉字的词（纯假名读音就是它自己） */
+.yl-corr-live {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: var(--background-primary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--yl-btn-r);
+}
+.yl-corr-ja {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.9;
+  letter-spacing: 0.01em;
+}
+.yl-corr-ja rt {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+}
+/* 词典注不出音的汉字词注音留空（2026-10-05）：空 rt 收掉，别留一行空注音位 */
+.yl-corr-ja rt:empty {
+  display: none;
+}
+.yl-corr-zh { margin-top: 2px; font-size: 12.5px; color: var(--text-muted); }
+
+/* 喇叭 / 慢：弹窗里唯一的放法（2026-10-05 用户定：0.25×~1.5× 那排撤了） */
+.yl-corr-replay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* 字段 */
+.yl-corr-field { margin-bottom: 10px; }
+.yl-corr-label { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.yl-corr-label-title { font-size: 12px; font-weight: 650; }
+.yl-corr-label-tip { font-size: 11.5px; color: var(--text-faint); }
+
+/* 那颗圆圈问号：说明默认收起，点它才现（用户 10-29 定的口径 —— 长说明不许
+   堆成整块常驻色条压在内容上方，按"它解释哪一块"挂到那块名字后面） */
+.yl-corr-q {
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--yl-acc-line);
+  background: var(--yl-acc-tint);
+  color: var(--yl-acc-ink);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms, color 120ms;
+}
+.yl-corr-q:hover { background: var(--yl-acc-solid); color: var(--yl-on-solid); border-color: transparent; }
+.yl-corr-q[aria-expanded="true"] { background: var(--yl-acc-solid); color: var(--yl-on-solid); border-color: transparent; }
+
+/* 展开的说明：紧贴它所属的字段，不占额外一行 */
+.yl-corr-help {
+  display: none;
+  margin: 0 0 7px;
+  padding: 8px 10px;
+  background: var(--yl-acc-tint);
+  border: 1px solid var(--yl-acc-line);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--yl-acc-ink);
+}
+.yl-corr-help.on { display: block; }
+.yl-corr-help > div { display: flex; gap: 6px; }
+.yl-corr-help > div + div { margin-top: 4px; }
+.yl-corr-help > div::before { content: "\2713"; flex: 0 0 auto; font-weight: 700; }
+/* 要紧的那条用红/黄那一档的"注意"色，别混进"已完成"的青蓝（见配色板铁律） */
+.yl-corr-help > div.is-warn { color: var(--yl-warn-ink); }
+.yl-corr-help > div.is-warn::before { content: "!"; }
+
+/* 输入：字幕是多行，注音是单行，同一个类靠 tag 区分 */
+.yl-corr-field-body { display: grid; gap: 6px; }
+textarea.yl-corr-input {
+  width: 100%;
+  min-height: 58px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  resize: none;
+}
+textarea.yl-corr-input.is-ja { font-size: 16px; }
+input.yl-corr-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+/* 注音词表：词多时只滚这一块，别把整段正文撑长（底栏必须一直在视野里） */
+.yl-corr-rows {
+  display: grid;
+  gap: 5px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.yl-corr-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition: background 120ms, border-color 120ms;
+}
+.yl-corr-row:hover { background: var(--background-primary-alt); }
+/* 播放时跟着原句一起亮 —— 视线不用在两处之间来回跳 */
+.yl-corr-row-dot {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yl-acc-mid);
+}
+.yl-corr-row-dot.is-off { background: transparent; }
+.yl-corr-row-word {
+  flex: 0 0 5.4em;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.yl-corr-row-ro { font-size: 10.5px; font-weight: 400; color: var(--text-faint); letter-spacing: 0.03em; }
+.yl-corr-row-ro2 {
+  flex: 0 0 auto;
+  min-width: 5.2em;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.03em;
+}
+.yl-corr-row-fixed {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--yl-acc-ink);
+  background: var(--yl-acc-tint);
+  border: 1px solid var(--yl-acc-line);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+/* 「这些为什么没列出来」常驻说清，别让用户以为漏了 */
+.yl-corr-locked { font-size: 11.5px; color: var(--text-faint); margin: 6px 0 0; }
+/* ── 三步时间线：左圆点导轨 + 右卡片 ──
+   圆点三态：✓ 青蓝实心（做完）/ 描边高亮（当前步 = 第一个没做完的）/ 灰数字（未开始）。
+   ⚠️ "做完"只用主色，不再用绿 —— 跟"当前步"的差异靠**实心面 vs 描边**，不靠色相。
+   卡片复用 .yl-step-card（含 done/warn/bad 四态晕圈），时间线只管导轨和排布。 */
+.yl-timeline {
+  display: grid;
+  gap: 10px;
+}
+.yl-tl-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+}
+.yl-tl-rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 9px;
+}
+/* 连线画在圆点下一档，穿过 gap 接到下一个圆点（最后一段不画） */
+.yl-tl-rail::after {
+  content: "";
+  position: absolute;
+  top: 40px;
+  bottom: -12px;
+  width: 1.5px;
+  background: var(--background-modifier-border);
+}
+.yl-tl-item:last-child .yl-tl-rail::after {
+  display: none;
+}
+.yl-tl-no {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.yl-tl-no-active {
+  border-color: var(--yl-acc-line);
+  color: var(--yl-acc-ink);
+  background: var(--yl-acc-tint);
+}
+/* 完成圈：浅青蓝面 + 同族深青蓝勾（= 主色，2026-10-01 起不再用绿）。
+   ⚠️ 别改回"实心深色 + 白勾"（2026-09-30 用户看过对比版，选的是这版）：
+   白勾压那个深度的青蓝实测只有约 2.6:1，要压到 L=38% 才勉强够 3:1 ——
+   但那样这个圈就成了整页最重的一块，又回到"它比谁都抢眼"的老问题。
+   浅底 + 深勾是浅色系下唯一两全的写法。（旧版 #3fb950 实心+白勾其实
+   也只有 2.55:1，本来就不达标，只是勾够粗才勉强辨认。） */
+.yl-tl-no-done {
+  border-color: var(--yl-ok-line);
+  background: var(--yl-ok-soft);
+  color: var(--yl-ok-ink);
+  font-weight: 700;
+}
+.yl-tl-card {
+  margin-left: 8px;
+  min-width: 0;
+}
+/* ── 三步各自成卡 ──
+   2026-10-09 用户拍板「V2 描边徽章 + V1 彩色边框」：
+   **状态的主体在卡头那枚胶囊**（.yl-step-status-*，三态同一形态只换颜色），
+   卡片外框只做**呼应**——正解青蓝晕、未通过浅红晕、已完成不铺。
+   ⚠️ 「已完成」（没人判过）**不再有黄晕**：黄那档只留在提示行
+      （.yl-warn-text），不再占卡片。灰色 = "没有判断"，与青蓝"判对了"分层。
+   ⚠️ 完成/正解仍用**主色**（2026-10-01 用户："不要绿的了"）。
+   三态口径与 practices.ts 的 StepStatus / StudyView.refreshStepCards 一致。 */
+.yl-step-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--background-primary);
+}
+/* 正解：青蓝边 + 整卡晕一圈（就是原来那条 done，改个名对齐三态口径） */
+.yl-stepcard-ok {
+  border-color: var(--yl-ok-line);
+  background: radial-gradient(120% 140% at 50% 45%, var(--background-primary) 55%, var(--yl-ok-halo) 100%);
+}
+/* 未通过：浅红边 + 浅红晕 */
+.yl-stepcard-bad {
+  border-color: var(--yl-bad-line);
+  background: radial-gradient(120% 140% at 50% 45%, var(--background-primary) 52%, var(--yl-bad-halo) 100%);
+}
+/* 「已完成（没人判过）」与"还没做过"共用中性卡面 —— 显式写一条只为把口径留在代码里 */
+.yl-stepcard-plain {
+  border-color: var(--background-modifier-border);
+  background: var(--background-primary);
+}
+/* 暗色下没有"中心白"，中心保持卡片底色、晕圈提亮一档。
+   ⚠️ ok 那条不再需要单独覆盖：--yl-ok-halo 的明暗值已经在顶部色板里
+   分 theme-dark 给过了，这里再写一份只会两处漂开。bad 同样已在色板里 */
+.yl-divider {
+  border-top: 1px solid var(--background-modifier-border);
+}
+.yl-practice {
+  display: grid;
+  gap: 8px;
+}
+.yl-practice-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.yl-practice-header > .yl-muted-sm:last-child {
+  margin-left: auto;
+}
+.yl-step-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* ── 一步的状态胶囊（2026-10-09 用户拍板「V2 描边徽章」为主体）─────────────
+   三态**同一个形态**，只换颜色 —— 这样"一个跳一个沉"的观感最轻，
+   区分度全交给颜色 + 文案（正解 / 未通过 / 已完成）。
+   ⚠️ 形态用 inline-block 而不是 inline-flex：卡头是 `align-items: baseline` 的
+      flex 行，inline-block 的基线就是里面那行字的基线，天然跟标题对齐；
+      换 inline-flex + 定高会在基线对齐下被顶歪。
+   ⚠️ 三态之外还有"没做过"= 不加任何类（元素空着，什么都不画）。
+   口径见 practices.ts 的 StepStatus / paintStepStatus。 */
+.yl-step-status {
+  font-size: 11px;
+  line-height: 1.35;
+}
+.yl-step-status-ok,
+.yl-step-status-bad,
+.yl-step-status-plain {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* 正解：青蓝（全站唯一强调色 = "判过了、对了"） */
+.yl-step-status-ok {
+  color: var(--yl-acc-ink);
+  border-color: var(--yl-acc-line);
+  background: var(--yl-acc-tint);
+}
+/* 未通过：浅红。面浅、字不浅（ink 档）—— 见顶部色板那条铁律 */
+.yl-step-status-bad {
+  color: var(--yl-bad-ink);
+  border-color: var(--yl-bad-line);
+  background: var(--yl-bad-tint);
+}
+/* 已完成：灰。**没人判过**，所以不给任何色相 —— "完成"不等于"对了"。
+   ⚠️ 字色用 --text-muted 而不是 --text-faint：11px 小字走 faint 只有 2.5:1 上下，
+      读不清（顶部色板那条"承载文字的那层不能浅"）。 */
+.yl-step-status-plain {
+  color: var(--text-muted);
+  border-color: var(--background-modifier-border);
+  background: transparent;
+}
+/*
+ * 跟读卡的回听条（2026-10-08 起**自绘**，替掉原生 `<audio controls>`）。
+ *
+ * 🔥 铁律：它与下面那行按钮的关系是「**常驻、永不显隐**」。
+ *    原先是录完才 `controls.show()`，那一下把按钮行整行顶下去 ⇒「停止」跑到别处、
+ *    用户还得追着鼠标找。**"显示得晚"才是跑位的根因，不是按钮本身** —— 所以这条
+ *    从第一秒起就占着位，没录音时只是整条压暗 + 控件 disabled（见 .is-off）。
+ *
+ * 三个零件照抄左侧视频控制条（.yl-video-controls）的语言，别另起一套：
+ *    图标钮（yl-btn-icon）+ accent 滑杆 + 定宽 tabular 时间。
+ * 原生那条留不得：它读的是**整个文件**的时长、长相一个像素都改不动（Chromium 画的）。
+ */
+.yl-read-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 撑住高度：有录音/没录音、字长字短都不许改这条的高度（否则还是会顶到下面那行） */
+  min-height: var(--yl-btn-h);
+}
+/* 没录音 = 不可用：**整条压暗**，不是把控件藏起来 */
+.yl-read-controls.is-off {
+  opacity: 0.45;
+}
+/*
+ * 🔥 滑杆**整条自己画**（2026-10-08 实机踩坑：用户报「完全没改动」就是它）。
+ *
+ * Obsidian 的 app.css 对**所有** `input[type='range']` 有一条全局规则：
+ *     -webkit-appearance: none;
+ *     height: var(--slider-track-height);   ← 4px
+ *     background-color: var(--slider-track-background);
+ * 外加 `::-webkit-slider-thumb { width: 30px; height: 18px; border-radius: 18px;
+ * background: white }`（macOS 上是 30×18 的白色药丸）。
+ *
+ * ⚠️ `appearance` 一旦被置成 none，**`accent-color` 就彻底失效** —— 于是浏览器里
+ *    预览得漂漂亮亮的「8px 青蓝条 + 青蓝圆钮」，一进 Obsidian 就退回「4px 灰轨 +
+ *    白药丸」，看着跟没做过一样。**别再靠 accent-color 画进度。**
+ *
+ * 所以这里把 appearance / 轨道 / 圆钮三件**都自己声明回来**，一个宿主默认值都不借：
+ *   · 尺寸照用户拍板的参照图（2 倍图实测）：轨道 8px 胶囊、圆钮 16px 实心圆；
+ *   · 未播 = `--background-modifier-border`（与 .yl-progress-track 同一口径，跟主题走）；
+ *   · 已播 = `--yl-acc-mid`，比例由 JS 写在 **`--yl-fill`** 上（practices.refreshPlayer）。
+ *     ⚠️ 2026-10-08 用户实测反馈「颜色过深」：从 `--yl-acc-solid`（36% 亮度）调浅一档
+ *     到 `--yl-acc-mid`（46%）—— 这个变量本来就是「细条 / 实心小控件」的口径，
+ *     亮暗两套主题都有现成值，不用另造色。
+ *   · 圆钮同色，渐变接缝永远被圆钮盖住，所以不必按圆钮宽度补偿。
+ *
+ * ⚠️ 选择器**必须带 `.yl-read-controls` 前缀**：Obsidian 那条是
+ *    `input[type='range']`（特异性 0,1,1），单类名 `.yl-read-slider`（0,1,0）
+ *    **压不过它** —— 少写这一层前缀，高度又会被打回 4px。
+ */
+.yl-read-controls .yl-read-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  /* 盒高 = 圆钮直径（16px），**轨道画在下面那条伪元素上**：
+     这样一个盒子同时给"8px 轨道"和"16px 圆钮"居中，两边天然同心。
+     ⚠️ 别把 height 改回 8px、也别给圆钮补 margin-top 去"扶正" ——
+        2026-10-08 实测那两种写法都会让圆钮中线偏离轨道中线（-4px / -2px）。 */
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.yl-read-controls .yl-read-slider::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
+  height: 8px;
+  border-radius: 999px;
+  background-color: var(--background-modifier-border);
+  /* 已播段画在渐变上，透明处露出下面的轨道底色 */
+  background-image: linear-gradient(
+    to right,
+    var(--yl-acc-mid) 0 var(--yl-fill, 0%),
+    transparent var(--yl-fill, 0%) 100%
+  );
+}
+.yl-read-controls .yl-read-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--yl-acc-mid);
+  border: none;
+  box-shadow: none;
+  /* ⚠️ 这 2px 是**像素标定出来的**，不是拍脑袋：16px 圆钮配 8px 轨道时，Chrome 会把
+     圆钮摆得比轨道中线高 2px（0px→偏上 2px、1px→1px、2px→正好同心、3px→偏下 1px，
+     2026-10-08 用 2 倍截图逐档量过）。**改了高度/直径就要重新标一次**，
+     否则圆钮在轨道上是歪的 —— 这种偏差只有量像素才看得出来。 */
+  margin-top: 2px;
+}
+.yl-read-controls .yl-read-slider:disabled {
+  cursor: default;
+}
+/* 定宽右对齐：数字跳动时右边缘不抖（与 .yl-clip-clock 同一口径） */
+.yl-read-clock {
+  flex: 0 0 auto;
+  min-width: 106px;
+  text-align: right;
+}
+/*
+ * 回听条的播放钮比别处的图标钮**大一号**（2026-10-08 用户令：调大 20%、形状不变）。
+ * 全局 `button.yl-btn-icon` 是 28px 方（视频条等都在用，**不能动全局**），这里按
+ * 作用域覆盖：28 × 1.2 = 33.6 ≈ 34px，图标 16 → 19px 同比例。方还是方、圆角描边
+ * 皮肤全继承基底，只是尺寸变大。横条 min-height 是下限，内容会把条撑到 34px ——
+ * 尺寸恒定 ⇒ 按钮行不会被顶动。
+ */
+.yl-read-controls .yl-btn-icon {
+  width: 34px;
+  height: 34px;
+}
+.yl-read-controls .yl-btn-icon svg {
+  width: 19px;
+  height: 19px;
+}
+.yl-practice-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/*
+ * 跟读那行按钮的宽度**不特设**（2026-10-08 用户二次拍板，推翻同日的 92px 定宽）：
+ * 「三个按钮的 padding 和其他抄写卡一致，别弄那么宽」⇒ 跟抄写/仿写一样吃
+ * `createButton` 基底的 padding、按文案自然宽度，这里**不许再写 width**。
+ * 代价：录音钮换文案（开始录音 ↔ 停止）时「检查/重置」会横移一点 —— 用户知情拍板。
+ * ⚠️ 想把定宽加回来之前先问用户；文案也保持短句（「取麦克风…」），别把按钮撑宽。
+ */
+.yl-practice-actions > .yl-muted-sm {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+/* 抄写 */
+/* 「提示」点开的罗马音行：摆在「抄写」标题和输入框之间，照着敲字用。
+   做成**一串键帽** —— 一个词一颗：眼睛能落在单颗上，不用在长串里数读到哪了，
+   而且"一颗 = 要敲的那几个键"跟这个场景是同构的（2026-10-04 三选一）。
+   2026-10-07 用户拍板：白底 + 普通无衬线字体（等宽字体太丑，也不用键帽拟物）。 */
+.yl-copy-romaji {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 12px;
+}
+.yl-copy-romaji-key {
+  padding: 3px 10px;
+  border: 1px solid var(--yl-acc-line);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--yl-acc-ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  box-shadow: 0 1px 0 var(--yl-acc-line);
+}
+/* 状态文案不是要敲的内容：淡下去，别跟键帽抢注意力 */
+.yl-copy-romaji-note {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.yl-copy-area {
+  width: 100%;
+  resize: vertical;
+  font-size: 16px;
+  line-height: 1.7;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+.yl-copy-area:focus {
+  outline: none;
+  border-color: var(--yl-acc-line);
+  /* 聚焦环用极淡底而不是重色描边 —— 浅色系里描边一深就成了页面上最抢眼的东西 */
+  box-shadow: 0 0 0 3px var(--yl-acc-tint);
+}
+/* 占位提示与节标题（.yl-step-title，13px）同字号 —— 提示是辅助信息，
+   不能比「抄写/仿写」标题本身还大（2026-09-28 用户口径，两处同理）。
+   只动占位文字：敲进去的正文保持 16px，照着练字不费眼。 */
+.yl-copy-area::placeholder {
+  font-size: 13px;
+}
+.yl-copy-result {
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  display: grid;
+  gap: 4px;
+}
+.yl-copy-result-ok {
+  background: var(--yl-ok-tint);
+}
+.yl-copy-result-bad {
+  background: rgba(229, 83, 75, 0.1);
+}
+.yl-copy-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+.yl-copy-diff {
+  font-size: 16px;
+  line-height: 1.9;
+  display: flex;
+  flex-wrap: wrap;
+}
+.yl-copy-diff span {
+  margin: 0 0.5px;
+  padding: 0 1px;
+  border-radius: 3px;
+}
+.yl-op-ok {
+  color: var(--yl-ok-ink);
+}
+.yl-op-missing {
+  color: var(--color-red, #e5534b);
+  background: rgba(229, 83, 75, 0.15);
+  text-decoration: line-through;
+}
+.yl-op-extra {
+  color: var(--color-orange, #d29922);
+  background: rgba(210, 153, 34, 0.15);
+}
+
+/* 跟读核对：原句上按词标色。
+   读对用完成态字色（不张扬），读错才加底 —— 这个功能只挑"确定读错"的，
+   视觉上就得红的字比绿的字显眼，否则看着像在给整句打分。
+   ⚠️ 全对时这两个类都会被撤掉，句子回到默认色，不留一整句绿。 */
+.yl-read-ok {
+  color: var(--yl-ok-ink);
+}
+.yl-read-bad {
+  color: var(--color-red, #e5534b);
+  background: rgba(229, 83, 75, 0.14);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* 目录抽屉 */
+.yl-toc-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  justify-content: flex-end;
+}
+.yl-toc-panel {
+  width: min(420px, 100%);
+  height: 100%;
+  background: var(--background-primary);
+  border-left: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+}
+.yl-toc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.yl-toc-title {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+/* 搜索框夹在标题与关闭之间撑满剩余宽度，叉叉因此固定贴在最右。
+   ⚠️ 必须写 `input.yl-toc-search`（0-1-1）：宿主有
+   `input[type='text']{height:var(--input-height)}` 同权重，单类名会被压回 30px 高。 */
+input.yl-toc-search {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+}
+input.yl-toc-search:focus {
+  border-color: var(--yl-acc-mid);
+  outline: none;
+}
+/* 数字搜索定位到的那句：圈一下并抬底色，眼睛才知道落在哪 */
+.yl-toc-hit {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 1px var(--yl-acc-mid);
+}
+.yl-toc-empty {
+  padding: 18px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.yl-toc-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.yl-toc-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+/* 目录行不是 <button> 但也是可点元素，悬停同样走 E（描边浮现） */
+.yl-toc-item:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 1px var(--yl-hover-ring);
+}
+.yl-toc-current {
+  background: var(--background-modifier-hover);
+  border-left-color: var(--yl-acc-mid);
+}
+.yl-toc-time {
+  flex-shrink: 0;
+  width: 42px;
+  color: var(--text-faint);
+  font-size: 11px;
+  padding-top: 2px;
+}
+.yl-toc-text {
+  flex: 1;
+  min-width: 0;
+}
+.yl-toc-ja {
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.yl-toc-done {
+  color: var(--yl-ok-ink);
+}
+.yl-toc-zh {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.yl-toc-mark {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  padding-top: 2px;
+}
+.yl-toc-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/*
+ * 笔记抽屉（2026-10-09 改版）：目录同款右侧抽屉（骨架参数与 .yl-toc-* 一套，
+ * 读起来才是"同一本书的两页"）。上半 = 自己的纯文本笔记；
+ * 下半 = 大家的共享笔记（服务端口径：点赞前 3 置顶、其余随机、最多 10 条）。
+ */
+.yl-nd-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  justify-content: flex-end;
+}
+.yl-nd-panel {
+  width: min(420px, 100%);
+  height: 100%;
+  background: var(--background-primary);
+  border-left: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+}
+/*
+ * 抽屉滑入/滑出（2026-10-09 用户拍板：目录和笔记都从右丝滑推出、关闭快速缩回）。
+ * 两组抽屉骨架逐条相同，动画也共用这一组规则，要调快慢一处改。
+ * 开：JS 建完 DOM 强制回流（初态先生效）再加 .is-open，panel 从右侧滑入、
+ *     遮罩同步淡入；关：加 .is-closing，panel 快速滑出、遮罩淡出，
+ *     JS 在 transitionend（+定时兜底）后拆 DOM。
+ * 时长口径沿用全站动效语汇：进 240ms cubic-bezier(0.2,0.7,0.3,1)、出 160ms。
+ */
+.yl-toc-panel,
+.yl-nd-panel {
+  transform: translateX(100%);
+  transition: transform 240ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.yl-toc-overlay,
+.yl-nd-overlay {
+  opacity: 0;
+  transition: opacity 200ms ease;
+  /* 面板 translateX(100%) 待场时视觉上超出 overlay 右边界：裁掉溢出，
+     防止宿主滚动容器被撑出横向滚动区（主体被拽动的潜在第二来源）。 */
+  overflow: hidden;
+}
+.yl-toc-panel.is-open,
+.yl-nd-panel.is-open {
+  transform: none;
+}
+.yl-toc-overlay.is-open,
+.yl-nd-overlay.is-open {
+  opacity: 1;
+}
+.yl-toc-overlay.is-closing,
+.yl-nd-overlay.is-closing {
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.yl-toc-overlay.is-closing .yl-toc-panel,
+.yl-nd-overlay.is-closing .yl-nd-panel {
+  transform: translateX(100%);
+  transition: transform 160ms ease-in;
+}
+@media (prefers-reduced-motion: reduce) {
+  .yl-toc-panel,
+  .yl-nd-panel,
+  .yl-toc-overlay,
+  .yl-nd-overlay,
+  .yl-toc-overlay.is-closing .yl-toc-panel,
+  .yl-nd-overlay.is-closing .yl-nd-panel {
+    transition: none;
+  }
+}
+.yl-nd-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.yl-nd-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.yl-nd-title {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.yl-nd-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+/*
+ * 锚点条（2026-10-09）：抽屉盖住原句卡时，把原句（含注音）带进抽屉顶上。
+ * 句子 DOM 从 hero 克隆而来（只读展示），所以这里要自带一套缩小的注音排版；
+ * hero 的点词虚线 / 手型是那边的交互，克隆进来的词 span 在这里一律收掉。
+ */
+.yl-nd-anchor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 14px 0;
+  padding: 9px 12px;
+  background: var(--background-secondary);
+  border-radius: 8px;
+}
+.yl-nd-anchor-main {
+  flex: 1;
+  min-width: 0;
+}
+.yl-nd-anchor-ja {
+  font-size: 15px;
+  line-height: 1.9;
+  font-weight: 600;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-normal);
+}
+.yl-nd-anchor-ja rt {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  margin-bottom: 1px;
+}
+.yl-nd-anchor-ja rt:empty {
+  display: none;
+}
+.yl-nd-anchor-ja.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.yl-nd-anchor-ja.is-expandable {
+  cursor: pointer;
+}
+.yl-nd-anchor-zh {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.yl-nd-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.yl-nd-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+textarea.yl-nd-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+/*
+ * 聚焦态对齐抄写卡（.yl-copy-area:focus，2026-10-09 用户点名）：青蓝细边 +
+ * 极淡聚焦环，**收掉宿主主题给的灰色阴影** —— 宿主的 focus 样式带作用域前缀，
+ * 普通选择器打不过，必须 !important（同 textarea 背景、.yl-assistant-input 的先例）。
+ */
+textarea.yl-nd-input:focus,
+textarea.yl-nd-input:focus-visible {
+  outline: none !important;
+  border-color: var(--yl-acc-line) !important;
+  box-shadow: 0 0 0 3px var(--yl-acc-tint) !important;
+}
+/*
+ * 🔥 背景钉死在**所有**交互态上（.yl-note-input 的教训）：宿主主题会给
+ * textarea 定背景（带作用域前缀，优先级打得过普通类选择器），不钉就会
+ * "一点进去底色变白"。
+ */
+textarea.yl-nd-input,
+textarea.yl-nd-input:hover,
+textarea.yl-nd-input:focus,
+textarea.yl-nd-input:active {
+  background: var(--background-modifier-form-field) !important;
+}
+/*
+ * 锁定态的静态文本卡（2026-10-09「保存即锁定」）：观感对齐下方共享笔记卡
+ * （.yl-nd-card / .yl-nd-card-body）—— 白底圆角、纯文本 pre-wrap，看起来是
+ * 「在看一条笔记」而不是「在填表单」。
+ *
+ * 🔥 min-height 与输入框默认值一致（2026-10-09 用户拍板）：保存后从编辑框切成
+ *    这张卡时高度不塌 —— 文字少也不会缩成一条，视线落点不跳。
+ *    ⚠️ 两边都钉死 box-sizing: border-box（见 textarea.yl-nd-input），
+ *       min-height 才是同一个「整高」，不随内距差 2px。
+ */
+.yl-nd-locked {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 140px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/*
+ * 「纸张」质感（2026-10-09 用户拍板）：自己的笔记（锁态卡）和大家的笔记
+ * （共享卡）都做出纸的层次 —— 静置一层极淡阴影托起，悬停轻轻抬 2px、阴影加深。
+ * 只动 transform（不占布局），下面的内容不会被顶开。
+ */
+.yl-nd-locked,
+.yl-nd-card {
+  box-shadow: var(--yl-note-shadow);
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    box-shadow 160ms ease;
+}
+.yl-nd-locked:hover,
+.yl-nd-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--yl-note-shadow-hover);
+}
+/* 用户关了动效就别抬：阴影加深仍在（反馈还在），但不再位移。
+   必须排在上面那条之后 —— 同优先级、后写者胜，放前面会被覆盖掉。 */
+@media (prefers-reduced-motion: reduce) {
+  .yl-nd-locked,
+  .yl-nd-card {
+    transition: none;
+  }
+  .yl-nd-locked:hover,
+  .yl-nd-card:hover {
+    transform: none;
+  }
+}
+.yl-nd-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.yl-nd-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--yl-ok-ink);
+}
+.yl-nd-shared {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.yl-nd-hint {
+  padding: 14px 10px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+}
+.yl-nd-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--background-primary);
+}
+.yl-nd-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.yl-nd-nick {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+/* 置顶标记：只挂在服务端点过赞的前 3 名上（0 赞不发荣誉） */
+.yl-nd-top {
+  font-size: 11px;
+  color: var(--yl-acc-ink);
+  background: var(--background-modifier-hover);
+  border-radius: 99px;
+  padding: 0 6px;
+}
+.yl-nd-when {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.yl-nd-like {
+  margin-left: auto;
+}
+.yl-nd-card-body {
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-normal);
+}
+
+.yl-empty {
+  padding: var(--size-4-4, 16px);
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+}
+
+/* 选集页概览数字（原「今日练习」面板的数字）：列表上方单独一行、右对齐
+   （2026-10-04 用户反馈：塞进顶栏按钮那行太挤），贴近它所属的列表。
+   2026-10-04 晚：顶栏右侧按钮顶端对齐后，按钮下方到数字之间空出 26+14=40px 白档，
+   用户圈图拍板减半 —— 数字上提 20px 坐进空档下半（顶栏 56 高、按钮 30，空档是
+   右侧纯空白，不会压到品牌文字）。
+   ⚠️ 品牌徽标尺寸若再调，这个 -20px 要跟着重算。 */
+.yl-overview {
+  margin: -20px 0 10px;
+  text-align: right;
+}
+
+.yl-empty p:last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * ── 导入框的内容区（一个方框、两张卡）────────────────────────────────
+ *
+ * 左卡＝视频，右卡＝字幕。选好就从虚线变实线、右上角打勾。
+ * 卡里**没有输入框**，所以随时可以整块重画，不会打断正在打字的用户。
+ * 说明一律压成图标下的一行小字 —— 这个框曾经有四大段解释文字，
+ * 用户得先读懂「季 / 集 / 集标题」的关系才能开始，那是要改掉的东西。
+ *
+ * 🔥 2026-10-02：标题 / 副标题不再由这个弹窗自己画，交给公共壳
+ *    （`ui/dialog.ts::open()` + `.yl-dialog-head`）。所以这里的
+ *    `.yl-import h3` / `.yl-import-sub` 两条已删 —— 它们是"每个弹窗各写
+ *    一遍标题"的最后两处，留着就等于统一只做了一半。
+ */
+
+.yl-pair {
+  display: flex;
+  gap: 12px;
+}
+
+.yl-tile {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 14px;
+  border: 1.5px dashed var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-secondary);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.yl-tile:hover,
+.yl-tile:focus-visible,
+.yl-tile.is-drop {
+  border-color: var(--yl-acc-mid);
+  background: var(--yl-acc-tint);
+  outline: none;
+}
+
+.yl-tile.is-done {
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+  border-style: solid;
+  border-color: var(--yl-acc-line);
+  background: var(--background-primary);
+  text-align: left;
+}
+
+.yl-tile-ico {
+  display: flex;
+  color: var(--text-faint);
+}
+
+.yl-tile.is-done .yl-tile-ico {
+  color: var(--yl-acc-mid);
+}
+
+/* 卡片小，图标跟着小：卡上的图标别用 34px 那个尺寸撑满半张卡 */
+.yl-tile.is-done .yl-tile-ico svg {
+  width: 20px;
+  height: 20px;
+}
+
+.yl-tile-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.yl-tile-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yl-tile.is-done .yl-tile-title {
+  font-size: 13.5px;
+}
+
+.yl-tile-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+/* 右上角那枚勾/份数：压在卡片内部。
+   🔥 别挪到边框外（`right: -8px` 那种）—— 卡片右边贴着弹窗内容区，
+   角标一出去就是 7px 横向溢出，Obsidian 的弹窗会多出一条横向滚动条（实测）。 */
+.yl-tile-check,
+.yl-tile-count {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--yl-acc-mid);
+  color: var(--yl-on-solid);
+}
+
+.yl-tile-count {
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+/* 角标坐在右上角，标题就得提前收尾，不然文件名字会从角标底下穿过去 */
+.yl-tile.is-done .yl-tile-head {
+  padding-right: 30px;
+}
+
+/* ── 卡里的字幕清单：语言角标 + 文件名 + 移除 ── */
+.yl-sub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.yl-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--yl-acc-line);
+  border-radius: 9px;
+  background: var(--yl-acc-tint);
+  font-size: 12.5px;
+}
+
+.yl-sub-lang {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--yl-acc-line);
+  border-radius: 5px;
+  background: var(--background-primary);
+  color: var(--yl-acc-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.yl-sub-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.yl-sub-rm {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  cursor: pointer;
+  line-height: 1;
+  padding: 1px 4px;
+  border-radius: 4px;
+  transition: background-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+/* 可点元素统一走 E：悬停浮出细描边（这个 × 平时多两像素内距，悬停才不挤） */
+.yl-sub-rm:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 1px var(--yl-hover-ring);
+}
+
+.yl-sub-add {
+  padding: 6px;
+  border: 1.5px dashed var(--yl-acc-line);
+  border-radius: 9px;
+  color: var(--yl-acc-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+/* 已有虚线描边的控件走「描边点亮」：线色淡青 → 中青，和主操作按钮同一语言 */
+.yl-sub-add:hover {
+  background: var(--yl-acc-tint);
+  border-color: var(--yl-acc-mid);
+}
+
+/* ── 提醒条：一次只说一件事，入口就放在里面 ── */
+.yl-alert-slot:not(:empty) {
+  margin-top: 16px;
+}
+
+.yl-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid var(--yl-warn-line);
+  border-radius: 11px;
+  background: var(--yl-warn-tint);
+}
+
+.yl-alert-ico {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--yl-warn-ink);
+}
+
+.yl-alert-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--yl-warn-ink);
+}
+
+.yl-alert-text b {
+  display: block;
+  font-size: 13.5px;
+  margin-bottom: 2px;
+}
+
+.yl-alert-act {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* 提醒条里的动作钮：跟全站同一张皮（写死皮肤 + 真边框）。
+   ⚠️ 静息那条 border 是**真边框**（跟基底一致），悬停只换 border-color —— 有过渡。 */
+button.yl-alert-act {
+  /* 补齐统一**形状**（圆角/高度/内距都跟别处的 8px 药丸对齐） */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: var(--yl-btn-h);
+  padding: var(--yl-btn-pad);
+  border: 1px solid var(--yl-btn-border);
+  border-radius: var(--yl-btn-r);
+  background-color: var(--yl-btn-bg);
+  box-shadow: var(--yl-btn-shadow);
+  color: var(--yl-btn-fg);
+  font-family: var(--yl-btn-font);
+  font-size: var(--yl-btn-fs);
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease, color 120ms ease;
+}
+button.yl-alert-act:hover:not(:disabled) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+
+/* ── 名字栏：唯一必填的那一格 ── */
+.yl-name {
+  margin-top: 20px;
+}
+
+.yl-name-label {
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.yl-name-input {
+  width: 100%;
+}
+
+.yl-name-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  margin-top: 6px;
+}
+
+.yl-tag {
+  font-size: 11.5px;
+  color: var(--yl-acc-ink);
+}
+
+.yl-tag:not(.is-on) {
+  display: none;
+}
+
+/* ── 名字栏之外的那组字段（2026-10-11 前是「收起的可选字段」，折叠链接已删：
+ *    季度/集号现在是必填，必填项不能藏在折叠区里。
+ *    2026-10-12：去掉行顶分隔线 —— 折叠区没了之后那条线成了多余分界线）────── */
+.yl-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.yl-meta-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.yl-meta-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.yl-meta-desc {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.yl-meta-input {
+  flex: 0 0 180px;
+  width: 180px;
+}
+
+/* ── 必填星号（名称 / 作品类型 / 季度 / 集号）────────────────────────── */
+.yl-req {
+  margin-left: 3px;
+  color: var(--text-error);
+  font-weight: 600;
+}
+
+/* ── 作品类型：二选一的分段钮（导入 / 编辑弹窗的必选项）─────────────────────
+ * 用途单一：`ImportModal` / `EditModal` 的「剧集类 / 非剧集类」。两项的必选，
+ * 摆成两颗并列的按钮一眼看全，比下拉少一次展开。
+ *
+ * 🔥 必须带 `button.` 前缀：宿主 `button:not(.clickable-icon)`（0,1,1）会整条压掉
+ *    光写 `.yl-seg-btn`（0,1,0）的底/边/圆角/高度 —— 与 `.yl-choice` 同一个坑。
+ * 🔥 高度与换行也得显式写：宿主 `button` 钉了固定高度、还带 `white-space: nowrap`。
+ * 配色只借全站现成的两套变量（`--yl-btn-*` 常态、`--yl-acc-*` 选中态），
+ * 与 `.yl-choice.is-selected` / `.yl-btn.is-active` 同一门状态色语言，深浅色自动跟随。 */
+.yl-field {
+  margin-top: 16px;
+}
+
+.yl-field-label {
+  margin-bottom: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.yl-seg {
+  display: flex;
+  gap: 8px;
+}
+
+button.yl-seg-btn {
+  flex: 1 1 0;
+  box-sizing: border-box;
+  height: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--yl-btn-border);
+  border-radius: 8px;
+  background-color: var(--yl-btn-bg);
+  color: var(--yl-btn-fg);
+  font-family: var(--yl-btn-font);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: normal;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+button.yl-seg-btn:hover:not(:disabled) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+
+/* 选中：整体变青蓝。🔴 悬停时也必须**还是**选中态 —— 通用 hover 那条中性描边
+   不许把 accent 语言盖掉（跟 `.yl-choice.is-selected` 同一个坑）。 */
+button.yl-seg-btn.is-selected,
+button.yl-seg-btn.is-selected:hover:not(:disabled) {
+  background-color: var(--yl-acc-tint);
+  border-color: var(--yl-acc-line);
+  color: var(--yl-acc-ink);
+}
+
+button.yl-seg-btn:focus-visible {
+  outline: 2px solid var(--yl-acc-mid);
+  outline-offset: 1px;
+}
+
+/* ── 弹窗正文里的可选项（移除确认框那两颗默认不勾的复选）─────────────────
+ * 🔥 2026-10-02 从 `yl-remove-opt*` 改名成 `yl-opt*`：这套样式不再只属于
+ *    「移除」这一个弹窗，任何「带说明的复选项」都能用（底栏、设置项、
+ *    批量操作确认都该走它）。改名时四个视图 + 这份 CSS 一起换，别留旧名。 */
+.yl-opts:empty { display: none; }
+.yl-opts { display: flex; flex-direction: column; gap: 8px; }
+
+.yl-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.yl-opt:hover { background-color: var(--background-primary-alt); }
+.yl-opt input[type="checkbox"] { margin: 2px 0 0; }
+.yl-opt-text { flex: 1 1 auto; min-width: 0; }
+.yl-opt-name { font-size: 13px; font-weight: 600; line-height: 1.5; }
+.yl-opt-desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+/* ── 弹窗正文里的一整块提示 ────────────────────────────────────────────
+ * 用途：把「用户最怕误伤的东西」单独摆一块说在明面上（移除确认框那句
+ * 「学习记录不会被删除」）。🔥 同样从 `yl-remove-guard*` 改名 —— 别只长在
+ * 移除那个弹窗里。 */
+.yl-note {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: var(--background-secondary);
+}
+.yl-note-strong { font-size: 12.5px; font-weight: 600; line-height: 1.5; color: var(--yl-acc-ink); }
+.yl-note-sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+/* ── 认领窗里那两张「可点的卡」（2026-10-10）─────────────────────────────
+ * 用途单一：`LocalSpaceModal` 的「认领 / 不认领」。它就是上面 `.yl-note` 那块的
+ * **可点版本** —— 同样的「选项名 + 说明」两层，但整块能点、单选、选中变青蓝。
+ *
+ * 🔥 必须带 `button.` 前缀：宿主有一条 `button:not(.clickable-icon)`（0,1,1），
+ *    光写 `.yl-choice`（0,1,0）会被整条压掉，底/边/圆角/内距/高度全长成宿主的
+ *    （账户页那几颗输入框就是这么被吃掉的）。
+ * 🔥 高度与换行也得显式写：宿主 `button` 钉了固定高度、还带 `white-space: nowrap`
+ *    —— 不写的话说明文字会撑成一条不换行的横条。
+ * 配色只借全站现成的两套变量，深浅色主题自动跟随（无需在 .theme-dark 里再写一遍）：
+ *  · 底 / 字 / 边 / 悬停 = `--yl-btn-*` —— 跟普通按钮同一张皮；
+ *  · 选中 = `--yl-acc-*` 的「tint 面 + line 描边 + ink 字」——
+ *    跟 `.yl-btn.is-active`（分段筛选器选中）同一门状态色语言。 */
+.yl-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+button.yl-choice {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--yl-btn-border);
+  border-radius: 8px;
+  background-color: var(--yl-btn-bg);
+  color: var(--yl-btn-fg);
+  font-family: var(--yl-btn-font);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: normal;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+button.yl-choice:hover:not(:disabled) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+}
+.yl-choice-t { font-size: 12.5px; font-weight: 600; line-height: 1.5; color: var(--yl-btn-fg); }
+.yl-choice-d { margin-top: 2px; font-size: 11.5px; line-height: 1.6; color: var(--text-faint); }
+/* 选中：整张卡变青蓝。🔴 悬停时也必须**还是**选中态 ——
+   通用 hover 那条中性描边不许把 accent 语言盖掉（跟 .yl-btn.is-active 同一个坑）。 */
+button.yl-choice.is-selected,
+button.yl-choice.is-selected:hover:not(:disabled) {
+  background-color: var(--yl-acc-tint);
+  border-color: var(--yl-acc-line);
+}
+button.yl-choice.is-selected .yl-choice-t { color: var(--yl-acc-ink); }
+button.yl-choice:focus-visible {
+  outline: 2px solid var(--yl-acc-mid);
+  outline-offset: 1px;
+}
+
+
+/* （此处原有一条 `.yl-btn.is-primary` 实心主色、「确定」专用 —— 2026-10-01 全站
+   按钮统一后它就跟其他按钮唱反调了：弹窗的「确定」改用 `yl-btn-primary`，跟
+   别处的主操作一模一样。实心主色仍然保留，但只留给"当前状态"（校准已开等）。） */
+
+/* ── vault 笔记里那一行台词 ───────────────────────────────────────
+ *
+ * 学习笔记是用户自己的 .md（不是插件视图），样式只能靠这份文件：
+ * Obsidian 全局加载插件的 styles.css，所以这些类在笔记里也生效。
+ *
+ * 两个状态，别的都不要：
+ *  · 常态：看得出"这行能点"（虚线底 + 手型），又不像链接那样抢眼；
+ *  · 正在放：整行亮一下 —— 没有画面，用户只能靠它确认"确实在响"。
+ */
+/* ⚠️ 这几个类是在**用户笔记正文里**生效的（Obsidian 全局加载本文件），
+   所以依赖的变量必须定义在 :root / .theme-dark 上，不能塞进 .yl-study-wrap ——
+   塞进去笔记里取不到值，虚线底和"正在放"的高亮会直接失效。 */
+.yl-note-clip {
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dashed var(--yl-acc-mid);
+}
+
+.yl-note-clip:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.yl-note-clip-playing {
+  background-color: var(--yl-acc-solid);
+  color: var(--yl-on-solid);
+  border-bottom-color: transparent;
+  border-radius: var(--radius-s, 4px);
+  padding: 0 2px;
+}
+
+/* ── 右下角海獭小助手（句子追问助手，2026-10-07 用户定稿）────────────────
+   挂在 .yl-study-root 上（absolute），**不进 .yl-card-grid** —— 那个容器会滚动，
+   挂进去会被滚走，而"随时能问"正是它的价值。断点用容器查询（@media 看的是窗口
+   宽度，视图挤在侧栏时会被压成一团，见文件顶部的说明）。 */
+.yl-assistant {
+  position: absolute;
+  right: 16px;
+  /* 让开窗口底部的状态栏（「洋流·已同步 HH:MM」就挂在那一行）：
+     贴太近会跟状态栏文字挤在一起 */
+  bottom: 48px;
+  z-index: 30;
+}
+
+/* 悬浮海獭球：圆形，是**入口**不是工具栏成员，所以不套矩形按钮那套。
+   ⚠️ 仍要 `button.` 前缀（0-1-1）—— 单类名写的底色会被宿主压掉，变成灰原生底
+   🔥 2026-10-07：漂流瓶换成海獭 logo，**面板开着也不消失** —— 它同时是
+   面板的开关（点它 = 开/关）。46px 圆 + 浮动动画沿用（身份感靠它）。 */
+button.yl-assistant-launcher {
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid var(--yl-btn-border);
+  box-sizing: border-box;
+  background-color: var(--yl-btn-bg);
+  /* 投影对齐 demo（0.10）：0.18 的重投影在高缩放下会读成一圈灰环，
+     用户截图里海獭球的"灰圈"就是它 */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  color: var(--yl-btn-fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  animation: yl-bob 3.6s ease-in-out infinite;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease, color 120ms ease;
+}
+button.yl-assistant-launcher:hover:not(:disabled) {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+/* 海獭本体：明暗两版 logo 都挂在 DOM 里，跟主题切显示（换主题不用重渲染） */
+.yl-assistant-otter {
+  width: 30px;
+  height: auto;
+  transition: transform 250ms ease;
+}
+button.yl-assistant-launcher:hover:not(:disabled) .yl-assistant-otter {
+  transform: rotate(-7deg) scale(1.06);
+}
+.yl-otter-dark { display: none; }
+.theme-dark .yl-otter-dark { display: block; }
+.theme-dark .yl-assistant-otter:not(.yl-otter-dark) { display: none; }
+@keyframes yl-bob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50%      { transform: translateY(-4px) rotate(2deg); }
+}
+.yl-assistant-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--yl-acc-solid);
+  color: var(--yl-on-solid);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* 面板：**干净的对话流**（2026-10-07 用户定稿）—— 没有标题栏、没有原句区、
+   没有范围说明，原句由助手开场白带出来（renderThread）。
+   ⚠️ 绝对定位锚在海獭**上方**（2026-10-07 用户反馈：点开面板海獭不能动）——
+   之前面板跟在海獭后面排文档流，容器又是 bottom 锚定，一开面板海獭被顶上去
+   340px、面板压到状态栏。现在容器尺寸恒等于海獭（46px），面板浮在其上方。
+   2026-10-09 用户拍板：对话改微信式（头像 + 气泡 + 时间条），加头像腾位 ——
+   宽 340→374（+10%）、高 340→408（+20%），60vh 兜底保留。 */
+.yl-assistant-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  width: min(374px, calc(100vw - 48px));
+  height: min(408px, 60vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+/* 顶栏（2026-10-08 用户拍板）：一根纯白的空条 + 底下一道线 ——
+   「本来是个标题栏，只是变成纯白」。它是独立的 flex 子元素（不随内容滚），
+   对话在线下面滚，永远碰不到这条线；线色与输入区分隔线同源。
+   2026-10-09：线离顶 12px 觉得贴太上，往下挪一等份（再 +12px = 24px）。 */
+.yl-assistant-topbar {
+  flex: none;
+  height: 24px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.yl-assistant-thread {
+  flex: 1;
+  min-height: 90px;
+  overflow-y: auto;
+  padding: 10px 12px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 微信式对话行（2026-10-09 用户拍板）：每条消息 = 头像 + 气泡成行 ——
+   AI 行 = 海獭头像在左；用户行 = 气泡在左 + 头像在右（顺序由 JS 排好）。
+   头像与气泡**顶对齐**（微信是顶对齐），多行长气泡时头像不飘。 */
+.yl-assistant-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* 用户行：气泡贴右推（margin-left:auto 把「气泡+头像」整体怼到行尾），
+   头像才始终贴住面板右缘 —— 短消息时也不吊在半空（微信式，2026-10-09）。 */
+.yl-assistant-row-me .yl-assistant-bubble {
+  margin-left: auto;
+}
+/* 头像：28px 圆。AI = 海獭 logo（明暗两版跟主题切 —— 复用 .yl-assistant-otter
+   的切换规则，这里只覆写尺寸），**不给底色**（logo 自带轮廓，灰圈是画蛇添足，
+   2026-10-09 用户拍板）；用户 = 账号头像图，没图时昵称首字占位（这层才要底色）。 */
+.yl-assistant-avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+}
+.yl-assistant-avatar-me {
+  background: var(--background-secondary);
+}
+.yl-assistant-avatar .yl-assistant-otter {
+  width: 22px;
+  height: auto;
+}
+.yl-assistant-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.yl-assistant-avatar-initial {
+  line-height: 28px;
+}
+/* 居中时间条：相邻消息隔 5 分钟以上才来一条（间隔逻辑在 appendTimeBar） */
+.yl-assistant-time {
+  align-self: center;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.yl-assistant-bubble {
+  /* 78%：留出头像 + 间隙 —— 加宽的 10% 正好归头像，气泡本身不比原来宽 */
+  max-width: 78%;
+  position: relative;
+  padding: 8px 11px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 气泡配色对齐 demo（2026-10-07 用户反馈"和网页效果差距太大"后改）：
+   用户 = 浅灰实底（不是青蓝实底——assistant 里青色只留给角标这类小点缀），
+   AI = 跟面板同底 + 描边。用宿主背景变量，明暗主题各自成立。
+   2026-10-09：颜色原样保留，只加了微信式小尖角 —— AI 朝左、用户朝右。 */
+.yl-assistant-me {
+  align-self: flex-end;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+.yl-assistant-ai {
+  align-self: flex-start;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+}
+/* 尖角（6px 三角）：AI 气泡带描边，所以两层 —— 外层描边色、内层底色盖住，
+   才不露缝；用户气泡是实底，一层就够。 */
+.yl-assistant-ai::before,
+.yl-assistant-ai::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  border: 6px solid transparent;
+}
+.yl-assistant-ai::before {
+  left: -11px;
+  border-right-color: var(--background-modifier-border);
+}
+.yl-assistant-ai::after {
+  left: -10px;
+  border-right-color: var(--background-primary);
+}
+.yl-assistant-me::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  right: -10px;
+  border: 6px solid transparent;
+  border-left-color: var(--background-secondary);
+}
+/* 开场白里加粗引着的原句 */
+.yl-assistant-greet-ja {
+  font-weight: 700;
+}
+.yl-assistant-thinking {
+  opacity: 0.6;
+}
+/* AI 回答里的极简 markdown（ui/miniMarkdown.ts 渲染，2026-10-08）：
+   分段/列表的呼吸感 + 行内代码一块浅底。气泡的 gap 已分开相邻块，
+   这里只管块内部与块尾。 */
+.yl-assistant-md p {
+  margin: 0 0 6px;
+}
+.yl-assistant-md p:last-child {
+  margin-bottom: 0;
+}
+.yl-assistant-md ol,
+.yl-assistant-md ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+.yl-assistant-md li {
+  margin: 0 0 2px;
+}
+.yl-assistant-md ol:last-child,
+.yl-assistant-md ul:last-child {
+  margin-bottom: 0;
+}
+.yl-assistant-md code {
+  background: var(--background-secondary);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 11.5px;
+}
+.yl-assistant-hint {
+  padding: 0 12px 6px;
+  font-size: 12px;
+  color: var(--color-orange, #d29922);
+}
+.yl-assistant-composer {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+/* 输入区：一行字高的小框 + 并排圆箭头发送钮（参考 DeepSeek，2026-10-07 定稿） */
+.yl-assistant-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 13px;
+  background: var(--background-primary);
+  padding: 2px 3px 3px 9px;
+  transition: border-color 120ms ease;
+}
+.yl-assistant-field:focus-within {
+  border-color: var(--background-modifier-border-hover, var(--text-faint));
+}
+.yl-assistant-input {
+  flex: 1;
+  min-width: 0;
+  /* 高度由 JS 按内容设（refreshGrow）：不看点没点，内容没超过一行宽度
+     就是一行；超过了长到两行封顶，再输入就在框内滚动（2026-10-08 用户拍板，
+     去掉了原先"点进去长到两行"的动画）。 */
+  height: 22px;
+  padding: 1px 0;
+  border: none;
+  background: transparent;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--text-normal);
+  overflow-y: auto;
+}
+.yl-assistant-input::placeholder {
+  color: var(--text-faint);
+}
+/* 聚焦不加任何高亮框（2026-10-07 用户拍板：点进去干干净净）。
+   ⚠️ 要 !important：宿主/主题给 textarea 的 focus 描边带作用域前缀，
+   普通选择器打不过（同 .yl-note-input 的坑）；聚焦感已由
+   .yl-assistant-field:focus-within 的边框变色表达，输入框本体什么都不加。 */
+.yl-assistant-input:focus,
+.yl-assistant-input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+/* 圆形发送钮（shape: "send"）：空 = 灰箭头不可点，有字 = 反色可点，
+   发着 = 回灰。"反色"用按钮皮肤自己的 fg/bg 互换 —— 明暗主题各自成立 */
+button.yl-assistant-send {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 999px;
+  background-color: var(--yl-btn-press-bg);
+  color: var(--yl-btn-muted-fg);
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: var(--yl-btn-font);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+button.yl-assistant-send.yl-ready {
+  background-color: var(--yl-btn-fg);
+  color: var(--yl-btn-bg);
+  cursor: pointer;
+}
+button.yl-assistant-send.yl-pending,
+button.yl-assistant-send:disabled {
+  background-color: var(--yl-btn-press-bg);
+  color: var(--yl-btn-muted-fg);
+  cursor: default;
+}
+
+/* 窄栏（视图被挤到侧栏）时收小一档，别把画面盖掉（2026-10-09 跟随加宽：+10%/+20%） */
+@container (max-width: 950px) {
+  .yl-assistant {
+    right: 10px;
+    bottom: 40px;
+  }
+  .yl-assistant-panel {
+    width: min(330px, calc(100vw - 40px));
+    height: min(360px, 60vh);
+  }
+}
+
+/* ── AI 入口的「锁定态」────────────────────────────────────────────────────
+   未登录 / 没开 AI 时用。**不是 disabled** —— 用户要求「看起来不能点」和
+   「点了弹登录提醒」同时成立，而 disabled 的按钮不派发 click。
+   所以：视觉上压暗 + 虚线边 + cursor:help，点击仍然进得来（见各 build* 的 applyGate）。 */
+/* ⚠️ 选择器带 `button.` 前缀（0-1-1）才压得过基底 `button.yl-btn` 的
+   `border: 1px solid …` —— 单类名 0-1-0 会让虚线边失效（基底赢了）。
+   （2026-10-04：基底改用真 border 后才暴露这条特异性坑。） */
+button.yl-locked {
+  opacity: 0.5;
+  cursor: help;
+  border-style: dashed;
+}
+/* 锁定态不做 hover 高亮（免得看起来像"能点"）。两层都要摁住：
+   ① 插件自己的 hover 规则全部带 :not(.yl-locked)；
+   ② 宿主的 button:hover（0-2-1）压得过插件 0-1-1 的静息规则，必须用更高特异性
+      把底/字/描边/影冻回静息值。
+   （旧写法 .yl-locked:hover{background:transparent} 是 0-2-0，两头都打不过，
+    锁定钮悬停其实一直在亮；2026-10-02 随 E 方案一起修正。
+    2026-10-04：静息值改成写死的方案二皮肤，冻回同一组变量即可。） */
+button.yl-locked:hover:not(:disabled) {
+  background-color: var(--yl-btn-bg);
+  border-color: var(--yl-btn-border);
+  box-shadow: var(--yl-btn-shadow);
+  color: var(--yl-btn-fg);
+}
+
+/* ── 登录提醒弹窗 ────────────────────────────────────────────────────────── */
+.yl-login-modal-lead {
+  margin: 6px 0 12px;
+}
+.yl-login-modal-bonus {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--background-secondary);
+}
+.yl-login-modal-bonus-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.yl-login-modal-bonus-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.yl-login-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.yl-login-modal-signup {
+  display: block;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+/* ── 弹窗壳（全站唯一）───────────────────────────────────────────────────
+ * 2026-10-02 用户拍板：**所有弹窗统一采用候选里的 v2**（470px / 圆角 14 /
+ * 左对齐 / 标题行左边一颗 28px 图标 / 底栏按钮居中）。
+ *
+ * 🔥 改这个文件之前先读 `src/ui/dialog.ts` —— 那边是壳的**结构**唯一来源
+ *    （`open()` 搭出来的 DOM 层级），这里只是它的外观。宽度分两档由那边
+ *    的 `width` 参数决定，这里用 `.yl-dialog-wide` 兑现。
+ *
+ * 🔥🔥 宽度 / 圆角 / 内距**必须挂在 `.modal.yl-dialog`（盒子本体 = modalEl）**
+ *    上，绝不能只挂内容层：宿主 `.modal` 自带 `width: var(--dialog-width)`
+ *    = 560px，只限制内容层的话盒子照旧 560px 宽、内容缩在左半边、右侧空一大块
+ *    —— 10-02 用户截图里「又宽又歪」就是它。
+ *
+ * 收敛前的样子（别再写回来）：`RemoveModal` 一个类都没加、整个走宿主默认
+ * （560px / **24px 圆角** / 按钮右对齐），`ModelSetupModal` 自己压了一套
+ * `.yl-setup`（400px / 14px / 居中 / 圆形徽章）—— 同一个产品两种弹窗长相。 */
+.modal.yl-dialog {
+  width: 470px;
+  max-width: min(470px, calc(100vw - 48px));
+  padding: 20px 22px 16px;
+  border-radius: 14px;
+  /* ⚠️ 描边走**中性** `--background-modifier-border`，不是 `--yl-acc-line`。
+     青蓝描边 + hero 晕是旧 `.yl-setup`（400px 居中那版）的做法，v2 候选里
+     两者都没有 —— 带上它在暗色下会显出一片偏绿的青（`--yl-acc-tint` 在
+     `.theme-dark` 是 hsl(193 38% 17%)，压在深底上偏青绿，2026-10-02 截图复核时
+     才发现）。统一到 v2 就是回到中性边框，不要"顺手加回来"。 */
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-primary);
+  box-shadow: var(--shadow-l);
+  /* 高度交给内容：宿主 `.modal` 自带 `min-height: 100px`，短提示那屏会多出空档 */
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+/* 宽档：并排两张卡 + 名字栏（导入 / 编辑）。
+   470 那档给它们的话每张卡只剩 ~210px，卡里的图标和「＋ 再加一份」会折行。 */
+.modal.yl-dialog.yl-dialog-wide {
+  width: 560px;
+  max-width: min(560px, calc(100vw - 48px));
+}
+
+/* ── 居中竖版（variant: "center"，2026-10-04 用户在 temp/demo/dialog 三版里选 V1）──
+   384px 窄盒、徽章居中放大、标题正文按钮全部居中、底栏没有细线；
+   主按钮是**全站唯一的实心青蓝按钮皮**（白字 4.78:1）——特权只给这种
+   一句话问询弹窗，表单类弹窗（移除/导入/编辑）仍走左对齐壳。
+   实心钮的悬停不能走全站"中性描边"那套（实心面上看不见），只能加深 ——
+   深浅两主题各给一档静态值（同 --yl-acc-* 的双主题模式，别用 color-mix）。 */
+:root { --yl-cta-hover: hsl(193 62% 31%); }
+.theme-dark { --yl-cta-hover: hsl(193 48% 33%); }
+.modal.yl-dialog.yl-dialog-center {
+  width: 384px;
+  max-width: min(384px, calc(100vw - 48px));
+  padding: 26px 26px 20px;
+  border-radius: 16px;
+  text-align: center;
+}
+.yl-dialog-center .yl-dialog-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+.yl-dialog-center .yl-dialog-head-text { flex: 0 0 auto; }
+.yl-dialog-center .yl-dialog-mark {
+  width: 46px;
+  height: 46px;
+  flex-basis: 46px;
+  border-radius: 13px;
+}
+.yl-dialog-center .yl-dialog-mark svg { width: 22px; height: 22px; }
+.yl-dialog-center .yl-dialog-title { margin-top: 12px; font-size: 16px; }
+.yl-dialog-center .yl-dialog-body { margin-top: 8px; }
+/* 底栏竖排：DOM 顺序是 [状态行] 取消 主操作，column-reverse 翻成
+   主操作在上（实心撑满）、取消降为灰字在下 —— 正是 V1 的形状。 */
+.yl-dialog-center .yl-dialog-foot {
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 0;
+  margin-top: 18px;
+  padding-top: 0;
+  border-top: none;
+}
+.yl-dialog-center .yl-dialog-foot > button.yl-btn-primary {
+  width: 100%;
+  height: 38px;
+  padding: 0;
+  border: none;
+  border-radius: var(--yl-btn-r);
+  background: var(--yl-acc-solid);
+  box-shadow: none;
+  color: var(--yl-on-solid);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.yl-dialog-center .yl-dialog-foot > button.yl-btn-primary:hover:not(:disabled) {
+  background: var(--yl-cta-hover);
+  box-shadow: none;
+}
+.yl-dialog-center .yl-dialog-foot > button.yl-btn:not(.yl-btn-primary) {
+  height: auto;
+  margin-top: 8px;
+  padding: 5px 12px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.yl-dialog-center .yl-dialog-foot > button.yl-btn:not(.yl-btn-primary):hover:not(:disabled) {
+  background: none;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+
+/* 宿主那个 ✕ 收进全站统一的 28px 方钮皮（它原来是 5px 圆角、padding 也不同）。
+   ⚠️ 选择器必须带 `button.` 前缀（0-2-2 才够）压住宿主的 button 规则。
+   2026-10-04：皮肤跟 yl-btn-icon 一起写死（方案二 · 描边白底），不再读宿主变量。 */
+.modal.yl-dialog button.modal-close-button {
+  top: 10px;
+  inset-inline-end: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--yl-btn-border);
+  border-radius: var(--yl-btn-r);
+  background-color: var(--yl-btn-bg);
+  box-shadow: var(--yl-btn-shadow);
+  color: var(--yl-btn-fg);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease, color 120ms ease;
+}
+.modal.yl-dialog button.modal-close-button:hover {
+  background-color: var(--yl-btn-hover-bg);
+  border-color: var(--yl-btn-hover-border);
+  color: var(--yl-btn-hover-fg);
+}
+.modal.yl-dialog button.modal-close-button svg { width: 16px; height: 16px; }
+
+/* 「锁定」档（必选弹窗，如换账号归属）：右上那颗 ✕ 直接藏掉 —— 它点了也关不掉
+   （close() 有守卫），留着只会让人以为能取消。Esc / 点背景同样被守卫拦下。 */
+.modal.yl-dialog.yl-dialog-locked button.modal-close-button { display: none; }
+
+/* ── 壳的内里：标题行 / 正文 / 底栏 ─────────────────────────────────────
+   这三个块是 `dialog.ts::open()` 搭出来的固定层级，四个弹窗长得一样。 */
+.yl-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+/* 标题行左侧那颗 28px 图标：全站唯一的青蓝小面（tint + line 描边），弹窗的视觉落点 */
+.yl-dialog-mark {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--yl-acc-tint);
+  border: 1px solid var(--yl-acc-line);
+  color: var(--yl-acc-ink);
+}
+.yl-dialog-mark svg { width: 15px; height: 15px; }
+.yl-dialog-head-text { min-width: 0; flex: 1 1 auto; }
+.yl-dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.5;
+  color: var(--text-normal);
+}
+.yl-dialog-sub {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+.yl-dialog-body { margin: 14px 0 0; }
+/* 正文首行不再自己加外边距（`yl-lead` 自己带），免得两处都留白叠成两倍 */
+.yl-dialog-body > *:first-child { margin-top: 0; }
+
+/* 底栏：一条上边细线 + 状态行 + 居中的一排钮。
+   ⚠️ 按钮**居中**是 v2 的选择（比右对齐耐看，窄卡片尤其明显）；
+   主次靠位置 —— 主操作在右，`.yl-dialog-foot` 写入顺序即左右顺序。 */
+.yl-dialog-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+/* 状态行独占一行（不跟按钮抢同一行）—— 文案会长变（"正在读字幕…"），
+   塞在按钮中间会把整排顶歪 */
+.yl-dialog-note {
+  flex: 1 0 100%;
+  margin: 0 0 2px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+/* 空文案不占位：状态行是「有话才出现」，不是常驻一条横 */
+.yl-dialog-note:empty { display: none; }
+/* 「可以往下走了」那档。它是**状态**不是主次 —— 主次从不靠颜色（见按钮区） */
+.yl-dialog-note.is-ok { color: var(--yl-acc-ink); }
+
+/* 弹窗正文里的一段说明（「移除后这一集会从列表消失…」） */
+.yl-lead {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text-normal);
+  /* 中文长句在窄卡里容易两边毛刺重，标点挤压让整行看着端正一点 */
+  text-wrap: pretty;
+}
+
+/* 「安装日语词典」弹窗里的三条清单（体积 / 离线可用 / 只装本机）。
+   ⚠️ 宿主对 `ul` 有默认的内距和列表符号样式，这里全部收掉重来：
+   符号用一颗青色小圆点自画，视觉上是「三条并列的说明」而不是一份清单。 */
+.yl-dict-points {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.yl-dict-points > li {
+  position: relative;
+  margin: 0;
+  padding: 2px 0 2px 16px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+.yl-dict-points > li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.75em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--yl-acc-ink);
+}
+
+
+/* 开发环境提示条：只在开发构建里出现，必须一眼看出"连的不是线上" */
+.yl-env-banner {
+  border: 1px solid var(--text-warning);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+}
+.yl-env-banner strong {
+  color: var(--text-warning);
+  font-weight: 600;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   个人中心（PersonalCenterView）：资料（我的主页）/ 钱包（双轨）/ 学习 / 词库。
+   ⚠️ 2026-10-02 起**没有付费墙**：学习 / 词库不再被余额遮罩，余额退成顶栏一颗
+   淡胶囊 + 钱包页 B 轨里的一行字。别把「充值后使用」那套加回来。
+   视觉与学习页同一套 DNA：
+   · hero 晕（右上角 tint→透明 径向渐变 + line 描边）给"值得看的卡片"；
+   · 消费记录直接用学习页三步的时间线语言（圆点 + 连线）；
+   · 词库状态圈 = 时间线圆点（已掌握 soft 面 + ink 勾 / 学习中 tint 面 + 数字）；
+   · 全程只用 --yl-acc-* 色板，中性色走 Obsidian 变量（明暗自动适配）。
+   ════════════════════════════════════════════════════════════════ */
+.yl-pc {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--background-secondary);
+  /* 插件常开在右侧栏（320~500px），按自身宽度断点而不是窗口宽度 */
+  container-type: inline-size;
+  container-name: ylpc;
+}
+
+/* ⚠️ 2026-10-02：老页（顶部身份条 + 左栏索引贴 + 内容区）已删。
+   本段留下的 `.yl-pc` 根规则与 `.yl-pc-*` 内容类是**个人中心共用的内容词汇**：
+   · `.yl-pc-stack / grid2 / card / track* / tl* / wrow / input / link …` ——
+     资料 / 钱包 / 学习 / 词库四个 pane 都在用。
+   **别整段删。** */
+
+.yl-pc-stack > * + * { margin-top: 12px; }
+.yl-pc-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: stretch; }
+
+.yl-pc-card {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+/* hero 晕：右上角 tint→透明，同学习页原句卡。普通卡不要加。 */
+.yl-pc-wash {
+  border-color: var(--yl-acc-line);
+  background: radial-gradient(120% 130% at 78% 12%, var(--yl-acc-tint) 0%, transparent 76%);
+}
+/* 白卡加投影视：与「你的学习」四张指标卡（.yl-pc-stat）同一质感 ——
+   热力图卡 2026-10-05 起跟着用，wash 晕染不再掺进来。 */
+.yl-pc-card-lift {
+  border-radius: 16px;
+  padding: 16px 16px 14px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 6px 18px rgba(0, 0, 0, 0.05);
+}
+.theme-dark .yl-pc-card-lift {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.yl-pc-h3 { font-size: 13.5px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.yl-pc-cnt { font-size: 11.5px; color: var(--text-faint); font-weight: 400; margin-left: auto; }
+.yl-pc-loading { font-size: 12.5px; color: var(--text-faint); padding: 12px 2px; }
+
+/* 就地编辑行（资料页）：名称 | 说明 | 右侧操作 —— 点「修改」当场在行内展开，
+   不再弹窗、不跳页。行的高度和字号跟词库/历史列表的行保持一致，混排时齐平。 */
+.yl-pc-wrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.yl-pc-wrow:last-child { border-bottom: none; }
+.yl-pc-wlabel { width: 74px; flex-shrink: 0; font-size: 13px; font-weight: 600; }
+.yl-pc-wvalue { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-muted); }
+.yl-pc-wvalue > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 展开态：输入框顶替住原来的值 + 操作按钮，三者一行排开 */
+.yl-pc-wrow.is-editing { flex-wrap: wrap; padding-bottom: 12px; }
+.yl-pc-wrow.is-editing .yl-pc-wlabel { width: 100%; }
+
+.yl-pc-grow { flex: 1; min-width: 0; }
+.yl-pc-bal-row { display: flex; align-items: center; gap: 10px; }
+.yl-pc-num { font-variant-numeric: tabular-nums; }
+.yl-pc-xs { font-size: 11.5px; }
+.yl-pc-muted { color: var(--text-muted); }
+.yl-pc-faint { color: var(--text-faint); }
+
+/* ── 「你的学习」四张指标卡（2026-10-04 用户拍板 v2 渐变徽章版）────────────
+   设计稿 temp/demo/space_cards/v2.html。连续学习 / 等级 / 总句子数 / 总词汇量，
+   每项一个专属色渐变徽章：火焰橙红 / 等级青（品牌色）/ 句子紫 / 词汇绿。
+   火焰三态换的是徽章底色（图形不变）：红=连续中、蓝+雪花角标=宽限、灰=默认/已断；
+   等级徽章外套一圈升级进度环（.yl-pc-ring，SVG 圆弧，进度在 TS 里算好写进 dashoffset）。 */
+.yl-pc-grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; align-items: stretch; }
+.yl-pc-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 16px;
+  padding: 16px 16px 14px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 6px 18px rgba(0, 0, 0, 0.05);
+}
+.theme-dark .yl-pc-stat {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 6px 18px rgba(0, 0, 0, 0.25);
+}
+.yl-pc-tile {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  flex: none;
+}
+.yl-pc-stat > .yl-pc-tile { margin: 8px 0 8px; }
+.yl-pc-tile svg { width: 23px; height: 23px; }
+.t-fire { background: linear-gradient(135deg, #ff8a4c, #e8482f); box-shadow: 0 5px 12px hsl(12 80% 55% / 0.35); }
+.t-ice  { background: linear-gradient(135deg, #6db5f5, #2f7fd0); box-shadow: 0 5px 12px hsl(206 70% 50% / 0.35); }
+.t-ash  { background: linear-gradient(135deg, #a7aeb8, #7c848f); box-shadow: none; }
+.t-acc  { background: linear-gradient(135deg, var(--yl-acc-mid), var(--yl-acc-solid)); box-shadow: 0 5px 12px hsl(193 60% 40% / 0.35); }
+.t-sent { background: linear-gradient(135deg, #8a7bf7, #5b4bd6); box-shadow: 0 5px 12px hsl(251 60% 60% / 0.35); }
+.t-voc  { background: linear-gradient(135deg, #3ec9a7, #14907c); box-shadow: 0 5px 12px hsl(166 55% 45% / 0.35); }
+/* 宽限角标：小雪花圆牌钉在结冰火焰右下角 */
+.yl-pc-flake {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--background-primary);
+  color: #2f7fd0;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.yl-pc-flake svg { width: 11px; height: 11px; }
+.yl-pc-stat-label { font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.02em; margin-top: 12px; }
+.yl-pc-stat-num { font-size: 27px; font-weight: 800; line-height: 1.15; margin-top: 2px; letter-spacing: 0.01em; }
+.yl-pc-stat-unit { font-size: 12.5px; font-weight: 500; color: var(--text-faint); margin-left: 4px; }
+.yl-pc-stat-cap { font-size: 11.5px; color: var(--text-faint); margin-top: 6px; }
+/* 等级进度环：56×56 的 SVG 套住 40px 圆形徽章（inset 8px），fg 弧从顶端顺时针走。
+   ⚠️ 尺寸是算出来的、不能随便改：40 + 8×2 = 56 = 其余三张徽章的图标带（40 + margin 8×2），
+   四张卡的图标带必须等高，否则下面三行文字会整块错位（2026-10-04 修过一次 34px 错位）。 */
+.yl-pc-ring { position: relative; width: 56px; height: 56px; margin-bottom: 0; }
+.yl-pc-ring > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.yl-pc-ring circle { fill: none; stroke-width: 4.5; stroke-linecap: round; }
+.yl-pc-ring .yl-pc-ring-bg { stroke: var(--yl-acc-line); }
+.yl-pc-ring .yl-pc-ring-fg { stroke: var(--yl-acc-solid); }
+.yl-pc-ring .yl-pc-tile { position: absolute; inset: 8px; margin-bottom: 0; }
+
+/* ── 钱包页：双轨（自定义模型 / 内置模型）并列 ─────────────────────────────
+   2026-10-02 用户拍板：钱包页用版面讲"两种用法"，不再是"余额大卡 + 充值大按钮"。
+   2026-10-10 拍板高亮对称：谁生效（.is-pick）谁就是**青蓝卡**（acc-tint 全底 +
+   2px 描边当选中边框），没生效的那张纯白中性面。
+   余额只是 B 轨底部虚线行里的小字（margin-top:auto 把它压在卡底），充值是一条文字链。 */
+.yl-pc-sec { font-size: 11.5px; color: var(--text-faint); letter-spacing: 0.06em; }
+/* 页首说明块（2026-10-10）：黑字讲清"两条轨二选一"。故意不用 --text-faint ——
+   那是页签小字的灰，这里是要让人读进去的正文。 */
+.yl-pc-guide { margin-bottom: 14px; }
+.yl-pc-guide-main { font-size: 12.5px; color: var(--text-normal); line-height: 1.7; }
+.yl-pc-guide-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: var(--text-normal);
+  line-height: 1.7;
+}
+.yl-pc-track {
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  padding: 14px 16px;
+}
+.yl-pc-track.is-pick {
+  border: 2px solid var(--yl-acc-line);
+  background: var(--yl-acc-tint);
+  /* 2px 边框比 1px 厚 1px，补回内距让内容不跳动 */
+  padding: 13px 15px;
+}
+/* ── 双卡等权点选（2026-10-12 用户挑定方案一）──────────────────────────
+ * 两张卡平级：整卡可点 = 切到这条轨（卡内表单/按钮的点击不算，代码里拦）；
+ * 没保存过配置的自定义卡置灰不可选。radio 圆点跟 demo 同款。 */
+.yl-pc-track.is-clickable { cursor: pointer; }
+.yl-pc-track.is-clickable:hover { border-color: var(--yl-acc-line); }
+.yl-pc-track.is-pick:hover { border-color: var(--yl-acc-line); }
+.yl-pc-track.is-locked { opacity: 0.62; }
+.yl-pc-track.is-locked:hover { border-color: var(--background-modifier-border); }
+.yl-pc-track-radio {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid var(--background-modifier-border-hover);
+  position: relative;
+}
+.yl-pc-track.is-pick .yl-pc-track-radio { border-color: var(--yl-acc-line); }
+.yl-pc-track.is-pick .yl-pc-track-radio::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--yl-acc-line);
+}
+.yl-pc-track-top { display: flex; align-items: center; gap: 9px; }
+.yl-pc-track-ic {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--yl-acc-tint);
+  color: var(--yl-acc-ink);
+}
+.yl-pc-track-ic svg { width: 16px; height: 16px; }
+.yl-pc-track-ic.is-dim { background: var(--background-secondary); color: var(--text-muted); }
+.yl-pc-track-name { font-size: 13.5px; font-weight: 600; }
+.yl-pc-track-flag {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--text-faint);
+  background: var(--background-secondary);
+  white-space: nowrap;
+}
+.yl-pc-track.is-pick .yl-pc-track-flag { color: var(--yl-acc-ink); background: var(--background-primary); }
+/* 选中卡的图标芯片也是 acc-tint 底 —— 卡底已是 tint，芯片换白底才分得出来 */
+.yl-pc-track.is-pick .yl-pc-track-ic { background: var(--background-primary); }
+.yl-pc-track-copy { font-size: 12.5px; color: var(--text-muted); line-height: 1.7; margin-top: 10px; }
+.yl-pc-track-kv {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px dashed var(--background-modifier-border);
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.yl-pc-track-kv b { color: var(--text-normal); font-weight: 600; }
+.yl-pc-bullets { list-style: none; padding: 0; margin: 10px 0 0; font-size: 12.5px; color: var(--text-muted); }
+.yl-pc-bullets li { display: flex; gap: 7px; padding: 2px 0; }
+.yl-pc-bullets li svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 3px; color: var(--yl-acc-ink); }
+/* （此处原有 `button.yl-pc-link` —— 「测试连接」和「充值」共用的一条文字链皮肤。
+   2026-10-09 用户拍板：两颗都改回**标准按钮**（`yl-btn`），好跟全站保持一致。
+   它是这两颗的最后一个用户，规则一并删除，别留着当"以后可能有人用"的死代码。） */
+
+/* （此处原有「改用这条」文字钮 .yl-pc-track-switch —— 2026-10-12 改双卡等权
+   整卡点选后，切换动作被整卡点击替代，按钮删除，规则一并删。） */
+
+/* 筛选器只负责排列 —— 按钮本体是统一的 `yl-btn`，选中态也是统一的 `is-active`。
+   ⚠️ 原先这里有一整段 `.yl-pc-filters button { 自己的边框/底色/圆角 }`：它是 0-1-1，
+      刚好跟 `button.yl-btn` 同级，**排在后面所以赢** —— 筛选按钮于是跟别处的按钮
+      长得完全不是一套。这就是"统一"必须连这类**后代选择器**一起清的原因。 */
+.yl-pc-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+
+/* 词库排序钮：文字后跟一枚上下双三角（表头排序指示符同款语义）。
+   三种形态：两枚都淡显 = 默认（没在用它排序）；点亮上三角 = 升序；点亮下三角 = 降序。
+   ⚠️ 下面带 is-asc / is-desc 的两条已点名进 temp/css-audit.mjs 的 MUST 清单
+      —— 它们紧跟在注释块后面，少一个注释收尾符会整条静默消失，症状只是"三角不变色"。 */
+.yl-pc-filters .yl-vb-sort { display: inline-flex; align-items: center; gap: 5px; }
+.yl-sort-caret { width: 8px; height: 12px; flex-shrink: 0; display: block; }
+.yl-sort-caret path { fill: currentColor; opacity: 0.28; transition: opacity 120ms ease; }
+.yl-vb-sort.is-asc .yl-sort-caret path.up,
+.yl-vb-sort.is-desc .yl-sort-caret path.down { opacity: 1; }
+
+/* 搜索钮：紧贴搜索框右侧、钉住不缩 —— 这一排里**只有搜索框是弹性的**
+   （`flex: 0 1 300px`），窄面板要回缩也让它去缩，按钮被压就会裁字。 */
+.yl-pc-filters .yl-vb-search-btn { flex-shrink: 0; }
+
+/* 导出钮排在这排筛选按钮的最右端；图标 + 文字横排（图标是 setIcon 塞进来的 svg） */
+.yl-pc-filters .yl-vb-export { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; }
+
+/* ── 词库列表（2026-10-04 改版：无熟练档，一条词一行账）─────────────────
+   单词+读音 | 释义+仿写例句 | 次数+最近学习。竖排三段，行间细分隔线。 */
+.yl-vb-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.yl-vb-row:last-child { border-bottom: none; }
+.yl-vb-word { flex-shrink: 0; width: 128px; min-width: 0; }
+.yl-vb-surface { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-vb-reading { font-size: 11.5px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-vb-main { flex: 1; min-width: 0; }
+.yl-vb-meaning { font-size: 12.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-vb-example { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-vb-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.yl-vb-seen { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.yl-vb-last { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+/* 翻页：上一页 / 页码 / 下一页 居中一排 */
+.yl-vb-pager { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.yl-vb-page { font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+/* ── 消费记录（账户页底部，2026-10-10）──────────────────────────────────
+   一次只看**一个 3 个月窗口**：下拉选档（最近 3 个月 / 某个历史季度），
+   窗口内往下滚才继续加载 —— 往更早看是换档，不是一路滚下去。
+   下拉复用供应商那一套 .yl-pc-select*（观感同源）；这里只管标题行与哨兵。 */
+.yl-pc-spend-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* .yl-pc-h3 自带 margin-bottom 10px —— 进这一行后由 .yl-pc-spend-top 统一管 */
+.yl-pc-spend-top .yl-pc-h3 { flex: 1; min-width: 0; margin-bottom: 0; }
+.yl-pc-spend-range { flex-shrink: 0; width: 176px; }
+/* 一句说清"为什么不能一路往下滚"（网页端账户页同一句）。
+   top 那行自带 10px 下边距，这里往上收 4px，贴着下拉而不是孤零零一行 */
+.yl-pc-spend-hint { font-size: 11.5px; color: var(--text-faint); margin: -4px 0 6px; }
+/* 哨兵：滚动观察器盯着它进视口就再拉一页。它本身什么都不显示 */
+.yl-pc-spend-sentinel { height: 1px; }
+
+/* 消费时间线：与学习页三步导轨同一套圆点/连线。
+   圆点与右侧那一行文字垂直居中对齐（旧版靠 padding-top 硬凑，多行/单行
+   行高不同就对不齐）；条目间距交给 grid gap，连线再跨过 gap 接下一颗点。 */
+.yl-pc-tl { display: grid; gap: 12px; }
+.yl-pc-tl-item { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; }
+.yl-pc-tl-rail { position: relative; align-self: stretch; display: flex; align-items: center; justify-content: center; }
+.yl-pc-tl-rail::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: calc(50% + 13px);
+  bottom: -24px;
+  width: 1.5px;
+  background: var(--background-modifier-border);
+}
+.yl-pc-tl-item:last-child .yl-pc-tl-rail::after { display: none; }
+.yl-pc-tl-no {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+}
+.yl-pc-tl-no.day { width: 26px; height: 26px; border: 1.5px solid var(--background-modifier-border); background: var(--background-secondary); color: var(--text-faint); font-weight: 600; }
+.yl-pc-tl-no.spend { border: 1.5px solid var(--yl-acc-line); background: var(--yl-acc-tint); color: var(--yl-acc-ink); }
+.yl-pc-tl-no.plus { border: 1.5px solid var(--yl-acc-line); background: var(--yl-acc-soft); color: var(--yl-acc-ink); font-weight: 700; }
+.yl-pc-tl-dayrow { display: flex; align-items: center; gap: 8px; }
+.yl-pc-tl-day { font-size: 11.5px; color: var(--text-faint); }
+.yl-pc-tl-sum { margin-left: auto; font-size: 11.5px; font-weight: 600; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.yl-pc-tl-sum.plus { color: var(--yl-acc-ink); }
+.yl-pc-tl-body { margin-left: 8px; min-width: 0; }
+.yl-pc-tx { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 10px; font-size: 13px; }
+.yl-pc-tx:hover { background: var(--background-secondary); }
+.yl-pc-sc { flex: 1; min-width: 0; }
+.yl-pc-amt { font-weight: 600; }
+.yl-pc-amt.plus { color: var(--yl-acc-ink); }
+.yl-pc-bal { font-size: 11.5px; color: var(--text-faint); width: 64px; text-align: right; }
+
+/* 热力图：铺满卡片宽（2026-10-04 用户：右侧太空）——52 列均分卡片宽，
+   aspect-ratio 取 53/7 让格子随宽度近似正方形地长大；内容区本身限宽 1120，
+   格子最大 ~18px，不会胀成一坨色块。窄面板退回固定格子（见 @container）。 */
+.yl-pc-hm { display: grid; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; width: 100%; aspect-ratio: 53 / 7; }
+.yl-pc-hm > div { border-radius: 2px; background: var(--background-secondary); }
+/* 月份刻度：与 .yl-pc-hm 同一套列宽（1fr + 3px 缝，都拉满卡片宽），
+   标在含当月 1 号的那一列下面；窄面板随格子一起退回固定宽度横向滚。 */
+.yl-pc-months { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; margin-top: 5px; font-size: 10.5px; color: var(--text-faint); }
+.yl-pc-month { text-align: left; white-space: nowrap; }
+.yl-pc-hm > div.l1 { background: var(--yl-acc-soft); }
+.yl-pc-hm > div.l2 { background: var(--yl-acc-mid); }
+.yl-pc-hm > div.l3 { background: var(--yl-acc-solid); }
+
+/* 热力图悬停读数：全图共用一枚挂在 body 上的固定定位小黑牌（原生 title 的
+   系统提示框天生慢一秒，2026-10-09 用户点名要"瞬间出"）。pointer-events 必须
+   关掉 —— 不然牌子自己会挡住下面格子的 mouseover，来回闪烁。
+   ⚠️ 这条已点名进 temp/css-audit.mjs 的 MUST 清单：被吞的症状是悬停完全不出现，
+      完全静默。 */
+.yl-pc-hm-tip {
+  position: fixed;
+  z-index: 40;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: var(--yl-acc-solid);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+}
+.yl-pc-legend { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--text-faint); margin-top: 8px; }
+.yl-pc-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+.yl-pc-legend-dot.l1 { background: var(--yl-acc-soft); }
+.yl-pc-legend-dot.l2 { background: var(--yl-acc-mid); }
+.yl-pc-legend-dot.l3 { background: var(--yl-acc-solid); }
+.yl-pc-legend-note { margin-left: auto; }
+
+/* ── 学习 / 词库的内容包装 ──────────────────────────────────────────────
+   ⚠️ 这里原有一整套「付费遮罩」（.yl-pc-pane-inner.yl-pc-blur + .yl-pc-mask /
+   -box / -lock / -title / -copy / -actions / -note）：余额为 0 时把内容 blur 掉，
+   压一层「请充值后使用 / 立即领取 ¥10」。2026-10-02 用户拍板整块撤掉 ——
+   学习、词库读的是本机记录，跟余额无关，不该被钱挡着。**别加回来。** */
+.yl-pc-pane-inner { min-height: 40px; }
+
+/* 表单与字段行（资料 / BYOK 配置） */
+.yl-pc-input {
+  width: 100%;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+.yl-pc-input:focus { outline: none; border-color: var(--yl-acc-line); }
+
+/* ── API Key 眼睛钮（2026-10-12 用户拍板）────────────────────────────────
+ * 框里永远摆真值：password 掩码成圆点表示「有内容」，空 = 真的没存；
+ * 眼睛只切换明文。🔥 触发器是 <button>，宿主 button 规则会钉 30px 高、
+ * 白底、边框 —— 全部显式压掉（同 .yl-pc-select-btn 的坑）。 */
+.yl-pc-keywrap { position: relative; }
+.yl-pc-keywrap .yl-pc-input { padding-right: 36px; }
+button.yl-pc-eye {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+button.yl-pc-eye:hover,
+button.yl-pc-eye:focus {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+}
+button.yl-pc-eye svg { width: 15px; height: 15px; }
+/* 锁定态（2026-10-10 拍板的「保存/编辑」机制）：配置已保存，输入框 / 供应商
+   下拉只读。降透明度 + 灰底，一眼看出"点不动"，跟编辑态区分。 */
+.yl-pc-input:disabled,
+button.yl-pc-select-btn:disabled {
+  opacity: 0.62;
+  background: var(--background-secondary);
+  cursor: not-allowed;
+}
+/* （此处原有一套 .yl-pc-btn / .yl-pc-btn-solid / .yl-pc-btn-ghost —— 2026-10-01
+   全站按钮统一后全部撤掉：它们本来写的底色/字色就被宿主压没了，只剩一圈青蓝边
+   和各自为政的圆角内距。现在这些位置一律用顶部的 `yl-btn` / `yl-btn-primary`。） */
+.yl-pc-form { display: grid; gap: 10px; margin-top: 12px; }
+.yl-pc-field { display: grid; gap: 3px; }
+
+/* ── 供应商下拉（2026-10-09 用户拍板）────────────────────────────────────
+   接口地址不再让人对着官网文档抄：**选一家 = 地址填好**。版面上只出品牌名，
+   真实地址挂在零延迟悬停牌上（.yl-pc-hm-tip —— 原生 title 的系统提示框慢一秒，
+   2026-10-09 用户点名弃用）。「自定义」那档才露出 .yl-pc-input 输入框。
+   ⚠️⚠️ 触发器**不复用** .yl-pc-input，而是照**宿主的 `input[type='text']` 那条规则**
+      克隆：那条是 0-1-1，`.yl-pc-input` 是 0-1-0 —— 旁边那几颗输入框的
+      底 / 边 / 圆角 / 内距 / 高度**实际全是宿主给的**，插件里写的那几个值压根没生效。
+      照自己的值写就会比它们高 4px（实测 34.19px vs 30px），一眼看得出不是一套。
+      克隆宿主的值 ⇒ 跟着主题变量走，换主题两边一起变。
+      触发器是 <button>，还得带 `button.` 前缀（0-1-1）压住宿主的
+      `button:not(.clickable-icon)`，否则会长成宿主原生按钮。 */
+.yl-pc-select { position: relative; }
+button.yl-pc-select-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* ↓ 这一组逐条对齐宿主 input[type='text']… 那条规则（见上面说明） */
+  height: var(--input-height);
+  padding: var(--input-padding, 4px 8px);
+  border: var(--input-border-width, 1px) solid var(--background-modifier-border);
+  border-radius: var(--input-radius, 8px);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+  box-shadow: none;
+  font-family: inherit;
+  font-size: var(--font-ui-small);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+button.yl-pc-select-btn:hover,
+button.yl-pc-select-btn.is-open {
+  border-color: var(--yl-acc-line);
+  background: var(--background-modifier-form-field);
+  box-shadow: none;
+}
+.yl-pc-select-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 自定义那档把名字压灰一档 —— 跟"选了某一家"在观感上分开，一眼能看出是在手填 */
+button.yl-pc-select-btn.is-custom .yl-pc-select-name { color: var(--text-muted); }
+.yl-pc-select-chev { display: flex; flex-shrink: 0; color: var(--text-faint); }
+.yl-pc-select-chev svg { width: 15px; height: 15px; }
+button.yl-pc-select-btn.is-open .yl-pc-select-chev { transform: rotate(180deg); }
+/* 菜单是**浮层**（absolute）：不参与 .yl-pc-form 的 grid 排布 ——
+   展开时不该把「API Key」「模型名」往下顶。z-index 低于悬停牌（40），
+   牌子要压在菜单上面才读得清。 */
+.yl-pc-select-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  box-shadow: 0 10px 26px rgb(0 0 0 / 0.14);
+}
+.yl-pc-select-menu.is-hidden { display: none; }
+.yl-pc-select-group { padding: 6px 8px 2px; font-size: 11px; color: var(--text-faint); }
+/* ⚠️ 选项也是 `<button>` —— 同样必须带 `button.` 前缀，且必须显式给 height:auto：
+   宿主 `button` 那条把高度钉成 var(--input-height)（30px），我们的行高 + 上下内距
+   比它高，不覆盖就会把字裁掉。 */
+button.yl-pc-select-item {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  box-shadow: none;
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+button.yl-pc-select-item:hover,
+button.yl-pc-select-item.is-active {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+}
+button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink); }
+
+/* 「测试连接」一行：动作（标准按钮）在左，灰字说明跟在右边 */
+.yl-pc-testrow { display: flex; align-items: center; gap: 10px; }
+/* （此处原有余额 > 0 时锁死自定义模型的两条压灰规则 —— 2026-10-05 用户拍板：
+   自定义模型随时可配置，消耗先走余额；锁撤掉，规则一并删除。
+   .yl-pc-locknote 也一并删除 —— 它唯一的用户「余额用完后自动启用」提示条
+   随 2026-10-12 双卡自由选一起退场。） */
+
+/* 卡片里的说明段：比正文字小一号、行距放宽 —— 一整句话挤在 12px 里没人读 */
+.yl-pc-sub { font-size: 12.5px; color: var(--text-muted); line-height: 1.65; }
+/* 一组操作的横排区（「这台设备」里的退出登录） */
+.yl-pc-inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+/* 热力图横向滚动容器：只有窄面板（格子退回固定尺寸）才可能超宽，overflow 交给它 */
+.yl-pc-hm-wrap { overflow-x: auto; padding-bottom: 4px; }
+
+/* ── 历史（2026-10-09 V4 时间线版）────────────────────────────────────
+   组卡沿用 .yl-pc-card + .yl-pc-h3 组头；工具行（排序钮 / 导出）复用词库的
+   .yl-pc-filters + .yl-vb-sort + .yl-vb-export。这里只管时间线本体：
+   组内左侧一条 accent 轴，每句一个节点，节点上先标「哪天学的」（.yl-sl-tlday），
+   句子行（句号 │ 日语 ┊ 中文 …… 打开钮）挂在节点下；用户的笔记用白色
+   纸张容器（.yl-sl-paper，质感对齐学习页笔记）跟在句下。
+   ⚠️ 行本身不可点（2026-10-04 用户：动作只在按钮上，整行 hover/指针都会误导），
+   所以没有 cursor 和 hover 底色。 */
+.yl-sl-list {
+  position: relative;
+  margin: 6px 0 0 8px;
+  padding-left: 22px;
+}
+.yl-sl-list::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 1.5px;
+  background: var(--yl-acc-line);
+  border-radius: 2px;
+}
+.yl-sl-item { position: relative; padding: 7px 0 13px; }
+.yl-sl-item:last-child { padding-bottom: 2px; }
+.yl-sl-item::before {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: 14px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--background-primary);
+  border: 2px solid var(--yl-acc-mid);
+  transform: translateX(-2px);
+}
+.yl-sl-tlday { font-size: 11px; color: var(--text-faint); margin-bottom: 3px; }
+/* 「关联恢复」留痕跟在日期后：淡青蓝小字，看得出这行进度是接回来的 */
+.yl-sl-recovery { color: var(--yl-acc-ink); }
+.yl-sl-no {
+  flex-shrink: 0;
+  width: 24px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.yl-sl-line { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.yl-sl-ja { flex: 0 1 auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-sl-vline { flex: none; width: 1px; height: 14px; background: var(--background-modifier-border); }
+.yl-sl-zh { flex: 1 1 0; min-width: 0; font-size: 12.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-sl-side { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+/* 笔记（用户在学习页亲手写的）：白纸容器直接跟在句下，
+   左缘对齐日语句子（24px 句号列 + 12px 间距 = 36px）。 */
+.yl-sl-paper {
+  margin: 7px 0 0 36px;
+  padding: 9px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;      /* 笔记是多行文本，纸上怎么折的这里就怎么摆 */
+  overflow-wrap: anywhere;    /* 自由文本，长串也不许撑破 */
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%), 0 2px 6px rgb(0 0 0 / 5%);
+  transition: box-shadow 120ms ease;
+}
+.yl-sl-paper:hover { box-shadow: 0 3px 8px rgb(0 0 0 / 8%), 0 7px 16px rgb(0 0 0 / 8%); }
+/* 视频不在 / 孤儿行：句号/句子/译文降透明（打开钮已藏），节点圆点也褪色；
+   笔记是用户自己的内容，照常全色可读。 */
+.yl-sl-item.is-missing .yl-sl-no,
+.yl-sl-item.is-missing .yl-sl-ja,
+.yl-sl-item.is-missing .yl-sl-zh { opacity: 0.45; }
+.yl-sl-item.is-missing::before { border-color: var(--background-modifier-border); }
+.yl-sl-hint { margin-top: 10px; font-size: 11.5px; color: var(--text-faint); }
+
+/* ── 窄面板（插件常在右栏 320~500px）────────────────────────────────────
+   用容器查询而不是媒体查询：面板宽不一定是窗口宽（右侧栏可以拖）。 */
+@container ylpc (max-width: 980px) {
+  /* 中等宽度四张卡先退两列（2×2），再窄由下面的 620 断点接管 */
+  .yl-pc-grid4 { grid-template-columns: 1fr 1fr; }
+}
+@container ylpc (max-width: 620px) {
+  .yl-pc-grid2 { grid-template-columns: 1fr; }
+  /* 四张指标卡退两列：每张只剩徽章+数字，320px 侧栏也放得下 */
+  .yl-pc-grid4 { grid-template-columns: 1fr 1fr; }
+  /* 窄面板铺不开 52 列：退回固定 10px 格子，横向滚动交给 .yl-pc-hm-wrap；
+     月份刻度跟着格子退回同宽，滚动时才对得齐 */
+  .yl-pc-hm { width: max-content; grid-template-rows: repeat(7, 10px); grid-auto-columns: 10px; aspect-ratio: auto; }
+  .yl-pc-months { width: max-content; grid-auto-columns: 10px; }
+}
+
+/* ── 个人中心 ───────────────────────────────────────────────────────────
+   2026-10-02 起个人中心只剩这一份：标题行右上角四个分区药丸 + 正文滚动区。
+
+   版式照 temp/demo/yl-unified/me.html（原 temp/demo/new_space/v3-two-track.html 的单栏
+   长滚动仍然有效）：身份头 → 四个小结 → 双轨 → 社区六宫格 → 渐变分享条 → 底部说明。
+   取值全部走既有变量，不引入第二个色相（原暖橙已在 10-02 归并到青蓝 193°）。
+
+   ⚠️ 类名仍是 .yl-v3-*（改名纯属 churn，不改）。
+   ⚠️ 2026-10-04 参照 temp/demo/space/v1-顶部按钮重排.html 重排：编辑资料收进昵称行
+      （button.yl-v3-edit / .yl-v3-editwrap）、退出登录单独一行（.yl-v3-logout-row）、
+      标题行返回与页签切开（.yl-card-nav-sep）。
+   ⚠️ 根容器沿用容器名 `ylpc`：个人中心各 pane 共用的 .yl-pc-grid2 /
+      .yl-pc-stack 等既有规则与断点，靠它才生效。 */
+
+/* 根容器：照学习页 .yl-study-root 的骨架（8px 内边距 + flex 列 + 满高 + 容器锚点）。
+   ⚠️ container-name 仍是 `ylpc`：下面 @container ylpc 的断点、以及内容区共用的
+      .yl-pc-grid2 / .yl-pc-stack 规则都靠它。 */
+.yl-v3 {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--size-4-2, 8px);
+  box-sizing: border-box;
+  background: var(--background-secondary);
+  container-type: inline-size;
+  container-name: ylpc;
+}
+
+/* 内容包裹层：两侧留白在这一层（同学习页 .yl-study-wrap），
+   并把它下面的限宽旋钮钉到 1120 —— 标题行的 .yl-card-header 读的就是它。 */
+.yl-v3-wrap {
+  width: 100%;
+  box-sizing: border-box;
+  padding-inline: 40px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  --yl-content-max: 1120px;
+}
+
+/* 正文滚动区：限宽居中，与标题行同宽 */
+.yl-v3-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  max-width: var(--yl-content-max);
+  margin-inline: auto;
+  padding-bottom: 40px;
+  /* 滚动条隐藏、滚动保留（2026-10-02 用户：这根条子在这页"不好看"）。
+     ⚠️ 只是看不见，滚轮 / 触控板 / 键盘照样能滚 —— 不是 overflow: hidden。 */
+  scrollbar-width: none;
+}
+.yl-v3-body::-webkit-scrollbar {
+  display: none;
+}
+.yl-v3-pane { display: none; }
+.yl-v3-pane.on { display: block; }
+
+/*
+ * 资料页顶部的「我是谁 + 学了多少」：身份头 + 四个小结。
+ *
+ * 这一块是长期读数，往下翻时**钉在正文顶部**，滚动的只有它下面的内容
+ * （2026-10-02 用户要求：左边这块核心区域固定，不要跟着滚）。
+ *
+ * ⚠️ 背景必须不透明：它是 .yl-v3-body 的滚动内容，滚上来的卡片会从底下透出来。
+ *    用 --background-primary 跟正文表面同色 —— 看不出这是一层"盖上去"的
+ *    （2026-10-02 用户：灰底不好看，干掉；灰的是 --background-secondary，别再回去）。
+ * ⚠️ z-index 要抬起来，否则被后面卡片的圆角/描边压住。
+ */
+.yl-v3-hero {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--background-primary);
+}
+/* 底边一条极短的渐隐：不然内容滑到边界会"齐刷刷断掉"，像渲染坏了 */
+.yl-v3-hero::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 10px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--background-primary), transparent);
+}
+
+/* ① 身份头（轻）：头像 + 昵称/等级 + 副行 + 「编辑资料」 */
+.yl-v3-me { display: flex; align-items: center; gap: 13px; }
+.yl-v3-avatar {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--yl-acc-ink);
+  background: linear-gradient(150deg, var(--yl-acc-tint), var(--yl-acc-line));
+  overflow: hidden;
+}
+/* 头像图绝对定位铺满盖住字母兜底：容器是 grid，img 若占普通格子会跟
+   字母 span 上下各排一行（上半截文字、下半截图的怪相，2026-10-05）。 */
+.yl-v3-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* 编辑面板里「头像」行的小号预览圆 */
+.yl-v3-avatar-sm { width: 36px; height: 36px; font-size: 15px; }
+.yl-v3-id { flex: 1; min-width: 0; }
+.yl-v3-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.yl-v3-nick { font-size: 17px; font-weight: 650; }
+.yl-v3-lvl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--yl-acc-ink);
+  background: var(--yl-acc-tint);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.yl-v3-sub { font-size: 12.5px; color: var(--text-faint); margin-top: 2px; }
+/* 「编辑资料」/「连接账号」：昵称行内的紧凑小药丸 —— 24px 高，比常规钮矮一档，
+   跟旁边的 Lv 徽标一个量级（2026-10-04 从右上角挪进来）。静息带一圈细描边，
+   表明它是这一页的次要动作。
+   ⚠️ 它带 `yl-btn` 基底（createButton 默认 pill），底/描边/悬停全由基底给；
+      这里只压**形状**（高度/内距/药丸圆角/字号）与**字色**。
+   2026-10-04：字色与投影改成写死的方案二皮肤（原 --text-muted + 宿主 inset 描边）。 */
+button.yl-v3-edit {
+  height: 24px;
+  padding: 0 11px;
+  gap: 5px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--yl-btn-muted-fg);
+  box-shadow: var(--yl-btn-shadow);
+}
+button.yl-v3-edit:hover:not(:disabled) {
+  color: var(--yl-btn-hover-fg);
+}
+button.yl-v3-edit .svg-icon { width: 12px; height: 12px; }
+
+/* 「编辑资料」面板：身份头正下方就地展开（2026-10-04。原先是页面最底部的
+   一张隐藏卡，点按钮视觉上毫无反馈）。收起时 0fr 裁平，展开时滑出来。 */
+.yl-v3-editwrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    grid-template-rows 240ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.yl-v3-editwrap.on {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+}
+.yl-v3-editclip { overflow: hidden; min-height: 0; }
+.yl-v3-editclip .yl-pc-card { margin-top: 14px; }
+
+/* ② 四个小结已删（2026-10-04 用户叉掉）：核心指标改由「你的学习」节的
+   四张渐变徽章卡承担（.yl-pc-grid4 / .yl-pc-stat，见上面共用段）。 */
+
+/* 小节标题（「你是怎么用洋流的」/「你的学习」）：不加粗（2026-10-04 用户拍板，
+   两个页面同角色标签统一常规字重）。 */
+.yl-v3-sec {
+  font-size: 12px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  margin: 32px 0 12px;
+}
+
+/* ④ 渐变分享条 */
+.yl-v3-share {
+  margin-top: 14px;
+  border-radius: 18px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, var(--yl-acc-tint), var(--background-secondary));
+}
+.yl-v3-share-t { font-size: 13.5px; font-weight: 650; }
+.yl-v3-share-d { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.6; }
+
+/* ⑤ 底部说明 */
+.yl-v3-foot {
+  margin-top: 30px;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.8;
+  text-align: center;
+}
+
+/* 退出登录：页底单独一行（2026-10-04。原来混在编辑表单里 —— 账号级动作
+   不和资料字段装一起）。分隔线 + 居中的次要文字钮。 */
+.yl-v3-logout-row {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--background-modifier-border);
+  text-align: center;
+}
+
+/* 窄面板断点（容器名 ylpc，与内容区共用一套；这里只补本页自己的几处布局） */
+@container ylpc (max-width: 949.5px) {
+  /* 40px 侧留白在窄面板里会把正文挤没，收到 24px（与列表页 / 原型同源） */
+  .yl-v3-wrap { padding-inline: 24px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   个人中心「数据」页（2026-10-02 新增）
+   版式照 temp/demo/data.html：合计条 → 四张默认合拢的大类条 → 导出与清理。
+   大类条上写好「本地多少 / 云端多少 / 会不会同步」，点开才是明细 —— 用户看一眼
+   就能知道量级，不必先展开。
+
+   ⚠️ 给 button / input 写样式一律 `button.xxx` / `input.xxx`（0-1-1）：宿主有
+      `button:not(.clickable-icon)` 与 `input[type=text]` 的同特异性规则，单类名会被压掉。
+   ═══════════════════════════════════════════════════════════════════════ */
+.yl-dt-sub { font-size: 12.5px; color: var(--text-muted); line-height: 1.7; }
+/* 大类尾巴上那行小字：在「最后一行 → 卡片底」之间**垂直居中**（2026-10-10 用户拍板）。
+   上边距取卡片自身的内边距（14px），上下的空当就一样宽；不加就会紧贴着上面那行，
+   底下却空一大截。 */
+.yl-dt-cbody > .yl-dt-sub { margin-top: 14px; }
+.yl-dt-xs { font-size: 11.5px; color: var(--text-faint); line-height: 1.7; }
+
+/* 图标容器：setIcon 生成的 svg 由这里定尺寸，颜色跟着父级走 */
+.yl-dt-ic {
+  flex: none;
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+}
+.yl-dt-ic svg.svg-icon { width: 100%; height: 100%; stroke: currentColor; fill: none; }
+/* 数据页自己的小号按钮（素材行「显示」、筛选器）：比常规药丸矮一档 */
+button.yl-dt-sm { height: 26px; padding: 0 10px; font-size: 12px; }
+
+/* ① 合计：左边本机怎么分的，右边只一朵云说状态。
+   ⚠️ min-height 是给「右侧那朵云改成上下结构」留出的地方（2026-10-10 用户拍板）：云加文字
+      是竖着摞的，比原来横排高；左边那列只有两行不会自己长高，靠这个下限把整张卡撑起来。 */
+.yl-dt-hero {
+  display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 22px; min-height: 124px; align-items: stretch;
+}
+.yl-dt-hero-num { display: flex; align-items: baseline; gap: 6px; }
+.yl-dt-hero-num b { font-size: 28px; font-weight: 650; letter-spacing: -0.02em; }
+.yl-dt-hero-num span { font-size: 12.5px; color: var(--text-faint); }
+.yl-dt-bar {
+  display: flex; height: 10px; border-radius: 5px; overflow: hidden;
+  margin: 12px 0 8px; background: var(--background-secondary);
+}
+.yl-dt-bar > div { height: 100%; min-width: 0; }
+/* 三段就是下面那三个大类，图例与卡片一一对应 */
+.yl-dt-bar > .k-media { background: var(--yl-acc-mid); }
+.yl-dt-bar > .k-local { background: var(--yl-acc-soft); }
+.yl-dt-bar > .k-archive { background: var(--yl-acc-line); }
+.yl-dt-bar-key { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11.5px; color: var(--text-muted); }
+.yl-dt-bar-key span { display: inline-flex; align-items: center; gap: 5px; }
+.yl-dt-bar-key i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.yl-dt-cloud-side {
+  padding-left: 22px; border-left: 1px solid var(--background-modifier-border);
+  display: flex; flex-direction: column; justify-content: center; gap: 10px;
+}
+/* 右侧那朵云：同步中是完整的一朵，没在同步就划一道斜线（2026-10-10 用户拍板）。
+   ⚠️ 这里**不摆**"云端会有多大" —— 云端是本机的一份副本，不是额外占用。
+   版式是**上下结构**（2026-10-10 用户拍板）：上面一朵云，下面两行字，居中。
+   图标 45px：比原来那版 30px 大 50%，竖排时它才是这块的视觉锚点。 */
+.yl-dt-cloud {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; text-align: center; gap: 10px;
+}
+.yl-dt-cloud-ic { width: 45px; height: 45px; color: var(--text-muted); }
+.yl-dt-cloud-body { min-width: 0; text-align: center; }
+/* 未登录时这朵云整块可点（跳网页登录页）：**只要一个手型光标，不加悬停底色**。 */
+.yl-dt-cloud.is-link { cursor: pointer; }
+.yl-dt-cloud-t { font-size: 13px; font-weight: 600; }
+.yl-dt-cloud-d { font-size: 11.5px; color: var(--text-faint); line-height: 1.7; margin-top: 3px; }
+
+/* ③ 云同步被余额挡住时的提醒带（2026-10-10 用户拍板「V4」：卡外整宽、警示黄）。
+   两处口径成对：状态栏那颗灯（main.ts updateStatusBar 的 syncPaused 分支）说的是
+   同一件事，改一边记得改另一边。
+   ⚠️ 黄色不是随手挑的：余额用尽不是错误（学习功能照常、数据都在本机），
+      用 --yl-bad-* 的红会让人以为数据坏了；--yl-warn-* 的语义正是
+      「还能继续、但少点东西」。深浅两套值都在各自的变量块里给好了，别写死。 */
+.yl-dt-band {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px; padding: 11px 12px;
+  border: 1px solid var(--yl-warn-line);
+  border-left: 3px solid var(--yl-warn-ink);
+  border-radius: 10px;
+  background: var(--yl-warn-tint);
+}
+.yl-dt-band-ic { color: var(--yl-warn-ink); }
+.yl-dt-band-body { flex: 1; min-width: 0; }
+.yl-dt-band-t { font-size: 12.5px; font-weight: 600; color: var(--yl-warn-ink); }
+.yl-dt-band-d { font-size: 11.5px; color: var(--text-muted); line-height: 1.7; }
+
+/* ② 大类条：默认合拢。右侧那颗图标就是这一类的去向（软盘 / 云）。 */
+/* 悬停 = **条那一行**变色（2026-10-10 用户拍板）。
+   合拢时整张卡就是这一条，所以整卡一起变色（用户要的是"不要只有中间那一条变色"）；
+   ::before 铺一层悬停色：它是半透明的 modifier 叠加在卡片自己的底色上，色调与
+   Obsidian 原生的悬停一致，铺满整卡（连卡内边距一起）。
+   ⚠️ `isolation: isolate` 必须留着 —— 没有它，z-index:-1 的 ::before 会掉到卡片
+      底色**后面**去（整层看不见）；有了它，::before 就正好压底色、垫在内容下面。
+   ⚠️ 展开后**绝不能**再让这层灰盖到明细上（2026-10-10 用户拍板：正文整片发灰
+      没法读）。所以展开态干脆不用这层 ::before，改成让条那一行自己带底色并横向
+      铺满 —— 见下面的 `.yl-dt-cat.is-open > .yl-dt-chead`。 */
+.yl-dt-cat { position: relative; isolation: isolate; }
+.yl-dt-cat::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; background: var(--background-modifier-hover);
+  opacity: 0; transition: opacity 110ms ease; pointer-events: none;
+}
+.yl-dt-cat:not(.is-open):hover::before { opacity: 1; }
+.yl-dt-chead {
+  display: grid; align-items: center; gap: 12px;
+  grid-template-columns: 20px minmax(0, 1fr) auto 16px;
+  padding: 4px 2px; cursor: pointer; border-radius: 8px;
+  transition: background 110ms ease;
+}
+/* 展开态：条那一行横向铺满整卡（负外边距把卡片内边距回填掉），悬停只亮这一行。
+   🔥 -16px 必须跟 `.yl-pc-card` 的左右内边距一致（它是 `14px 16px`）；行内距取 18px
+      正好把原来的 18px（16 卡片内边距 + 2 条自身内距）还回去 —— 图标与右侧那格的
+      横向位置跟合拢时**纹丝不动**，只是底色铺满了。 */
+.yl-dt-cat.is-open > .yl-dt-chead { margin: 0 -16px; padding: 4px 18px; }
+.yl-dt-cat.is-open > .yl-dt-chead:hover { background: var(--background-modifier-hover); }
+.yl-dt-chead .yl-dt-ic.ic { width: 18px; height: 18px; }
+.yl-dt-chead .n { font-size: 13.5px; font-weight: 600; min-width: 0; }
+.yl-dt-chead .n small {
+  display: block; font-weight: 400; font-size: 11.5px;
+  color: var(--text-faint); margin-top: 2px; line-height: 1.6;
+}
+/* 去向 + 大小：**先说大小，再一颗图标，图标下面一行小字写「本地 / 云端」**
+   （2026-10-10 用户拍板）。软盘=只在本机，云=跟着账号走，云带斜线=现在没在同步 ——
+   图标说的是眼下的状态，小字说的是这一类的性质。
+   图标 20px：比原来那版 16px 大约多一半面积，跟旁边 13.5px 的字重才配得上。 */
+.yl-dt-cmark {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  white-space: nowrap;
+}
+.yl-dt-cmark b { font-size: 13.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.yl-dt-cmark-unit { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.yl-dt-cmark-ic { width: 20px; height: 20px; color: var(--text-muted); }
+.yl-dt-cmark-lb { font-size: 10.5px; line-height: 1; color: var(--text-faint); }
+.yl-dt-chev { width: 16px; height: 16px; color: var(--text-faint); transition: transform 120ms ease; }
+.yl-dt-cat.is-open .yl-dt-chev { transform: rotate(90deg); }
+.yl-dt-cbody {
+  display: none; margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.yl-dt-cat.is-open .yl-dt-cbody { display: block; }
+/* 窄面板才出现的一行汇总（数字列收起来时用） */
+.yl-dt-csum { display: none; margin-top: 4px; font-size: 11.5px; color: var(--text-faint); }
+
+/* 素材行的异常状态：文件不在了 / 没能收进素材库 */
+.yl-dt-state {
+  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  font-size: 11.5px; line-height: 1; padding: 4px 8px; border-radius: 999px;
+  color: var(--text-muted); border: 1px solid var(--background-modifier-border);
+}
+.yl-dt-state.is-outside,
+.yl-dt-state.is-missing {
+  color: var(--yl-warn-ink); background: var(--yl-warn-tint); border-color: var(--yl-warn-line);
+}
+
+/* 明细表：数据 / 条目 / 大小 —— 去向由大类条那颗图标说了，行里不再重复一列 */
+.yl-dt-thead {
+  display: grid; grid-template-columns: minmax(0, 1fr) 82px 84px;
+  gap: 12px; padding: 6px 2px; border-bottom: 1px solid var(--background-modifier-border);
+  font-size: 11.5px; color: var(--text-faint);
+}
+.yl-dt-thead span:nth-child(n+2) { text-align: right; }
+.yl-dt-tr {
+  display: grid; grid-template-columns: minmax(0, 1fr) 82px 84px;
+  gap: 12px; align-items: center; padding: 9px 2px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.yl-dt-tr:last-child { border-bottom: none; }
+.yl-dt-tr > .n { font-size: 13px; min-width: 0; }
+.yl-dt-tr > .n small {
+  display: block; font-size: 11.5px; color: var(--text-faint); margin-top: 2px; line-height: 1.6;
+}
+.yl-dt-tr > .c, .yl-dt-tr > .s {
+  font-size: 12.5px; color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums;
+}
+
+/* 素材清单：按作品分组 */
+.yl-dt-groups { margin-top: 4px; }
+.yl-dt-group + .yl-dt-group { border-top: 1px solid var(--background-modifier-border); }
+.yl-dt-ghead { display: flex; align-items: center; gap: 10px; padding: 10px 2px; cursor: pointer; }
+.yl-dt-ghead:hover { background: var(--background-modifier-hover); }
+.yl-dt-chev2 { width: 14px; height: 14px; color: var(--text-faint); transition: transform 120ms ease; }
+.yl-dt-group.is-open .yl-dt-chev2 { transform: rotate(90deg); }
+.yl-dt-gname { font-size: 13px; font-weight: 600; }
+.yl-dt-gmeta { font-size: 11.5px; color: var(--text-faint); }
+.yl-dt-files { padding-bottom: 6px; }
+.yl-dt-group:not(.is-open) .yl-dt-files { display: none; }
+.yl-dt-file {
+  display: grid; align-items: center; gap: 10px;
+  grid-template-columns: 20px minmax(0, 1.05fr) 74px 104px minmax(0, 1.35fr) auto;
+  padding: 7px 2px 7px 4px; border-radius: 8px;
+}
+.yl-dt-file:hover { background: var(--background-secondary); }
+.yl-dt-file > .yl-dt-ic.ic { width: 16px; height: 16px; color: var(--text-faint); }
+.yl-dt-fname { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.yl-dt-fmeta { font-size: 11.5px; color: var(--text-faint); }
+.yl-dt-fsize { font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; }
+/* direction: rtl 是为了让尾部（文件名）留在视野里，前面对 Mixed bidi 没有副作用 */
+.yl-dt-fpath {
+  font-size: 11.5px; color: var(--text-faint); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+}
+.yl-dt-file.is-missing { background: var(--yl-warn-tint); }
+.yl-dt-file.is-missing .yl-dt-fname { color: var(--yl-warn-ink); }
+
+/* 素材清单顶上的工具条（上面先摆句子原文、跟读录音那两行，所以要留出上边距） */
+.yl-dt-tools {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 14px 0 10px;
+}
+input.yl-dt-search {
+  height: 30px; flex: 1; min-width: 140px; max-width: 260px;
+  padding: 0 10px; font-size: 12.5px;
+  background: var(--background-primary); color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border); border-radius: 8px;
+}
+input.yl-dt-search::placeholder { color: var(--text-faint); }
+input.yl-dt-search:focus { outline: none; border-color: var(--yl-acc-line); }
+
+.yl-dt-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* 窄面板：hero 折成一列、大类条收起数字列并把汇总并到名称下面、文件行折成两行 */
+@container ylpc (max-width: 949.5px) {
+  .yl-dt-hero { grid-template-columns: 1fr; }
+  .yl-dt-cloud-side {
+    padding-left: 0; padding-top: 14px;
+    border-left: none; border-top: 1px solid var(--background-modifier-border);
+  }
+  .yl-dt-chead { grid-template-columns: 20px minmax(0, 1fr) 16px; }
+  .yl-dt-cmark { display: none; }
+  .yl-dt-csum { display: block; }
+  .yl-dt-file { grid-template-columns: 20px minmax(0, 1fr) 74px auto; row-gap: 4px; }
+  .yl-dt-file > .yl-dt-fpath { grid-column: 2 / -1; direction: ltr; }
+  .yl-dt-file > .act { grid-column: 4; }
+  /* 提醒带窄面板里折两行：文案留在图标右边，按钮落到下一行（否则它把字挤成一条） */
+  .yl-dt-band { flex-wrap: wrap; }
+  .yl-dt-band-body { flex: 1 1 220px; }
+}
+
+/*
+ * ── 自动生成的学习笔记（notes/*.md）里的两处同款（2026-10-05 定稿）──────────
+ * 笔记由插件整篇重生成，这两条规则只认我们自己的特征（播放链接的协议前缀、
+ * 便签 callout 的类型名），不会碰到用户自己的内容。
+ */
+
+/* 播放链接（整句台词）：加粗、正文色、下划线，稍大一点。 */
+/* 🔥 颜色必须盖过主题的链接紫 —— 链接语义交给下划线，颜色还给正文。 */
+a[href^="obsidian://young-look"] {
+  font-weight: 800;
+  font-size: 1.1em;
+  color: var(--text-normal);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+/* 句子便签 callout（`> [!便签]`）：与学习页便签同一张纸。
+ * 色值 = 2026-10-05 便签纸定稿的那组青渐变（勿换算成 --yl-acc-*）。 */
+.callout[data-callout="便签"] {
+  background: linear-gradient(180deg, hsl(193 62% 96%) 0%, hsl(193 52% 88%) 100%);
+  color: hsl(193 66% 26%);
+  border: none;
+  border-radius: 3px;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 12%),
+    0 10px 24px rgb(0 0 0 / 18%);
+}
+.callout[data-callout="便签"] .callout-title {
+  color: hsl(193 66% 26%);
+}
+.callout[data-callout="便签"] .callout-icon {
+  display: none;
+}
+.theme-dark .callout[data-callout="便签"] {
+  background: linear-gradient(180deg, hsl(193 38% 19%) 0%, hsl(193 35% 15%) 100%);
+  color: hsl(193 60% 76%);
+}
+.theme-dark .callout[data-callout="便签"] .callout-title {
+  color: hsl(193 60% 76%);
+}
+
+/* 「生成学习卡片」弹窗：二维码 + 链接。
+   二维码必须是白底黑码 —— 扫不出来的一切花活都没有意义。 */
+.yl-share-qr {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 14px;
+}
+.yl-share-qr-slot {
+  width: 100%;
+  padding: 46px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.yl-share-qr-box {
+  width: 208px;
+  height: 208px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+}
+.yl-share-qr-box svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.yl-share-link {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.yl-share-link:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+/* ── 历史页签的范围下拉 + 词库页签的搜索框（2026-10-10）────────────────
+   历史范围下拉复用消费记录那一套（.yl-pc-select / .yl-pc-spend-range /
+   .yl-pc-spend-hint），这里只补词库搜索框与两个页签共用的滚动哨兵。
+   ⚠️ 下面三条带 input 前缀 / 哨兵的规则已点名进 temp/css-audit.mjs 的
+      MUST 清单 —— 它们紧跟在注释块后面，少一个注释收尾符会整条静默消失，
+      症状是"搜索框被宿主压成 30px 高 / 滚到底不加载"，完全静默。 */
+/* 词库搜索框。⚠️ 必须写 `input.yl-vb-search`（0-1-1）：宿主有
+   `input[type='text']{height:var(--input-height)}` 同权重，单类名
+   （.yl-pc-input 那颗 0-1-0）会被压回宿主的高和内距 —— yl-toc-search
+   先例同款（见上 L2264 注释）。
+   🔥 **定宽 300px，不拉伸**（2026-10-10 用户按截图标定：搜个词面/读音而已，
+   没必要占满整行）。量法：搜索框左边框 524 → 用户画的红框右边 1126（2x 截图）
+   = 301 CSS px。`flex: 0 1 300px` = 常态 300、只在窄面板才回缩（min-width:0）；
+   也正是它不再抢free space，才轮到导出钮的 margin-left:auto 把「导出 CSV」
+   顶到最右（排在 搜索 之后的空隙由此而来）。 */
+input.yl-vb-search {
+  flex: 0 1 300px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+}
+input.yl-vb-search:focus {
+  border-color: var(--yl-acc-mid);
+  outline: none;
+}
+/* 滚动哨兵：历史 / 词库两页签共用（消费记录有自己的 .yl-pc-spend-sentinel）。
+   触发器盯着它进视口就再拉一页，它本身什么都不显示 */
+.yl-pc-pagesentinel { height: 1px; }

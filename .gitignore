@@ -1,0 +1,24 @@
+node_modules/
+*.js.map
+.DS_Store
+
+# Obsidian 自己写的本地设置（含 vaultLocalId、登录态），不进版本库。
+# 用软链装到 vault 时，这个文件会落在插件目录里。
+data.json
+
+# 构建产物。**环境是在构建时定死的**（开发连本机 / 发版连线上），
+# 提交进版本库就等于留了一条"把开发构建当线上版发出去"的通道 ——
+# 发版跑 `npm run build`，调试跑 `npm run build:dev` / `npm run dev`。
+main.js
+
+# kuromoji 词典（17MB，构建时从 node_modules 同步过来，可再生，不进版本库）
+dict/
+
+# 内置演示素材（plugin/demo/）**要进版本库**：它是插件自带的东西（examples 式），
+# 首次运行由 services/demoSeed.ts 从插件目录直接导入，不从服务器拉。
+# demo.mp4 只有 1.1MB，作为随插件分发的素材入库是可以接受的代价；
+# 换素材时记得同步更新 demo/ATTRIBUTION.md 的署名表。
+
+# 发版产物（scripts/release.mjs 生成：三件套 + latest.json），
+# 由 ./yolo plugin-release 推到服务器 storage/plugin/，不进版本库
+release/

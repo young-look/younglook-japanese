@@ -1,0 +1,10 @@
+{
+  "id": "young-look",
+  "name": "洋流日语",
+  "version": "0.2.4",
+  "minAppVersion": "1.5.0",
+  "description": "把本机里的动漫视频和字幕，变成可以拆开、查词、练习、复习的日语学习素材。",
+  "author": "young_look",
+  "authorUrl": "https://younglook.cc",
+  "isDesktopOnly": true
+}
