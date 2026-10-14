@@ -6,13 +6,20 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { VaultDb, STORE } from "../src/storage/db";
 import { importSubtitle } from "../src/services/importer";
 import type { SubtitleImportRequest } from "../src/services/importer";
-import type { AssetRow, EpisodeRow, SliceRow, WorkRow } from "../src/types/entities";
+import type { AssetRow, RecordLineRow, RecordRow, SentenceRow } from "../src/types/entities";
 
 /**
  * 导入链路的整体测试。
  *
  * 用假 IndexedDB + 内存版笔记后端，这样不用起 Electron 也能覆盖：
- * 身份派生、行落库、待办登记、笔记围栏、重复导入、以及与用户手写内容的共存。
+ * 文件哈希身份、行落库、重导/并列新记录的决策树、素材库收纳、
+ * 以及句子层跨记录共享（进度/纠错零匹配逻辑跟着句子哈希走）。
+ *
+ * 身份模型（2026-10-14 重构定稿）：
+ *  · 学习记录的键 = (视频 sha256, 日文字幕 sha256) 的组合哈希 —— 同一对文件
+ *    重导 = 同一条记录（复活/补绑）；任何一份换了都是**另一条记录**，不拦不猜；
+ *  · 句子 = 三句哈希寻址的共享层，跨记录复用，重导零覆盖；
+ *  · 台词行（原文/时间轴）是记录自己的本地层，重导整段重写。
  */
 
 const ASS = [
@@ -31,12 +38,11 @@ const dir = mkdtempSync(join(tmpdir(), "yl-import-"));
 const subPath = join(dir, "[Group] Title [01][BDRip].JPSC.ass");
 writeFileSync(subPath, ASS, "utf8");
 
-// 另一份内容不同的字幕（指纹不同）：用来模拟"另一个视频恰好取了同一个名字"。
+// 另一份内容不同的字幕（哈希不同）：用来模拟"另一个视频恰好取了同一个名字"。
 const otherSubPath = join(dir, "[Group] Another [01][BDRip].JPSC.ass");
 writeFileSync(otherSubPath, ASS.replace("これはテストです", "これはべつのテストです"), "utf8");
 
-// 256KB 的假视频，足够首尾各 64KB 的采样指纹。视频和字幕配套必填，
-// 所以几乎每个成功用例都要带上它。
+// 256KB 的假视频。视频和字幕配套必填，所以几乎每个成功用例都要带上它。
 const videoPath = join(dir, "[Group] Title [01][BDRip].mkv");
 writeFileSync(videoPath, Buffer.alloc(256 * 1024, 7));
 
@@ -51,7 +57,7 @@ describe("导入字幕", () => {
     db = await freshDb();
   });
 
-  it("落库：作品 / 集 / 素材 / 切片四张表", async () => {
+  it("落库：记录 / 素材 / 句子 / 台词 四张表", async () => {
     const outcome = await importSubtitle(db, {
       subtitlePath: subPath,
       videoPath,
@@ -66,32 +72,24 @@ describe("导入字幕", () => {
     // 卡拉OK那行要被排除，所以是 2 句不是 3 句
     expect(outcome.result.sliceCount).toBe(2);
 
-    const works = await db.getAll<WorkRow>(STORE.works);
-    const episodes = await db.getAll<EpisodeRow>(STORE.episodes);
+    const records = await db.getAll<RecordRow>(STORE.records);
     const assets = await db.getAll<AssetRow>(STORE.assets);
-    const slices = await db.getAll<SliceRow>(STORE.slices);
+    const sentences = await db.getAll<SentenceRow>(STORE.sentences);
+    const lines = await db.getAll<RecordLineRow>(STORE.lines);
 
-    expect(works).toHaveLength(1);
-    expect(episodes).toHaveLength(1);
+    expect(records).toHaveLength(1);
     // 字幕 + 视频，配套各一条
     expect(assets).toHaveLength(2);
-    expect(slices).toHaveLength(2);
+    expect(sentences).toHaveLength(2);
+    expect(lines).toHaveLength(2);
 
-    expect(episodes[0].number).toBe("1");
-    expect(assets[0].localPath).toBe(subPath);
-    expect(slices.map((slice) => slice.ja).sort()).toEqual(["これはテストです", "大丈夫"]);
+    expect(records[0].number).toBe("1");
+    expect(records[0].durationMs).toBe(6000); // 最后一条台词的终点（卡拉OK行不算）
+    expect(sentences.map((row) => row.ja).sort()).toEqual(["これはテストです", "大丈夫"]);
+    expect(lines.every((row) => row.recordCid === records[0].cid)).toBe(true);
   });
 
-  it("每一次改动都登记了待上行（否则崩溃就丢同步）", async () => {
-    await importSubtitle(db, {
-      subtitlePath: subPath,
-      videoPath,
-      workTitle: "MyGO",
-      number: 1,
-    });
-  });
-
-  it("同一份文件导入两次不产生重复行、 cid 保持不变", async () => {
+  it("同一份文件导入两次不产生重复行、recordCid 保持不变（reimported）", async () => {
     const request = { subtitlePath: subPath, videoPath, workTitle: "MyGO", number: 1 };
     const first = await importSubtitle(db, request);
     const second = await importSubtitle(db, request);
@@ -99,11 +97,11 @@ describe("导入字幕", () => {
     expect(first.ok && second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
 
-    expect(second.result.workCid).toBe(first.result.workCid);
-    expect(second.result.episodeCid).toBe(first.result.episodeCid);
-    expect(second.result.assetCid).toBe(first.result.assetCid);
-    expect(await db.count(STORE.works)).toBe(1);
-    expect(await db.count(STORE.slices)).toBe(2);
+    expect(second.result.recordCid).toBe(first.result.recordCid);
+    expect(second.result.reimported).toBe(true);
+    expect(await db.count(STORE.records)).toBe(1);
+    expect(await db.count(STORE.sentences)).toBe(2);
+    expect(await db.count(STORE.lines)).toBe(2);
   });
 
   /**
@@ -114,7 +112,7 @@ describe("导入字幕", () => {
    */
 });
 
-describe("一个名字只能有一份笔记", () => {
+describe("同名记录的决策树", () => {
   let db: VaultDb;
   const base = { subtitlePath: subPath, videoPath };
 
@@ -122,14 +120,14 @@ describe("一个名字只能有一份笔记", () => {
     db = await freshDb();
   });
 
-  it("同一份素材重来一次 = 重导，放行", async () => {
+  it("同一份素材重来一次 = 重导，只有一条记录", async () => {
     const request = { ...base, workTitle: "MyGO", year: 2023, season: 1, number: 1 };
     expect((await importSubtitle(db, request)).ok).toBe(true);
     expect((await importSubtitle(db, request)).ok).toBe(true);
-    expect(await db.count(STORE.works)).toBe(1);
+    expect(await db.count(STORE.records)).toBe(1);
   });
 
-  it("同名同季集、换了素材 → 拦下来（笔记文件名会撞在一起）", async () => {
+  it("🔥 同名同季集、换了素材 → 放行为**并列新记录**，标题自动缀视频文件名", async () => {
     const first = await importSubtitle(db, {
       ...base,
       workTitle: "MyGO",
@@ -142,57 +140,63 @@ describe("一个名字只能有一份笔记", () => {
     const second = await importSubtitle(db, {
       ...base,
       subtitlePath: otherSubPath,
+      videoPath: join(dir, "another-video.mkv") && videoPath, // 同视频、换字幕也是另一条
       workTitle: "MyGO",
-      year: 2024,
+      year: 2023,
       season: 1,
       number: 1,
     });
-    expect(second.ok).toBe(false);
-    if (second.ok) return;
-    expect(second.reason).toContain("笔记");
-    expect(second.hint).toContain("季号");
-    // 被拦下的时候什么都不许写
-    expect(await db.count(STORE.works)).toBe(1);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.result.recordCid).not.toBe(
+      first.ok ? first.result.recordCid : "",
+    );
+    expect(second.result.titleSuffixed).toBe(true);
+    const records = await db.getAll<RecordRow>(STORE.records);
+    expect(records).toHaveLength(2);
+    // 缀的是视频文件名（去掉扩展名），展示上一眼能分清
+    expect(records.map((row) => row.title)).toContain("MyGO");
+    expect(records.some((row) => row.title.startsWith("MyGO（"))).toBe(true);
   });
 
-  it("同名但集号不同 → 各是各的笔记，照常导入", async () => {
+  it("同一对文件改集号重导 → 还是同一条记录（展示字段以这次为准）", async () => {
     expect((await importSubtitle(db, { ...base, workTitle: "MyGO", number: 1 })).ok).toBe(true);
     expect((await importSubtitle(db, { ...base, workTitle: "MyGO", number: 2 })).ok).toBe(true);
-    expect(await db.count(STORE.episodes)).toBe(2);
+    // 身份 = 文件哈希对：同一对文件不管填什么集号都是同一条记录
+    expect(await db.count(STORE.records)).toBe(1);
+    const record = (await db.getAll<RecordRow>(STORE.records))[0];
+    expect(record.number).toBe("2");
   });
 
-  it("季号不同就是不同的笔记", async () => {
+  it("同一对文件改季号重导 → 同一条记录", async () => {
     expect(
       (await importSubtitle(db, { ...base, workTitle: "MyGO", season: 1, number: 1 })).ok,
     ).toBe(true);
     expect(
       (await importSubtitle(db, { ...base, workTitle: "MyGO", season: 2, number: 1 })).ok,
     ).toBe(true);
+    expect(await db.count(STORE.records)).toBe(1);
+    const record = (await db.getAll<RecordRow>(STORE.records))[0];
+    expect(record.season).toBe(2);
   });
 
-  it("同名同集（episodeCid 相同）换素材 → 放行（换机/换字幕重导，学习记录靠 rebind 挂回）", async () => {
+  it("同名同集换素材 → 放行（新文件对 = 新记录，不再有 rebind 猜测）", async () => {
     // 第一次导入
     expect((await importSubtitle(db, { ...base, workTitle: "某场讲座", number: "" })).ok).toBe(true);
-    // 同一份字幕再来一次 = 重导同一个视频，放行
+    // 同一份文件再来一次 = 重导，还是一条
     expect((await importSubtitle(db, { ...base, workTitle: "某场讲座", number: "" })).ok).toBe(true);
 
-    // 同名 + 换了另一份字幕 / 另一个视频文件（指纹全不同）。
-    // 2026-10-09 起**放行** —— episodeCid 由「名字 + 年份 + 季/集号」派生，相同即
-    // 数据层面的同一集（这正是"换机后重导同一集"的形状：视频、字幕都可能是新版本）。
-    // 学习记录由 sliceRebind 按日文相似度挂回，而非靠素材指纹放行。
-    // 靠素材指纹拦的是「不同集恰好共用同一 stem」—— 那种情况下 episodeCid 不同，见上一条用例。
+    // 同名 + 换了另一份字幕 / 另一个视频文件（哈希全不同）→ 并列新记录
     const otherVideoPath = join(dir, "[Group] Another [01][BDRip].mkv");
     writeFileSync(otherVideoPath, Buffer.alloc(256 * 1024, 9));
-    expect(
-      (
-        await importSubtitle(db, {
-          subtitlePath: otherSubPath,
-          videoPath: otherVideoPath,
-          workTitle: "某场讲座",
-          number: "",
-        })
-      ).ok,
-    ).toBe(true);
+    const outcome = await importSubtitle(db, {
+      subtitlePath: otherSubPath,
+      videoPath: otherVideoPath,
+      workTitle: "某场讲座",
+      number: "",
+    });
+    expect(outcome.ok).toBe(true);
+    expect(await db.count(STORE.records)).toBe(2);
 
     // 换个名字 = 另一部作品，照常导入
     expect(
@@ -205,6 +209,7 @@ describe("一个名字只能有一份笔记", () => {
         })
       ).ok,
     ).toBe(true);
+    expect(await db.count(STORE.records)).toBe(3);
   });
 });
 
@@ -251,7 +256,7 @@ describe("导入失败时给的是人话", () => {
       subtitlePath: join(dir, "不存在.ass"), videoPath, workTitle: "MyGO", number: 1,
     });
     expect(outcome.ok).toBe(false);
-    expect(await db.count(STORE.works)).toBe(0);
+    expect(await db.count(STORE.records)).toBe(0);
   });
 });
 
@@ -262,7 +267,7 @@ describe("视频文件（与字幕配套必填）", () => {
     db = await freshDb();
   });
 
-  it("视频作为第二个素材挂到同一集，只记路径与指纹", async () => {
+  it("视频作为第二个素材落库，按文件 sha256 寻址", async () => {
     const outcome = await importSubtitle(db, {
       subtitlePath: subPath,
       videoPath,
@@ -278,11 +283,14 @@ describe("视频文件（与字幕配套必填）", () => {
     const video = assets.find((asset) => asset.kind === "video");
     expect(video).toBeDefined();
     expect(video?.localPath).toBe(videoPath);
-    expect(video?.episodeCid).toBe(outcome.result.episodeCid);
     expect(video?.sizeBytes).toBe(256 * 1024);
-    expect(video?.fingerprint).toBeTruthy();
+    // 视频素材的键 = A: + 文件 sha256；记录行引用的就是这个哈希
+    expect(video?.cid).toBe(`A:${video?.sha256}`);
+    expect(video?.sha256).toBe(
+      (await db.get<RecordRow>(STORE.records, outcome.result.recordCid))?.videoSha256,
+    );
 
-    // 1 work + 1 episode + 2 assets + 2 slices
+    // 1 record + 2 assets + 2 sentences + 2 lines
   });
 
   it("不填视频直接拒绝 —— 字幕和视频必须配套", async () => {
@@ -295,7 +303,7 @@ describe("视频文件（与字幕配套必填）", () => {
     if (outcome.ok) return;
     expect(outcome.reason).toContain("配套");
     // 什么都不许写：字幕进去了、视频没挂上，比导入失败更糟
-    expect(await db.count(STORE.slices)).toBe(0);
+    expect(await db.count(STORE.sentences)).toBe(0);
     expect(await db.count(STORE.assets)).toBe(0);
   });
 
@@ -309,7 +317,7 @@ describe("视频文件（与字幕配套必填）", () => {
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.reason).toContain("视频");
-    expect(await db.count(STORE.slices)).toBe(0);
+    expect(await db.count(STORE.sentences)).toBe(0);
   });
 
   it("同一个视频挂两次，身份一致不重复", async () => {
@@ -349,7 +357,7 @@ describe("双字幕文件（日语一份、中文一份，同一个视频）", (
     db = await freshDb();
   });
 
-  it("两份文件导入：中文按时间轴配进切片，三份素材都登记", async () => {
+  it("两份文件导入：中文按时间轴配进台词行，三份素材都登记", async () => {
     const outcome = await importSubtitle(db, {
       subtitlePath: subPath,
       translationPath: zhSrtPath,
@@ -360,9 +368,9 @@ describe("双字幕文件（日语一份、中文一份，同一个视频）", (
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    const slices = await db.getAll<SliceRow>(STORE.slices);
-    expect(slices).toHaveLength(2);
-    const byJa = new Map(slices.map((slice) => [slice.ja, slice.zh]));
+    const lines = await db.getAll<RecordLineRow>(STORE.lines);
+    expect(lines).toHaveLength(2);
+    const byJa = new Map(lines.map((line) => [line.ja, line.zh]));
     expect(byJa.get("これはテストです")).toBe("这是测试");
     expect(byJa.get("大丈夫")).toBe("没关系");
 
@@ -373,10 +381,9 @@ describe("双字幕文件（日语一份、中文一份，同一个视频）", (
     expect(assets.find((asset) => asset.localPath === zhSrtPath)?.language).toBe("zh");
     expect(assets.find((asset) => asset.kind === "video")).toBeDefined();
 
-    // 1 work + 1 episode + 3 assets + 2 slices
-
-    // 切片身份挂在日文字幕上 —— 和单文件导入时一致
-    expect(outcome.result.assetCid).toBeTruthy();
+    // 记录行记下了中文翻译字幕的哈希（换中文翻译不产生新记录）
+    const record = await db.get<RecordRow>(STORE.records, outcome.result.recordCid);
+    expect(record?.zhSubSha256).toBeTruthy();
   });
 
   it("填反了也能导：第一份中文、第二份日文，自动认出来", async () => {
@@ -390,11 +397,12 @@ describe("双字幕文件（日语一份、中文一份，同一个视频）", (
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    const slices = await db.getAll<SliceRow>(STORE.slices);
-    const byJa = new Map(slices.map((slice) => [slice.ja, slice.zh]));
+    const lines = await db.getAll<RecordLineRow>(STORE.lines);
+    const byJa = new Map(lines.map((line) => [line.ja, line.zh]));
     expect(byJa.get("これはテストです")).toBe("这是测试");
-    // 身份稳定：不管用户怎么填顺序，日文文件不变，切片身份就不变
-    expect(slices.every((slice) => slice.assetCid === outcome.result.assetCid)).toBe(true);
+    // 身份稳定：不管用户怎么填顺序，日文文件不变，三句哈希就不变
+    const sentences = await db.getAll<SentenceRow>(STORE.sentences);
+    expect(sentences.some((row) => row.ja === "これはテストです")).toBe(true);
   });
 
   it("两份都是日文 → 拒绝", async () => {
@@ -408,7 +416,7 @@ describe("双字幕文件（日语一份、中文一份，同一个视频）", (
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.reason).toContain("同一种语言");
-    expect(await db.count(STORE.slices)).toBe(0);
+    expect(await db.count(STORE.sentences)).toBe(0);
   });
 
   it("只有一份纯中文字幕 → 拒绝并提示怎么补", async () => {
@@ -537,11 +545,11 @@ describe("素材收进素材库", () => {
     const video = (await db.getAll<AssetRow>(STORE.assets)).find((asset) => asset.kind === "video");
     expect(video?.localPath).toBe(videoPath);
     // 该学的一样能学：句子一条不少
-    expect(await db.count(STORE.slices)).toBe(2);
+    expect(await db.count(STORE.sentences)).toBe(2);
   });
 });
 
-describe("换字幕重导：台词绑定（2026-10-07）", () => {
+describe("换字幕重导：并列新记录，句子层跨记录共享（2026-10-14 模型）", () => {
   let db: VaultDb;
   const base = { subtitlePath: subPath, videoPath };
 
@@ -549,61 +557,74 @@ describe("换字幕重导：台词绑定（2026-10-07）", () => {
     db = await freshDb();
   });
 
-  // 同名同季集同年、内容只差一个字的表记 —— episodeCid 一模一样，
-  // 指纹不同。以前这条会被 findNoteNameClash 拦下，现在放行并绑回。
-  const v2Dir = mkdtempSync(join(tmpdir(), "yl-rebind-"));
+  // 同一个视频、字幕只差一个字的表记 —— 日文字幕哈希不同 → 另一条记录；
+  // 但三句哈希相同的句子（「大丈夫」）共享同一个句子层。
+  const v2Dir = mkdtempSync(join(tmpdir(), "yl-resub-"));
   const v2SubPath = join(v2Dir, "[Group] Title [01][BDRip].JPSC.ass");
   writeFileSync(v2SubPath, ASS.replace("これはテストです", "これはテストですね"), "utf8");
 
-  it("换了字幕版本照样导入，进度/纠错挂回新句子，旧句子清掉", async () => {
+  it("换字幕 = 新记录；学过的进度和纠错留在句子上，一条不丢", async () => {
     const first = await importSubtitle(db, {
       ...base, workTitle: "MyGO", year: 2023, season: 1, number: 1,
     });
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    expect(first.result.reboundCount).toBe(0); // 全新导入，没有历史
+    expect(first.result.reimported).toBe(false);
 
-    // 学了第一句（抄写完成）+ 给第二句留一条用户纠错
-    const slicesV1 = (await db.getAll<SliceRow>(STORE.slices)).sort((a, b) => a.index - b.index);
-    expect(slicesV1).toHaveLength(2);
+    // 学了第一句（抄写完成）+ 给「大丈夫」那句留一条用户纠错
+    const linesV1 = (await db.getAll<RecordLineRow>(STORE.lines)).sort((a, b) => a.index - b.index);
+    expect(linesV1).toHaveLength(2);
+    const firstSentence = await db.get<SentenceRow>(STORE.sentences, linesV1[0].sentenceCid);
+    const secondSentence = await db.get<SentenceRow>(STORE.sentences, linesV1[1].sentenceCid);
     await db.put(STORE.progress, {
-      cid: `P:${slicesV1[0].cid}`, sliceCid: slicesV1[0].cid,
+      cid: `P:${linesV1[0].sentenceCid}`, sliceCid: linesV1[0].sentenceCid,
       copyAttempts: 3, copyDoneAt: "2026-10-06T12:00:00.000Z", copyEpoch: 1, copyText: "写了",
       readAloudAt: null, readAloudSeconds: 0, readEpoch: 0,
       imitationText: "", imitationCorrect: null,
       clientUpdatedAt: "2026-10-06T12:00:00.000Z", deletedAt: null,
     } as never);
-    await db.put(STORE.slices, {
-      ...slicesV1[1],
+    await db.put(STORE.sentences, {
+      ...secondSentence!,
       textFixes: { ja: "大丈夫だよ" },
       correctionsUpdatedAt: "2026-10-06T13:00:00.000Z",
     });
 
-    // 换字幕重导
+    // 换字幕重导：同一个视频 + 另一份日文字幕 = 另一条记录
     const second = await importSubtitle(db, {
       ...base, subtitlePath: v2SubPath, workTitle: "MyGO", year: 2023, season: 1, number: 1,
     });
     expect(second.ok).toBe(true);
     if (!second.ok) return;
-    // 第 1 句「これはテストです」→「これはテストですね」：相似但 cid 全变
-    expect(second.result.reboundCount).toBeGreaterThan(0);
+    expect(second.result.reimported).toBe(false);
+    expect(second.result.recordCid).not.toBe(first.result.recordCid);
 
-    const slicesV2 = (await db.getAll<SliceRow>(STORE.slices)).sort((a, b) => a.index - b.index);
-    expect(slicesV2).toHaveLength(2);
-    // 新句子是新的 cid（字幕指纹变了）
-    expect(slicesV2[0].cid).not.toBe(slicesV1[0].cid);
-    // 🔒 AI 解析 / 用户纠错不被重导抹掉
-    expect(slicesV2[1].textFixes?.ja).toBe("大丈夫だよ");
-    expect(slicesV2[1].correctionsUpdatedAt).toBe("2026-10-06T13:00:00.000Z");
+    // 🔒 句子层是共享的：改过的「大丈夫」纠错原样保留，重导不抹不掉
+    const keptSentence = await db.get<SentenceRow>(STORE.sentences, linesV1[1].sentenceCid);
+    expect(keptSentence?.textFixes?.ja).toBe("大丈夫だよ");
+    expect(keptSentence?.correctionsUpdatedAt).toBe("2026-10-06T13:00:00.000Z");
 
-    // 进度挂到了新句子上；旧键**打墓碑**（不硬删 —— 硬删会被云端原样拉回「复活」）
-    const migrated = await db.get<{ sliceCid: string; copyAttempts: number }>(
-      STORE.progress, `P:${slicesV2[0].cid}`,
+    // 进度还挂在原来的句子哈希上，一个字节都没动（没有墓碑、没有迁移）
+    const progress = await db.get<{ sliceCid: string; copyAttempts: number; deletedAt: string | null }>(
+      STORE.progress, `P:${linesV1[0].sentenceCid}`,
     );
-    expect(migrated?.sliceCid).toBe(slicesV2[0].cid);
-    expect(migrated?.copyAttempts).toBe(3);
-    const tombstone = await db.get<{ deletedAt?: string }>(STORE.progress, `P:${slicesV1[0].cid}`);
-    expect(tombstone?.deletedAt).toBeTruthy();
+    expect(progress?.sliceCid).toBe(linesV1[0].sentenceCid);
+    expect(progress?.copyAttempts).toBe(3);
+    expect(progress?.deletedAt).toBeNull();
+
+    // 新记录的台词指向新的句子（「これはテストですね」是新的三句哈希）；
+    // 「大丈夫」那句新旧记录共享同一个句子行
+    const linesV2 = (
+      await db.getAll<RecordLineRow>(STORE.lines)
+    ).filter((row) => row.recordCid === second.result.recordCid).sort((a, b) => a.index - b.index);
+    expect(linesV2).toHaveLength(2);
+    // 三句哈希带上下文：第 1 句改了一个字，第 2 句的 prev 也跟着变 →
+    // 两句都是新 cid（只有完整三句窗口相同的句子才共享）
+    expect(linesV2[0].sentenceCid).not.toBe(linesV1[0].sentenceCid);
+    expect(linesV2[1].sentenceCid).not.toBe(linesV1[1].sentenceCid);
+
+    // 旧句子一个不删：旧记录的台词行还指着它们，切回旧字幕照样能学。
+    // 三句哈希带上下文 —— 第 1 句改了字，第 2 句的 prev 也变，所以是 4 个句子行
+    expect(await db.count(STORE.sentences)).toBe(4);
   });
 
   it("旧字幕独有的句子保留（不删 —— 用户切回旧字幕还用得上）", async () => {
@@ -624,9 +645,30 @@ describe("换字幕重导：台词绑定（2026-10-07）", () => {
     });
     expect(second.ok).toBe(true);
 
-    const slices = await db.getAll<SliceRow>(STORE.slices);
-    // 新版 1 句（卡拉OK行本就被排除）+ 旧字幕独有的「大丈夫」还在
-    expect(slices).toHaveLength(2);
-    expect(slices.some((row) => row.ja === "大丈夫")).toBe(true);
+    const sentences = await db.getAll<SentenceRow>(STORE.sentences);
+    // 旧的两个句子原样保留（「大丈夫」独有句不删）；新版把「大丈夫」删了，
+    // 第 1 句的 next 也变了 → 三句哈希不同，多出一个新句子变体，共 3 个句子行
+    expect(sentences).toHaveLength(3);
+    expect(sentences.some((row) => row.ja === "大丈夫")).toBe(true);
+    // 同一句原文的两个变体各归各的句子行（三句哈希不同，互不覆盖）
+    expect(sentences.filter((row) => row.ja === "これはテストです").length).toBe(2);
+    // 并列出了第二条记录
+    expect(await db.count(STORE.records)).toBe(2);
+  });
+
+  it("慢阶段挂进度回调：先算文件指纹、再收素材库（UI 靠它显示「正在干什么」）", async () => {
+    const phases: string[] = [];
+    const outcome = await importSubtitle(db, {
+      subtitlePath: subPath,
+      videoPath,
+      workTitle: "BanG Dream! It's MyGO!!!!!",
+      number: 1,
+      mediaDir: join(dir, "media-progress"),
+      onProgress: (phase) => phases.push(phase),
+    });
+
+    expect(outcome.ok).toBe(true);
+    // 顺序钉死：哈希（身份判定）必然先于素材入库；不带 mediaDir 时只有 hash
+    expect(phases).toEqual(["hash", "save"]);
   });
 });

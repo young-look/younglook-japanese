@@ -1,6 +1,8 @@
-import { FileSystemAdapter, MarkdownView, Notice, Plugin, Setting, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import { FileSystemAdapter, MarkdownView, Modal, Notice, Plugin, Setting, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import path from "node:path";
+import { rmSync } from "node:fs";
 import { fillDefaults } from "./settings/defaults";
+import { appDataDir } from "./services/appData";
 import { SettingsTab } from "./settings/tab";
 import type { AccountProfile, LocalSpace, PluginSettings } from "./settings/types";
 import { accountLabel, anonymousSpace, findSpaceForAccount, nextSpaceId, resolveActiveSpaceId, sameServer } from "./services/localSpace";
@@ -39,7 +41,6 @@ import {
 import { applyRelease, compareVersions, fetchLatestRelease, type RemoteRelease } from "./services/update";
 import { healLegacyImitationRows } from "./services/study";
 import { claimLocalNotes, invalidateNoteCache } from "./services/notes/mine";
-import { ensureDemoMaterial } from "./services/demoSeed";
 import { dayKey } from "./services/studyDays";
 import { installBrandIcons, markAsBrandIcon } from "./ui/brandIcon";
 import { log } from "./core/logger";
@@ -121,11 +122,23 @@ export default class YoungLookPlugin extends Plugin {
     this.db = await VaultDb.open(this.settings.activeSpaceId);
     await this.tagVaultPath();
 
-    // 首次运行铺一份演示素材，免得新用户打开插件是一片空白；之后演示集会
-    // 跟随插件自带的素材更新（换视频/换字幕自动跟上，见 services/demoSeed.ts）。
-    // 不 await：这是启动后的后台活，等它走完用户才能看见界面。
-    // 铺完/换完刷新一下已打开的页面，让新那一集自己冒出来。
-    void this.seedDemoMaterial();
+    // 演示素材（示例那一集）不再在启动时铺：它改走服务端按需下载，用户在首页那条
+    // 「示例」上点「开始学」时才下载并导入（见 services/demoPack.ts）。启动零网络依赖。
+
+    // 🔧 TEMP（2026-10-14 晚，确认后撤）：用户改了演示字幕要重下，demoSeeded 标记
+    // 挡着首页占位行。启动时清一次恢复下载入口。只动 meta 这一条，学习数据不受影响。
+    try {
+      await this.db.delete(STORE.meta, "demoSeeded");
+      log.info("TEMP: demoSeeded 已清除，首页占位行恢复");
+    } catch (error) {
+      log.warn("TEMP: 清 demoSeeded 失败（不影响使用）", error);
+    }
+
+    // 🔧 dev 专属重置入口：./yolo reset-client 经 obsidian://younglook-reset 触发。
+    // 只在开发构建注册 —— 线上一律没有这个 handler，社区里一条链接不可能清用户数据。
+    if (IS_DEV_BUILD) {
+      this.registerObsidianProtocolHandler("younglook-reset", () => this.resetClientData());
+    }
 
     // 修补中间版本漏记 `imitationVerifiedAt` 的历史进度行（AI 判过却标"未核对"）。
     // 几行数据、一次扫描，同步做完再往下走 —— 让用户第一次打开卡片就是对的。
@@ -619,7 +632,7 @@ export default class YoungLookPlugin extends Plugin {
   private async ensureStableVaultKey(rawId: string): Promise<void> {
     const current = this.settings.activeSpaceId;
     const currentProbe = await probeVaultDatabase(current);
-    if (currentProbe.slices > 0) return;
+    if (currentProbe.sentences > 0) return;
 
     const keys = await listVaultDatabaseKeys();
     if (keys.length === 0) {
@@ -667,24 +680,6 @@ export default class YoungLookPlugin extends Plugin {
 
     // 首次安装 / 认回旧库都要落盘；已经稳定过的就不重复写
     if (!rawId || outcome.adoptedKey) await this.saveSettings();
-  }
-
-  /**
-   * 首次运行铺一份内置演示素材；之后让演示集跟随自带的素材更新
-   * （见 services/demoSeed.ts）。
-   *
-   * 后台跑、结果吞掉：这只是"让新用户别看到空白页"的锦上添花，素材随插件
-   * 自带（plugin/demo/），缺了也只是少一个演示，不影响插件启动。
-   * 铺上/换新了才刷新视图 —— 否则每次启动都白刷一遍。
-   */
-  private async seedDemoMaterial(): Promise<void> {
-    // host 显式构造：vaultBasePath() 是方法，DemoSeedHost 要的是算好的绝对路径值
-    const host = {
-      manifest: this.manifest,
-      vaultBasePath: this.vaultBasePath(),
-      settings: this.settings,
-    };
-    if (await ensureDemoMaterial(host, this.db)) this.refreshOpenViews();
   }
 
   /** 给本地库盖一个归属标记，以后认领时才有可靠判据。只在缺失时写。 */
@@ -819,8 +814,8 @@ export default class YoungLookPlugin extends Plugin {
       showList?(): Promise<void>;
     } | undefined;
     if (!view) return;
-    if (origin.from === "study" && origin.episodeCid) {
-      await view.restoreTo?.(origin.episodeCid, origin.index);
+    if (origin.from === "study" && origin.recordCid) {
+      await view.restoreTo?.(origin.recordCid, origin.index);
     } else {
       await view.showList?.();
     }
@@ -832,7 +827,7 @@ export default class YoungLookPlugin extends Plugin {
    * 个人中心再跳旧 tab，改为并排新开）。
    *
    * 目标句不看来路 —— 由那一行自己指定（episodeCid + 1-based 句子序号，
-   * 见 SliceRow.index）。视频不在了这类不可跳的情况由历史页那边藏钮拦下。
+   * 见 StudySentence.index）。视频不在了这类不可跳的情况由历史页那边藏钮拦下。
    */
   async jumpToSentence(episodeCid: string, index: number): Promise<void> {
     if (this.settings.lastView !== VIEW_TYPE_STUDY) {
@@ -943,6 +938,55 @@ export default class YoungLookPlugin extends Plugin {
       return adapter.getFullPath(vaultPath);
     }
     return null;
+  }
+
+  /**
+   * 🔧 dev 专属（./yolo reset-client 经 obsidian://younglook-reset 触发）：
+   * 把客户端恢复到刚安装好的状态。URI 谁都能发，所以落点仍是一颗确认弹窗
+   * —— 不会因为一条链接就静默清库。
+   */
+  private resetClientData(): void {
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("重置客户端");
+    modal.contentEl.createEl("p", { text: "将清空本插件的全部本地数据，恢复到刚安装好的状态：" });
+    const list = modal.contentEl.createEl("ul");
+    for (const item of [
+      "本地学习库（学习记录、进度、词库、录音、本地笔记）",
+      "插件设置（登录状态、空间、服务器地址 → 恢复出厂默认）",
+      "应用数据目录（素材库副本、demo 暂存、词典）",
+    ]) {
+      list.createEl("li", { text: item });
+    }
+    modal.contentEl.createEl("p", {
+      text: "服务端/云端数据、你原始的视频字幕文件、vault 里的笔记都不受影响。此操作不可恢复。",
+    });
+    const buttons = modal.contentEl.createDiv({ cls: "modal-button-container" });
+    buttons.createEl("button", { text: "取消" }).onclick = () => modal.close();
+    buttons.createEl("button", { text: "确认清空", cls: "mod-warning" }).onclick = () => {
+      modal.close();
+      void this.wipeClientData();
+    };
+    modal.open();
+  }
+
+  private async wipeClientData(): Promise<void> {
+    // 素材库基准目录若被指到默认位置之外，那是用户自己选的文件夹，不归我们删
+    const customMediaRoot = this.settings.mediaDir.trim();
+    // 1) 关掉连接 → 删掉全部 younglook-* 库（含找回历史数据留下的孤儿库）
+    this.db?.close();
+    const names = (await indexedDB.databases())
+      .map((entry) => entry.name ?? "")
+      .filter((name) => name.startsWith("younglook-"));
+    await Promise.all(names.map((name) => deleteYounglookDatabase(name)));
+    // 2) 设置回出厂：data.json 写 null，下次加载走 fillDefaults(null)
+    await this.saveData(null);
+    this.settings = fillDefaults(null);
+    // 3) 应用数据目录整个删掉（默认素材库、demo.staging、词典都在里面）
+    if (!customMediaRoot) {
+      rmSync(appDataDir(), { recursive: true, force: true });
+    }
+    new Notice("本地数据已清空，正在重启…");
+    window.setTimeout(() => window.location.reload(), 800);
   }
 
   /**
@@ -1528,7 +1572,7 @@ const PROFILE_TTL_MS = 60_000;
 /** 个人中心的来路：退出时按它回到原位。 */
 export type PersonalOrigin =
   | { from: "list" }
-  | { from: "study"; episodeCid: string; index: number };
+  | { from: "study"; recordCid: string; index: number };
 
 interface MePayload {
   uid?: string;
@@ -1555,4 +1599,14 @@ function profileFromMe(data: MePayload): AccountProfile {
     avatarUrl: data.avatar ?? "",
     fetchedAt: new Date().toISOString(),
   };
+}
+
+/** indexedDB.deleteDatabase 的 Promise 包装；失败/被占也继续（反正马上整窗重启）。 */
+function deleteYounglookDatabase(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    const request = indexedDB.deleteDatabase(name);
+    request.onsuccess = () => resolve();
+    request.onerror = () => resolve();
+    request.onblocked = () => resolve();
+  });
 }

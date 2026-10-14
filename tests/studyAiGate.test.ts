@@ -21,7 +21,7 @@ import {
 import { buildAssistant, type AssistantHandle } from "../src/views/study/assistant";
 import type { AiGate } from "../src/services/ai/gate";
 import type { PluginSettings } from "../src/settings/types";
-import type { ProgressRow, SentenceAnalysis, SliceRow, Token } from "../src/types/entities";
+import type { ProgressRow, SentenceAnalysis, StudySentence, Token } from "../src/types/entities";
 
 /**
  * 学习页三步练习卡的按钮契约（2026-10-07 用户拍板，防回归钉子）。
@@ -46,10 +46,8 @@ import type { ProgressRow, SentenceAnalysis, SliceRow, Token } from "../src/type
  * 哪一条断了，这里必须红 —— 用户已经为此返工过不止一次。
  */
 
-const slice: SliceRow = {
+const slice: StudySentence = {
   cid: "slice-1",
-  episodeCid: "ep-1",
-  assetCid: "asset-1",
   index: 1,
   startMs: 0,
   endMs: 1500,
@@ -57,12 +55,7 @@ const slice: SliceRow = {
   zh: "猫在睡觉。",
   speaker: "",
   textHash: "hash",
-  parserVersion: 1,
   analysis: null,
-  rev: 0,
-  rowDigest: "",
-  clientUpdatedAt: "2026-10-04T00:00:00Z",
-  deletedAt: null,
 };
 
 const token: Token = { surface: "猫", lemma: "猫", reading: "ねこ", romaji: "neko", pos: "noun" };

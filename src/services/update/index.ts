@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** latest.json 在服务端 storage 里的位置（nginx 直接吐静态文件，不经过后端） */
-export const UPDATE_MANIFEST_PATH = "/storage/plugin/latest.json";
+export const UPDATE_MANIFEST_PATH = "/storage/assets/packages/latest.json";
 
 /** 更新涉及的三件套 —— 少一件都不算完整更新 */
 export const RELEASE_FILES = ["main.js", "manifest.json", "styles.css"] as const;

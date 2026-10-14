@@ -116,7 +116,7 @@ export const EMPTY_EXPLANATION_SECTIONS: ExplanationSections = {
  *
  * 🔥 落地口径（2026-09-27 用户拍板）：**点过「AI 解析」就存下来**。
  * 在这之前它是纯内存的 —— 翻页即失、翻回来再点再扣一次钱。
- * 现在存进 `SliceRow.analysis`，本机命中就不再发请求，服务端那份
+ * 现在存进 `StudySentence.analysis`，本机命中就不再发请求，服务端那份
  * 缓存（`learning.AnalysisCache`）负责跨用户省。
  *
  * ⚠️ 2026-10-07 起这一份是**两次请求拼出来的**：解读（explanation）
@@ -164,44 +164,50 @@ export interface SyncFields {
   rowDigest: string;
 }
 
-export interface WorkRow extends SyncFields {
+export interface RecordRow extends SyncFields {
+  /** `R:` + sha256(视频 sha256 ⟨US⟩ 日文字幕 sha256) —— 文件对即身份（见 core/ids.ts） */
   cid: string;
+  videoSha256: string;
+  jaSubSha256: string;
+  /** 可选的中文翻译字幕；换中文翻译**不产生新记录** */
+  zhSubSha256: string | null;
+  // ── 以下全部是**纯展示字段**：改名/改集号零身份后果（2026-10-14 拍板）──
   title: string;
   titleJa: string;
   romaji: string;
   year: number | null;
   coverUrl: string;
   note: string;
-  clientUpdatedAt: IsoDate;
-  deletedAt: IsoDate | null;
-}
-
-export interface EpisodeRow extends SyncFields {
-  cid: string;
-  workCid: string;
   season: number | null;
-  /** 归一化后的整数或小数字符串，支持 1.5 这种特别篇 */
+  /** 归一化后的整数或小数字符串，支持 1.5 这种特别篇（仅用于展示/笔记命名） */
   number: string;
-  title: string;
+  episodeTitle: string;
   durationMs: number | null;
+  /**
+   * 首次写笔记时定下的笔记文件名（可选）。同展示元数据的多条记录靠它 +
+   * 哈希短后缀保证 vault 里笔记文件不撞名；没写过笔记就是 undefined。
+   */
+  noteName?: string;
   clientUpdatedAt: IsoDate;
   deletedAt: IsoDate | null;
 }
 
+/**
+ * 素材行 = 一份本机文件。键 = `A:` + 文件 sha256，**跨记录共享**：
+ * 同一个视频配两份不同字幕，是两条记录、同一个视频素材行——
+ * 时间轴校准（offsetMs）因此自动跟过去。
+ */
 export interface AssetRow extends SyncFields {
   cid: string;
   kind: AssetKind;
-  episodeCid: string;
+  /** 64-hex 整文件 sha256（身份本体，cid 由它派生） */
+  sha256: string;
   filename: string;
   sizeBytes: number;
-  durationSeconds: number | null;
+  /** 仅字幕有意义：ja / zh */
   language: string;
   subtitleFormat: string;
-  subtitleGroup: string;
-  /** 采样指纹 sha256(head 64KB + size + tail 64KB) */
-  fingerprint: string | null;
-  fpVersion: number;
-  /** 本机绝对路径，只存在于本地 */
+  /** 本机绝对路径，只存在于本地，永不上行 */
   localPath: string;
   /** 上次核对时文件是否还在 */
   available: boolean;
@@ -214,20 +220,21 @@ export interface AssetRow extends SyncFields {
   deletedAt: IsoDate | null;
 }
 
-export interface SliceRow extends SyncFields {
+/**
+ * 句子行 = 三句哈希寻址的**共享内容层**（跨记录）。
+ *
+ * 它只承载「这个内容哈希上沉淀的东西」：AI 解析、读音/文本纠错覆盖层。
+ * 原片文本的**展示**一律读记录自己的 `RecordLineRow`（每条记录的时间轴与
+ * 原文可以不同），这里不存展示文本——规范化哈希相同但原文写法不同的两个
+ * 变体各归各的 line，互不覆盖。
+ */
+export interface SentenceRow extends SyncFields {
+  /** `S:` 三句哈希（算法见 core/ids.ts::sliceCid，口径与服务端一致，禁改） */
   cid: string;
-  episodeCid: string;
-  assetCid: string;
-  index: number;
-  startMs: number;
-  endMs: number;
+  /** 首次写入者的原片日文。仅作参考/兜底，展示读 lines */
   ja: string;
-  zh: string;
-  speaker: string;
-  /** sha256(去掉空白的 ja)，纯句子去重索引（不再参与切片身份派生） */
+  /** sha256(去掉空白的 ja)，纯句子去重索引（不参与身份派生） */
   textHash: string;
-  /** 解析规则版本，抬版本才重算切片 */
-  parserVersion: number;
   analysis: SentenceAnalysis | null;
   /**
    * 注音纠错：用户手改的读音，键 = 分词序号。
@@ -241,32 +248,56 @@ export interface SliceRow extends SyncFields {
   readingFixes?: Record<string, { surface: string; reading: string }>;
   /**
    * 日文 / 中文字幕的修正（用户在纠错弹窗里改的）。
-   *
-   * 用户主动编辑的内容，走**私有同步**上云（快照的 corrections 集合只带这句的覆盖层，
-   * 不带整集字幕；AI 解析结果不在同步范围内）。
-   *
-   * 🔥🔥 **这里存的是「覆盖后的文本」，`ja` / `zh` 两个字段本身一律不动。**
-   * 原因：日文参与了身份派生 —— `sliceCid = sha256(前一句 ⟨US⟩ 本句 ⟨US⟩ 后一句)`
-   * （三句 hash，见 `core/ids.ts`）；进度、录音、单词卡全挂在 cid 上。
-   * 一旦真去改 `ja` 字段，这个 cid 就对不上了 ⇒ **改一个字 = 这句的学习记录全部变孤儿**。
-   * 所以纠错走「显示时套用覆盖」这条路：身份永远锚在**原片字幕**上，
-   * 用户改的版本叠加在上面。副作用也就此确定：**改了日文之后，这句的 cid 仍是原那句的**，
-   * 与已有学习记录不冲突（用户 2026-10-03 定的方案 A）。
-   *
-   * 显示与解析一律读 `effectiveJa(slice)` / `effectiveZh(slice)`，别直接读 `ja` / `zh`
-   * （见 services/study.ts）。
+   * 走**私有同步**上云（快照的 corrections 集合只带这句的覆盖层）。
    */
   textFixes?: { ja?: string; zh?: string };
   /**
    * 纠正同步的簿记时间戳：最后一次纠正变化（**含撤销**）的时刻。
-   *
-   * 撤销会把覆盖层删干净，光看 `textFixes`/`readingFixes` 分不清「从没改过」
-   * 和「改过又撤了」—— 删除要传到别的设备，就得靠这个字段留痕（墓碑）。
    * 不能复用 `clientUpdatedAt`：AI 解析落库也会抬它，会把纠正的 LWW 时序搅乱。
    */
   correctionsUpdatedAt?: string;
   clientUpdatedAt: IsoDate;
-  deletedAt: IsoDate | null;
+}
+
+/**
+ * 学习视图用的合成句：记录层台词（原文/时间轴）+ 句子共享层（解析/纠错覆盖层）。
+ * 定义在 entities 只是为了让视图层统一从这里 import；拼接逻辑在 services/study.ts。
+ */
+export interface StudySentence {
+  /** `S:` 三句哈希 —— 进度/笔记/录音/解析全挂它（跨记录共享） */
+  cid: string;
+  /** 集内序号（1 起） */
+  index: number;
+  startMs: number;
+  endMs: number;
+  ja: string;
+  zh: string;
+  speaker: string;
+  /** sha256(去掉空白的 ja)，纯句子去重索引 */
+  textHash: string;
+  analysis: SentenceAnalysis | null;
+  textFixes?: { ja?: string; zh?: string };
+  readingFixes?: Record<string, { surface: string; reading: string }>;
+  correctionsUpdatedAt?: string;
+}
+
+/**
+ * 台词行 = 学习记录自己的**时间轴层**（本地 only，永不上云——原文红线）。
+ *
+ * 同一个句子（三句哈希相同）在不同记录里可以有不同的原文变体、时间戳和
+ * 集内序号，各自落各自的行。重建（重导/换字幕）时整段重写，无同步负担。
+ */
+export interface RecordLineRow {
+  recordCid: string;
+  /** 集内序号（1 起） */
+  index: number;
+  /** → SentenceRow.cid */
+  sentenceCid: string;
+  startMs: number;
+  endMs: number;
+  ja: string;
+  zh: string;
+  speaker: string;
 }
 
 /**
@@ -335,15 +366,6 @@ export interface ProgressRow extends SyncFields {
   imitationEpoch: number;
   /** 三步齐全才有值；由本地的一判定逻辑派生 */
   completedAt: IsoDate | null;
-  /**
-   * 这一行是**跨设备关联恢复（rekey）**搬过来的 —— 记它的来源，供两处用：
-   *   · 服务端投影去重：旧的来源 cid 从等级线里删掉，**经验值不双计**；
-   *   · UI 可核验 / 可撤销：个人中心给这类行打「关联恢复」徽标、给该集「撤销」入口。
-   *
-   * 只有「换机后从云端旧记录接回」的行才带（`source: "cloud-assoc"`）；
-   * 普通学习、换字幕 rebind（`sliceRebind`）都不写。缺省 undefined = 普通行。
-   */
-  recovery?: { from: string; at: IsoDate; source: "slice-rebind" | "cloud-assoc" | "cloud-assoc-revert" };
   clientUpdatedAt: IsoDate;
   deletedAt: IsoDate | null;
 }
@@ -406,7 +428,7 @@ export interface StudyDayRow {
 
 export interface SessionRow extends SyncFields {
   cid: string;
-  episodeCid: string | null;
+  recordCid: string | null;
   startedAt: IsoDate;
   endedAt: IsoDate | null;
   currentIndex: number;

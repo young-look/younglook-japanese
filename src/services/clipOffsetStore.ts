@@ -1,17 +1,19 @@
 /**
  * 校准偏移的读写。
  *
- * 偏移存在素材行上（`AssetRow.offsetMs`）：错位本质是"某份字幕 × 某条视频"之间的关系，
- * 跟着素材走 —— 换机重导同一份视频（指纹相同 ⇒ cid 相同）时，云上拉回的偏移自动挂回。
+ * 偏移存在视频素材行上（`AssetRow.offsetMs`）：错位本质是"某份字幕 × 某条视频"之间的关系，
+ * 跟着**视频文件**走 —— 素材行按文件 sha256 寻址（跨记录共享），所以同一个视频
+ * 换一份字幕重新导入，校准自动还在；换一个视频文件则从头再校。
  */
 
 import { STORE, type VaultDb } from "../storage/db";
+import { assetShaCid } from "../core/ids";
 import type { AssetRow } from "../types/entities";
 import { normalizeOffset } from "./clipOffset";
 
-/** 读素材上存的偏移。没存过 = 不偏移。 */
-export async function loadVideoOffset(db: VaultDb, assetCid: string): Promise<number> {
-  const asset = await db.get<AssetRow>(STORE.assets, assetCid);
+/** 读视频素材上存的偏移。没存过 = 不偏移。 */
+export async function loadVideoOffset(db: VaultDb, videoSha256: string): Promise<number> {
+  const asset = await db.get<AssetRow>(STORE.assets, assetShaCid(videoSha256));
   return normalizeOffset(asset?.offsetMs ?? 0);
 }
 

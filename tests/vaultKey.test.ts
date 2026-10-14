@@ -9,8 +9,8 @@ import { pickLibrary, reclaimableKeys, type VaultDbProbe } from "../src/services
 
 const VAULT = "/Users/you/Vaults/douyin";
 
-function probe(key: string, slices: number, progress = 0, vaultPath: string | null = null): VaultDbProbe {
-  return { key, slices, progress, vaultPath };
+function probe(key: string, sentences: number, progress = 0, vaultPath: string | null = null): VaultDbProbe {
+  return { key, sentences, progress, vaultPath };
 }
 
 describe("pickLibrary", () => {

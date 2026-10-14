@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
 import "fake-indexeddb/auto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { defaultSettings } from "../src/settings/defaults";
+import { DEMO_WORK_TITLE } from "../src/services/demo";
+import { safeSegment } from "../src/services/mediaStore";
 import { collectInventory } from "../src/services/dataInventory";
 import { STORE, VaultDb } from "../src/storage/db";
 import type {
   AssetRow,
-  EpisodeRow,
   MyNoteRow,
   ProgressRow,
-  SliceRow,
+  RecordLineRow,
+  RecordRow,
+  SentenceRow,
   WordRow,
-  WorkRow,
 } from "../src/types/entities";
 
 /**
@@ -24,12 +26,12 @@ import type {
  * 这里钉三件最容易悄悄坏掉的事：
  *  1. **素材的大小读的是"现在"**（stat），不是导入时记的那个数 —— 用户在素材库外
  *     换过文件的话，两个数是不一样的；
- *  2. **"文件不在了"必须是结论而不是异常** —— 备 Lesson 目录被整理过，
+ *  2. **"文件不在了"必须是结论而不是异常** —— 备份目录被整理过，
  *     这一页要如实说「找不到」，而不是炸掉或假装没事；
  *  3. **每一类数据只归一个大类**（2026-10-10 用户拍板）：学习档案（云端同步）/
  *     本地设置 / 视频、字幕与录音，后两个只在本机。去向只有两种，混合的概念必须
  *     拆成两行。这几行的方向要与 sync/snapshot.ts 的实际打包行为一致
- *     （句子原文永远不上行）。
+ *     （台词原文永远不上行）。
  */
 
 let root = "";
@@ -48,124 +50,141 @@ function syncFields() {
 async function seed(videoPath: string, gonePath: string, outsidePath: string): Promise<VaultDb> {
   const db = await VaultDb.open("data-inventory");
   await Promise.all([
-    db.put<WorkRow>(STORE.works, {
+    // r1：视频在库里、字幕在库外（用户原位置）
+    db.put<RecordRow>(STORE.records, {
       ...syncFields(),
-      cid: "w1",
+      cid: "r1",
+      videoSha256: "vsha",
+      jaSubSha256: "ssha",
+      zhSubSha256: null,
       title: "MyGO",
       titleJa: "マイゴ",
       romaji: "",
       year: null,
       coverUrl: "",
       note: "",
-    }),
-    db.put<EpisodeRow>(STORE.episodes, {
-      ...syncFields(),
-      cid: "e1",
-      workCid: "w1",
       season: 1,
       number: "1",
-      title: "",
+      episodeTitle: "",
+      durationMs: 1420000,
+    }),
+    // r2：同作品名的另一条记录，视频丢了（文件不在了的那份）
+    db.put<RecordRow>(STORE.records, {
+      ...syncFields(),
+      cid: "r2",
+      videoSha256: "gsha",
+      jaSubSha256: "ssha",
+      zhSubSha256: null,
+      title: "MyGO",
+      titleJa: "マイゴ",
+      romaji: "",
+      year: null,
+      coverUrl: "",
+      note: "",
+      season: 1,
+      number: "2",
+      episodeTitle: "",
       durationMs: null,
     }),
     db.put<AssetRow>(STORE.assets, {
       ...syncFields(),
-      cid: "a-video",
+      cid: "A:vsha",
       kind: "video",
-      episodeCid: "e1",
+      sha256: "vsha",
       filename: "ep1.mkv",
       sizeBytes: 3,
-      durationSeconds: 1420,
       language: "ja",
       subtitleFormat: "",
-      subtitleGroup: "",
-      fingerprint: null,
-      fpVersion: 1,
       localPath: videoPath,
       available: true,
     }),
     db.put<AssetRow>(STORE.assets, {
       ...syncFields(),
-      cid: "a-sub",
+      cid: "A:ssha",
       kind: "subtitle",
-      episodeCid: "e1",
+      sha256: "ssha",
       filename: "ep1.ja-zh.ass",
       sizeBytes: 3,
-      durationSeconds: null,
       language: "ja-zh",
       subtitleFormat: "ass",
-      subtitleGroup: "",
-      fingerprint: null,
-      fpVersion: 1,
       localPath: outsidePath,
       available: true,
     }),
     db.put<AssetRow>(STORE.assets, {
       ...syncFields(),
-      cid: "a-gone",
+      cid: "A:gsha",
       kind: "video",
-      episodeCid: "e1",
+      sha256: "gsha",
       filename: "gone.mkv",
       sizeBytes: 999999,
-      durationSeconds: null,
       language: "ja",
       subtitleFormat: "",
-      subtitleGroup: "",
-      fingerprint: null,
-      fpVersion: 1,
       localPath: gonePath,
       available: true,
     }),
-    db.put<SliceRow>(STORE.slices, {
-      ...syncFields(),
-      cid: "s1",
-      episodeCid: "e1",
-      assetCid: "a-video",
+    // 台词层：三条台词挂 r1；句子层只有 s2 改过覆盖层、s3 有 AI 解析
+    db.put<RecordLineRow>(STORE.lines, {
+      recordCid: "r1",
       index: 1,
+      sentenceCid: "s1",
       startMs: 0,
       endMs: 2000,
       ja: "一行日文",
       zh: "一行中文",
       speaker: "",
-      textHash: "h",
-      parserVersion: 1,
-      analysis: null,
     }),
-    // 一条被用户改过的句子（进 corrections）、一条有 AI 解析结果的句子（进 analysis）
-    db.put<SliceRow>(STORE.slices, {
-      ...syncFields(),
-      cid: "s2",
-      episodeCid: "e1",
-      assetCid: "a-video",
+    db.put<RecordLineRow>(STORE.lines, {
+      recordCid: "r1",
       index: 2,
+      sentenceCid: "s2",
       startMs: 2000,
       endMs: 4000,
       ja: "二行日文",
       zh: "二行中文",
       speaker: "",
-      textHash: "h2",
-      parserVersion: 1,
-      analysis: null,
-      textFixes: { ja: "二行日文（改过）", zh: "二行中文（改过）" },
-      correctionsUpdatedAt: NOW,
     }),
-    db.put<SliceRow>(STORE.slices, {
-      ...syncFields(),
-      cid: "s3",
-      episodeCid: "e1",
-      assetCid: "a-video",
+    db.put<RecordLineRow>(STORE.lines, {
+      recordCid: "r1",
       index: 3,
+      sentenceCid: "s3",
       startMs: 4000,
       endMs: 6000,
       ja: "三行日文",
       zh: "三行中文",
       speaker: "",
+    }),
+    db.put<SentenceRow>(STORE.sentences, {
+      rev: 0,
+      rowDigest: "",
+      cid: "s1",
+      ja: "一行日文",
+      textHash: "h1",
+      analysis: null,
+      clientUpdatedAt: NOW,
+    }),
+    db.put<SentenceRow>(STORE.sentences, {
+      rev: 0,
+      rowDigest: "",
+      cid: "s2",
+      ja: "二行日文",
+      textHash: "h2",
+      analysis: null,
+      textFixes: { ja: "二行日文（改过）", zh: "二行中文（改过）" },
+      correctionsUpdatedAt: NOW,
+      clientUpdatedAt: NOW,
+    }),
+    db.put<SentenceRow>(STORE.sentences, {
+      rev: 0,
+      rowDigest: "",
+      cid: "s3",
+      ja: "三行日文",
       textHash: "h3",
-      parserVersion: 1,
       analysis: {
         text: "三行日文",
         tokens: [],
         translation: "三行中文的意思",
-      } as unknown as SliceRow["analysis"],
+      } as unknown as SentenceRow["analysis"],
+      clientUpdatedAt: NOW,
     }),
     db.put<ProgressRow>(STORE.progress, {
       ...syncFields(),
@@ -249,7 +268,7 @@ describe("collectInventory", () => {
 
     const group = inventory.media.groups[0];
     expect(group.title).toBe("MyGO");
-    expect(group.episodes).toBe(1);
+    expect(group.records).toBe(2);
     expect(group.videoCount).toBe(2);
     expect(group.subtitleCount).toBe(1);
     expect(group.attention).toBe(2);
@@ -293,10 +312,10 @@ describe("collectInventory · 三个大类的归属", () => {
         (row) => row.key === key,
       );
 
-    // ① 学习档案（云端同步）：句子进度整行上云，对话随进度走，作品与文件信息
+    // ① 学习档案（云端同步）：句子进度整行上云，对话随进度走，学习记录与文件信息
     //    也在同步名单里；记着上次学到哪一页的偏好也属于学习记录（2026-10-10 拍板）
     for (const key of [
-      "prefs", "progress", "words", "days", "imitation", "chat", "works",
+      "prefs", "progress", "words", "days", "imitation", "chat", "records",
       "slices-corrections", "slices-analysis", "assets-info", "my-notes",
     ]) {
       expect(rowOf(key)?.trait, `${key} 应是云端同步`).toBe("cloud");
@@ -332,6 +351,126 @@ describe("collectInventory · 三个大类的归属", () => {
       inventory.media.bytes + inventory.localSettings.bytes + inventory.archive.bytes,
     );
     expect(inventory.localBytes).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 演示包**下载后**就算用户数据（2026-10-14 用户拍板，取代 10-04 的旧口径）。
+ *
+ * 旧口径的前提是演示素材打在 main.js 里、随插件分发；10-13 起它改走服务端按需下载，
+ * 用户点首页「示例」的「开始学」才落进素材库 —— 与用户自己导入的**同一个目录**
+ * （`<基准>/<空间 id>/<作品名>/`，2026-10-14 起不再有共享的 `_demo/`）。那几 MB 是
+ * 用户自己点下来的、真实占着这台机器的盘，存储页必须如实反映：素材清单、句子原文、
+ * 学习记录、文件信息一视同仁。这条钉的就是"不再按作品名整集扣掉"。
+ */
+describe("collectInventory · 下载后的演示包照常计入", () => {
+  it("素材、台词、记录都不再按作品名扣掉", async () => {
+    root = mkdtempSync(join(tmpdir(), "yl-data-inv-demo-"));
+    const mediaDir = join(root, "media");
+    // 与用户导入同一条路：演示素材落在本机空间的素材库里
+    const demoDir = join(mediaDir, "sp-1", safeSegment(DEMO_WORK_TITLE));
+    mkdirSync(demoDir, { recursive: true });
+    const video = join(demoDir, "demo.mp4");
+    writeFileSync(video, Buffer.alloc(100 * 1024, 7));
+    const subtitle = join(demoDir, "demo.srt");
+    writeFileSync(subtitle, "1\n00:00:00,000 --> 00:00:03,000\n好きなアニメで日本語を学ぼう。\n");
+    const videoBytes = statSync(video).size;
+    const subBytes = statSync(subtitle).size;
+
+    const db = await VaultDb.open("data-inventory-demo");
+    await Promise.all([
+      db.put<RecordRow>(STORE.records, {
+        ...syncFields(),
+        cid: "r-demo",
+        videoSha256: "dv",
+        jaSubSha256: "ds",
+        zhSubSha256: null,
+        title: DEMO_WORK_TITLE,
+        titleJa: "",
+        romaji: "",
+        year: null,
+        coverUrl: "",
+        note: "",
+        season: 0,
+        number: "",
+        episodeTitle: "",
+        durationMs: 6000,
+      }),
+      db.put<AssetRow>(STORE.assets, {
+        ...syncFields(),
+        cid: "A:dv",
+        kind: "video",
+        sha256: "dv",
+        filename: "demo.mp4",
+        // 导入时记的旧数：盘点必须读当下的真实大小（100 KB）
+        sizeBytes: 1,
+        language: "ja",
+        subtitleFormat: "",
+        localPath: video,
+        available: true,
+      }),
+      db.put<AssetRow>(STORE.assets, {
+        ...syncFields(),
+        cid: "A:ds",
+        kind: "subtitle",
+        sha256: "ds",
+        filename: "demo.srt",
+        sizeBytes: 1,
+        language: "ja-zh",
+        subtitleFormat: "srt",
+        localPath: subtitle,
+        available: true,
+      }),
+      db.put<RecordLineRow>(STORE.lines, {
+        recordCid: "r-demo",
+        index: 1,
+        sentenceCid: "sd1",
+        startMs: 0,
+        endMs: 3000,
+        ja: "好きなアニメで日本語を学ぼう。",
+        zh: "用喜欢的动漫学日语吧。",
+        speaker: "",
+      }),
+    ]);
+    // 带着活跃空间盘：演示素材就在本空间目录里（不再有共享的 `_demo/`）
+    const inventory = await collectInventory({
+      db,
+      settings: Object.assign(defaultSettings(), {
+        vaultFolder: "young_look",
+        mediaDir,
+        activeSpaceId: "sp-1",
+      }),
+      pluginId: "young-look",
+    });
+    db.close();
+
+    // 素材清单：两个文件都在、没有"需要留意"，大小读当下的
+    expect(inventory.media.count).toBe(2);
+    expect(inventory.media.missing).toBe(0);
+    expect(inventory.media.outside).toBe(0);
+    const group = inventory.media.groups[0];
+    expect(group.title).toBe(DEMO_WORK_TITLE);
+    expect(group.records).toBe(1);
+    expect(group.videoCount).toBe(1);
+    expect(group.subtitleCount).toBe(1);
+    expect(group.attention).toBe(0);
+    expect(group.inLibraryCount).toBe(2);
+    expect(group.bytes).toBe(videoBytes + subBytes);
+
+    // 台词、记录、文件信息都照常计入（旧口径这里全是 0）
+    const rowOf = (key: string) =>
+      [...inventory.archive.rows, ...inventory.localSettings.rows, ...inventory.media.rows].find(
+        (row) => row.key === key,
+      );
+    expect(rowOf("slices-text")?.count).toBe(1);
+    expect(rowOf("records")?.count).toBe(1);
+    expect(rowOf("assets-info")?.count).toBe(2);
+    expect(rowOf("assets-local")?.count).toBe(2);
+
+    // 合计（hero 那个数）：素材文件 + 「句子原文」那一行（台词也是字幕的衍生品）
+    expect(inventory.media.bytes).toBe((group.bytes ?? 0) + (rowOf("slices-text")?.bytes ?? 0));
+    expect(inventory.media.bytes).toBeGreaterThan(videoBytes + subBytes);
+    expect(inventory.localBytes).toBeGreaterThanOrEqual(inventory.media.bytes);
   });
 });
 

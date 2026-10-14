@@ -29,8 +29,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-/** 词典清单在服务端 storage 里的位置 */
-export const DICT_MANIFEST_PATH = "/storage/dict/dict.json";
+/** 词典清单在服务端 storage 里的位置（目录布局见仓库根 storage/README.md） */
+export const DICT_MANIFEST_PATH = "/storage/assets/dict/dict.json";
 
 /** 词典落在插件目录下的子目录名 —— 必须与 `dictPath.ts` 的候选路径一致 */
 export const DICT_DIR_NAME = "dict";
@@ -43,7 +43,7 @@ export const DICT_SENTINEL = "base.dat.gz";
 
 export interface DictFile {
   name: string;
-  /** 清单里的相对路径（`/storage/dict/…`），fetch 前归一化成绝对地址 */
+  /** 清单里的相对路径（`/storage/assets/dict/…`），fetch 前归一化成绝对地址 */
   url: string;
   sha256: string;
   /** 字节数。清单给了就用来显示总体积/进度；缺了当 0（只是少个数，不影响安装） */

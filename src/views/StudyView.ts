@@ -2,6 +2,7 @@ import { ItemView, Menu, Notice, setIcon, TFile, type WorkspaceLeaf } from "obsi
 // 品牌 logo：海獭线稿（与网页 web/src/assets/otter-black.png 同一素材），
 // esbuild dataurl 内联进 main.js。深色主题下用 CSS filter 反白，见 .yl-brand-mark。
 import otterMark from "../assets/otter-black.png";
+import { setViewTitle } from "../ui/viewTitle";
 import { STORE } from "../storage/db";
 import type { VaultDb } from "../storage/db";
 import { clockTime } from "../core/clock";
@@ -40,9 +41,9 @@ import {
   appendChatTurn,
   effectiveJa,
   effectiveZh,
-  loadEpisodeList,
+  loadRecordList,
   loadProgress,
-  loadSlices,
+  loadStudySentences,
   recordReadAloud,
   resetPracticeRecord,
   resumeIndex,
@@ -53,7 +54,7 @@ import {
   startSession,
   submitCopy,
   submitImitation,
-  type EpisodeListItem,
+  type RecordListItem,
 } from "../services/study";
 import {
   buildCopyPractice,
@@ -76,6 +77,11 @@ import type { PluginSettings } from "../settings/types";
 import { pluginDirPath, resolveDictPath } from "../services/dictPath";
 import { fetchDictManifest, isDictInstalled } from "../services/dictInstall";
 import { DictInstallModal } from "./DictInstallModal";
+// 演示素材（示例那一集）改走服务端按需下载：不再内联进 main.js（见 services/demoPack.ts）。
+import { DEMO_WORK_TITLE, isDemoSeeded } from "../services/demo";
+import { fetchDemoManifest } from "../services/demoPack";
+import { resolveMediaDir } from "../services/mediaStore";
+import { DemoDownloadModal } from "./DemoDownloadModal";
 import { explainTargets, tokenize } from "../services/jaTokenize";
 import { onClickOutside } from "../core/onClickOutside";
 import { blockAnchor, episodeLabel } from "../markdown/templates";
@@ -94,6 +100,7 @@ import {
   type StreamVerdict,
   type WordEntry,
 } from "../services/ai/client";
+import { assetShaCid } from "../core/ids";
 import { log } from "../core/logger";
 import { recordWordExposure } from "../services/words";
 import { matchAiOrigins, matchAiReadings, matchMeanings } from "../services/meaningMatch";
@@ -103,13 +110,11 @@ import {
   CONTENT_POS,
   type AssetRow,
   type ChatTurn,
-  type EpisodeRow,
   type ProgressRow,
   type SentenceAnalysis,
   type SessionRow,
-  type SliceRow,
+  type StudySentence,
   type Token,
-  type WorkRow,
 } from "../types/entities";
 import type YoungLookPlugin from "../main";
 import { createButton, setButtonIcon, setButtonRole } from "../ui/button";
@@ -196,8 +201,8 @@ export class StudyView extends ItemView {
   private mode: "list" | "card" = "list";
 
   // 卡片态（进到某一片学习时才有值）
-  private item: EpisodeListItem | null = null;
-  private slices: SliceRow[] = [];
+  private item: RecordListItem | null = null;
+  private slices: StudySentence[] = [];
   private progressRows = new Map<string, ProgressRow>();
   private session: SessionRow | null = null;
   private index = 0;
@@ -355,8 +360,12 @@ export class StudyView extends ItemView {
     return VIEW_TYPE_STUDY;
   }
 
+  /**
+   * 页签标题按状态分两截（2026-10-14 用户定）：选集页 = 「洋流」，学习卡 =
+   * 「洋流 · 学习页」。页头（页签下面那行）由 setViewTitle 另行写成「首页」/「学习页」。
+   */
   getDisplayText(): string {
-    return "学习页";
+    return this.mode === "card" ? "洋流 · 学习页" : "洋流";
   }
 
   getIcon(): string {
@@ -400,12 +409,20 @@ export class StudyView extends ItemView {
       // ⚠️ 卡片模式下**不能重建** —— 用户可能正打了一半的字。
       // 连接/退出账号后走这里：只把三个 AI 入口的锁定态就地刷新。
       this.applyAccountState();
+      this.syncViewTitle();
       return;
     }
     this.contentEl.empty();
     this.contentEl.addClass("yl-study-root");
     if (this.mode === "card") this.buildCard();
     else await this.buildList();
+    this.syncViewTitle();
+  }
+
+  /** 页签 / 页头标题（页签带品牌前缀，页头只写页面名，见 ui/viewTitle.ts）。 */
+  private syncViewTitle(): void {
+    const study = this.mode === "card";
+    setViewTitle(this.leaf, this.containerEl, study ? "洋流 · 学习页" : "洋流", study ? "学习页" : "首页");
   }
 
   /** AI 现在能不能点（含登录状态）。三处入口共用一个判定口，别各自判断。 */
@@ -533,9 +550,9 @@ export class StudyView extends ItemView {
   }
 
   /** 个人中心的来路：退出时按它回原位。 */
-  private currentOrigin(): { from: "list" } | { from: "study"; episodeCid: string; index: number } {
+  private currentOrigin(): { from: "list" } | { from: "study"; recordCid: string; index: number } {
     if (this.mode === "card" && this.item) {
-      return { from: "study", episodeCid: this.item.episode.cid, index: this.index };
+      return { from: "study", recordCid: this.item.record.cid, index: this.index };
     }
     return { from: "list" };
   }
@@ -583,14 +600,21 @@ export class StudyView extends ItemView {
     const header = list.createDiv({ cls: "yl-list-header" });
     // 品牌区（2026-10-04 定稿 = temp/demo/home 方案2 双行徽标）：海獭线稿裸放不加边框，
     // 中文在上、英文小字大字距在下。沿用 h3 保住标题语义，样式见 .yl-brand。
-    const brand = header.createEl("h3", { cls: "yl-brand", attr: { title: "打开洋流日语官网" } });
-    brand.createEl("img", { cls: "yl-brand-mark", attr: { src: otterMark, alt: "" } });
-    const brandText = brand.createDiv({ cls: "yl-brand-text" });
+    // h3 自己 flex:1 撑满整行（把右侧按钮推到最右），**可点范围只圈里面的
+    // .yl-brand-link**（logo + 文字）—— 2026-10-14 用户：整行可点会误触跳官网。
+    const brand = header.createEl("h3", { cls: "yl-brand" });
+    const brandLink = brand.createDiv({
+      cls: "yl-brand-link",
+      attr: { title: "打开洋流日语官网" },
+    });
+    brandLink.createEl("img", { cls: "yl-brand-mark", attr: { src: otterMark, alt: "" } });
+    const brandText = brandLink.createDiv({ cls: "yl-brand-text" });
     brandText.createDiv({ cls: "yl-brand-cn" }).setText("洋流日语");
     brandText.createDiv({ cls: "yl-brand-en" }).setText("YOUNG LOOK");
-    // 品牌区整个可点 → 打开官网。地址一律走 webBase()：dev 构建落本机 vite（127.0.0.1:5173），
-    // 发版落 younglook.cc —— 别自己拼 settings.serverUrl，本机前后端是两个端口（见 config/env.ts）。
-    brand.onclick = () => window.open(this.plugin.webBase(), "_blank");
+    // 点击落点 = logo + 附近文字。地址一律走 webBase()：dev 构建落本机 vite
+    // （127.0.0.1:5173），发版落 younglook.cc —— 别自己拼 settings.serverUrl，
+    // 本机前后端是两个端口（见 config/env.ts）。
+    brandLink.onclick = () => window.open(this.plugin.webBase(), "_blank");
     // ⚠️ 别用 Obsidian 的 `mod-cta`：它跟 `--interactive-accent` 走，
     // 用户主题 accent 一变（默认紫），这颗按钮就跟插件定死的青蓝打架 ——
     // 正是 2026-09-30 "这个页面风格还不够一致" 的来源。
@@ -608,12 +632,19 @@ export class StudyView extends ItemView {
     // 空态整颗摘掉 —— 一行 0 没有指导性。
     const overview = list.createDiv({ cls: "yl-overview yl-muted-sm" });
 
-    const items = await loadEpisodeList(this.db);
+    const items = await loadRecordList(this.db);
+
+    // 演示素材还没下载：列表最前面摆一条「示例」，点它才谈下载（services/demoPack.ts）。
+    // 它是插件分发的东西、不是用户导入的集 —— **不并入 items**，也不计入上面那行概览数字。
+    if (!(await isDemoSeeded(this.db))) {
+      this.mountDemoPlaceholderRow(list);
+    }
+
     if (items.length === 0) {
       overview.remove();
       const empty = list.createDiv({ cls: "yl-empty" });
       empty.createEl("p", {
-        text: "还没有导入任何素材。点上面的按钮，或者在左侧资源管理器里右键字幕或视频文件，选「用洋流导入这一集」。",
+        text: "还没有导入任何素材。你可以点击右上角“导入视频”或者先试试上方的示例视频。",
       });
       empty.createEl("p", {
         cls: "yl-muted-sm",
@@ -632,32 +663,76 @@ export class StudyView extends ItemView {
     if (this.plugin.settings.authToken && syncedAt > 0) summary.push(`最近同步 ${clockTime(syncedAt)}`);
     overview.setText(summary.join(" · "));
 
-    for (const entry of items) {
-      const row = list.createDiv({ cls: "yl-episode-row" });
-      const info = row.createDiv({ cls: "yl-episode-info" });
-      // 集号可能留空（不是番剧的单集视频）：留空时那一整段不出现，
-      // 不要渲染成"第  集"这种半截话
-      const label = episodeLabel(entry.episode.season, entry.episode.number);
-      const head = [entry.work.title || entry.work.titleJa, label].filter(Boolean).join(" · ");
-      info.createDiv({
-        cls: "yl-episode-title",
-        text: `${head}${entry.episode.title ? ` ${entry.episode.title}` : ""}`,
-      });
-      const meta = info.createDiv({ cls: "yl-muted-sm" });
-      const parts = [`共 ${entry.total} 句`];
-      if (entry.completed > 0) {
-        parts.push(`已学 ${entry.completed} 句（${Math.round((entry.completed / entry.total) * 100)}%）`);
-      }
-      if (entry.lastSession && entry.lastSession.currentIndex > 0) {
-        parts.push(`上次学到第 ${entry.lastSession.currentIndex} 句`);
-      }
-      meta.setText(parts.join(" · "));
-      if (entry.completed > 0) {
-        const bar = info.createDiv({ cls: "yl-mini-progress" });
-        const fill = bar.createDiv({ cls: "yl-mini-progress-fill" });
-        fill.style.width = `${Math.round((entry.completed / entry.total) * 100)}%`;
-      }
+    for (const entry of items.filter((candidate) => candidate.videoAvailable)) {
+      this.mountEpisodeRow(list, entry);
+    }
 
+    // 未绑定视频的集沉底分组（2026-10-14 方案一定稿）：分隔线 + 整行置灰，
+    // 点之前就能看出这一集暂时学不了 —— 不用再靠点击后弹 Notice 才知道。
+    const unbound = items.filter((candidate) => !candidate.videoAvailable);
+    if (unbound.length > 0) {
+      list.createDiv({
+        cls: "yl-unbound-divider yl-muted-sm",
+        text: `以下学习记录文件丢失 · ${unbound.length} 条`,
+      });
+      for (const entry of unbound) this.mountEpisodeRow(list, entry, { unbound: true });
+    }
+  }
+
+  /**
+   * 首页一集 = 一条横行：标题/进度在左，主按钮 + 「⋯」在右。
+   *
+   * `unbound` = 未绑定视频的置灰行：主按钮不是「接着学」而是**可点**的「补视频」——
+   * 弹的就是「导入视频」那个窗口，名字/年份/季集号按这一集预填好，用户只要把视频
+   * 文件选上。recordCid 由「视频 sha256 + 日文字幕 sha256」派生，重新导入同一对文件、
+   * 由 sliceRebind 把学习记录挂回原句，不会产生重复集。
+   * ⚠️ 置灰只灰「行」，按钮保持正常可点 —— 按钮也灰掉用户会以为插件坏了。
+   */
+  private mountEpisodeRow(
+    list: HTMLElement,
+    entry: RecordListItem,
+    opts: { unbound?: boolean } = {},
+  ): void {
+    const row = list.createDiv({
+      cls: opts.unbound ? "yl-episode-row yl-unbound" : "yl-episode-row",
+    });
+    const info = row.createDiv({ cls: "yl-episode-info" });
+    // 集号可能留空（不是番剧的单集视频）：留空时那一整段不出现，
+    // 不要渲染成"第  集"这种半截话
+    const label = episodeLabel(entry.record.season, entry.record.number);
+    const head = [entry.record.title || entry.record.titleJa, label].filter(Boolean).join(" · ");
+    info.createDiv({
+      cls: "yl-episode-title",
+      text: `${head}${entry.record.episodeTitle ? ` ${entry.record.episodeTitle}` : ""}`,
+    });
+    const meta = info.createDiv({ cls: "yl-muted-sm" });
+    const parts = [`共 ${entry.total} 句`];
+    if (entry.completed > 0) {
+      parts.push(`已学 ${entry.completed} 句（${Math.round((entry.completed / entry.total) * 100)}%）`);
+    }
+    if (entry.lastSession && entry.lastSession.currentIndex > 0) {
+      parts.push(`上次学到第 ${entry.lastSession.currentIndex} 句`);
+    }
+    meta.setText(parts.join(" · "));
+    if (entry.completed > 0) {
+      const bar = info.createDiv({ cls: "yl-mini-progress" });
+      const fill = bar.createDiv({ cls: "yl-mini-progress-fill" });
+      fill.style.width = `${Math.round((entry.completed / entry.total) * 100)}%`;
+    }
+
+    if (opts.unbound) {
+      createButton(row, {
+        text: "补视频",
+        role: "primary",
+        onClick: () =>
+          new ImportModal(this.app, this.plugin, "", {
+            title: entry.record.title || entry.record.titleJa || "",
+            number: entry.record.number,
+            season: entry.record.season,
+            year: entry.record.year,
+          }).open(),
+      });
+    } else {
       const button = createButton(row, {
         text: entry.lastSession?.currentIndex ? "接着学" : "开始学",
         role: "primary",
@@ -668,10 +743,54 @@ export class StudyView extends ItemView {
           });
         },
       });
-
-      // 「⋯」放行尾：主操作最显眼，编辑/移除退进菜单里（2026-10-02 用户定）
-      this.mountRowActions(row, entry);
     }
+
+    // 「⋯」放行尾：主操作最显眼，编辑/移除退进菜单里（2026-10-02 用户定）
+    this.mountRowActions(row, entry);
+  }
+
+  /**
+   * 首页的「示例」占位行 —— 只在演示包还没下载时出现（见 services/demoPack.ts）。
+   *
+   * 它不是库里的真实集：点「开始学」会先弹窗问要不要下载示例素材，下载成功后才由
+   * `importSubtitle` 铺成**真实集**（带进度条、「⋯」菜单那套），这条占位自然消失。
+   * 按钮恒为「开始学」（没下过 = 没学过）；「接着学」是下载后真实行走的既有逻辑。
+   */
+  private mountDemoPlaceholderRow(list: HTMLElement): void {
+    const row = list.createDiv({ cls: "yl-episode-row yl-demo-row" });
+    const info = row.createDiv({ cls: "yl-episode-info" });
+    info.createDiv({ cls: "yl-episode-title", text: DEMO_WORK_TITLE });
+    info.createDiv({
+      cls: "yl-muted-sm",
+      text: "示例素材 · 点「开始学」时下载（仅此一次，下载后可离线学）",
+    });
+    createButton(row, {
+      text: "开始学",
+      role: "primary",
+      onClick: () => void this.startDemoDownload(),
+    });
+  }
+
+  /**
+   * 点「示例」→ 拉清单 → 弹下载窗 → 导入成功就进这一集。
+   *
+   * 清单拉不到（连不上服务器 / 线上还没发演示包）只给一句 Notice，不弹窗 —— 没得下
+   * 的时候弹出来也只是让用户对着一个点不动的按钮。下载、导入、收素材库都在
+   * `installDemoPack` 里完成；这里只负责界面切换。
+   */
+  private async startDemoDownload(): Promise<void> {
+    const manifest = await fetchDemoManifest(this.plugin.settings.serverUrl);
+    if (!manifest) {
+      new Notice("暂时连不上服务器，稍后再试。");
+      return;
+    }
+    new DemoDownloadModal(this.app, {
+      manifest,
+      db: this.db,
+      // 与用户导入同一个落点：本机空间的素材库（演示素材没有单独的目录）
+      mediaDir: resolveMediaDir(this.plugin.settings.mediaDir, this.plugin.settings.activeSpaceId),
+      onImported: (recordCid) => void this.openEpisode(recordCid),
+    }).open();
   }
 
   /**
@@ -682,7 +801,7 @@ export class StudyView extends ItemView {
    * 顺带编辑（改名字、季集号这些固有属性）有了入口。菜单走 Obsidian 原生
    * `Menu`（资源管理器右键同款）：定位、点外关闭、键盘导航都归它管。
    */
-  private mountRowActions(row: HTMLElement, entry: EpisodeListItem): void {
+  private mountRowActions(row: HTMLElement, entry: RecordListItem): void {
     createButton(row, {
       shape: "icon",
       icon: "more-vertical",
@@ -692,7 +811,7 @@ export class StudyView extends ItemView {
     });
   }
 
-  private openRowMenu(event: MouseEvent, entry: EpisodeListItem): void {
+  private openRowMenu(event: MouseEvent, entry: RecordListItem): void {
     const menu = new Menu();
     menu.addItem((item) =>
       item
@@ -714,9 +833,9 @@ export class StudyView extends ItemView {
   // ── 进入一集 ─────────────────────────────────────────────────────────────
 
   /** 给导入流程用的直入口：导入成功后直接进这一集的学习界面。 */
-  async openEpisode(episodeCid: string): Promise<void> {
-    const items = await loadEpisodeList(this.db);
-    const entry = items.find((candidate) => candidate.episode.cid === episodeCid);
+  async openEpisode(recordCid: string): Promise<void> {
+    const items = await loadRecordList(this.db);
+    const entry = items.find((candidate) => candidate.record.cid === recordCid);
     if (!entry) {
       await this.render();
       return;
@@ -724,8 +843,8 @@ export class StudyView extends ItemView {
     await this.enterEpisode(entry);
   }
 
-  private async enterEpisode(item: EpisodeListItem): Promise<void> {
-    const slices = await loadSlices(this.db, item.episode.cid);
+  private async enterEpisode(item: RecordListItem): Promise<void> {
+    const slices = await loadStudySentences(this.db, item.record.cid);
     if (slices.length === 0) {
       new Notice("这一集没有可以学的句子。");
       return;
@@ -736,10 +855,12 @@ export class StudyView extends ItemView {
       allProgress.filter((row) => !row.deletedAt && sliceCids.has(row.sliceCid)).map((row) => [row.sliceCid, row]),
     );
 
-    const videoAsset = (await this.db.getAllByIndex<AssetRow>(STORE.assets, "by_episode", item.episode.cid))
-      .find((asset) => asset.kind === "video" && !asset.deletedAt);
+    const videoAsset = await this.db.get<AssetRow>(
+      STORE.assets,
+      assetShaCid(item.record.videoSha256),
+    );
     if (!videoAsset) {
-      new Notice("这一集没挂上视频，重新导入一次（选同一个视频文件）就能补上。");
+      new Notice("我们没有找到与当前作品绑定的视频，重新导入一次（选同一个视频文件）就能补上。");
       return;
     }
     const url = localMediaUrl(this.app, videoAsset.localPath);
@@ -750,7 +871,7 @@ export class StudyView extends ItemView {
 
     this.item = item;
     this.slices = slices;
-    this.session = await startSession(this.db, item.episode.cid);
+    this.session = await startSession(this.db, item.record.cid);
     this.videoUrl = url;
     this.videoAsset = videoAsset;
     this.offsetMs = await loadVideoOffset(this.db, videoAsset.cid);
@@ -764,9 +885,9 @@ export class StudyView extends ItemView {
     this.showSlice(resumeIndex(slices, item.lastSession, completed));
   }
 
-  /** 个人中心「退出」回原位：回到指定集的指定句（不自动播放）。 */
-  async restoreTo(episodeCid: string, index: number): Promise<void> {
-    await this.openEpisode(episodeCid);
+  /** 个人中心「退出」回原位：回到指定记录的指定句（不自动播放）。 */
+  async restoreTo(recordCid: string, index: number): Promise<void> {
+    await this.openEpisode(recordCid);
     this.showSlice(Math.max(1, Math.min(index, this.slices.length)), false);
   }
 
@@ -1194,7 +1315,7 @@ export class StudyView extends ItemView {
   }
 
   /** 虚线跟句走：缓存没拉过就先拉一趟（登录拉服务端、未登录读本机），再读这一句。 */
-  private async refreshNoteButton(slice: SliceRow): Promise<void> {
+  private async refreshNoteButton(slice: StudySentence): Promise<void> {
     let text = myNoteFor(slice.cid);
     if (text === "") {
       try {
@@ -1235,7 +1356,7 @@ export class StudyView extends ItemView {
    * ⚠️ 不播时要**显式 pause**：只 seek 不暂停的话，正在播的播放器会顺着新窗口继续响下去
    * —— 那样"上一句一定不播"只在视频本来就停着时才成立（2026-09-27 加）。
    */
-  private setClipWindow(slice: SliceRow, play: boolean): void {
+  private setClipWindow(slice: StudySentence, play: boolean): void {
     const window = effectiveWindow(slice, this.offsetMs);
     this.startMs = window.startMs;
     this.endMs = window.endMs;
@@ -1288,9 +1409,9 @@ export class StudyView extends ItemView {
     this.index = next;
     const slice = this.slices[next - 1];
 
-    const label = episodeLabel(this.item.episode.season, this.item.episode.number);
+    const label = episodeLabel(this.item.record.season, this.item.record.number);
     this.cardTitleEl.setText(
-      `切片学习 · ${[this.item.work.title || this.item.work.titleJa, label]
+      `切片学习 · ${[this.item.record.title || this.item.record.titleJa, label]
         .filter(Boolean)
         .join(" ")} · 第 ${next} / ${total} 句`,
     );
@@ -1347,7 +1468,7 @@ export class StudyView extends ItemView {
     }
   }
 
-  private isComplete(slice: SliceRow): boolean {
+  private isComplete(slice: StudySentence): boolean {
     return this.progressRows.get(slice.cid)?.completedAt != null;
   }
 
@@ -1359,7 +1480,7 @@ export class StudyView extends ItemView {
    *    所以跟读「AI 没核对过」时会出现"圆点 ✓ + 卡头 已完成"的组合，这是对的。
    *    卡片外框的三态见 refreshStepCards，两者口径不要互相抄。
    */
-  private refreshSteps(slice: SliceRow): void {
+  private refreshSteps(slice: StudySentence): void {
     if (!this.tlNos) return;
     const progress = this.progressRows.get(slice.cid);
     const states = {
@@ -1501,7 +1622,7 @@ export class StudyView extends ItemView {
   }
 
   /** 切句时同步铺底：句子/翻译立刻上屏，注音（本地分词是异步的）到了再补。 */
-  private renderHero(slice: SliceRow): void {
+  private renderHero(slice: StudySentence): void {
     if (!this.heroJaEl || !this.heroZhEl) return;
     // 换句先复位上一句留下的三个临时态：青蓝（已解析）、压灰（等逐词释义）、
     // 闪烁（词到了）。它们都属于上一句，loadHeroReading 会按本句重定青蓝那一个。
@@ -1536,7 +1657,7 @@ export class StudyView extends ItemView {
    * 词面拼不回原句（分词器吞字/丢标点）就整段放弃 —— 注音标错位
    * 比不标更坑，句子保持切句时的平铺原文。词典没装上同样只显示原文。
    */
-  private async loadHeroReading(slice: SliceRow): Promise<void> {
+  private async loadHeroReading(slice: StudySentence): Promise<void> {
     // 新句先清上一句的可纠词表（纠按钮常驻，不再随注音有无收放）
     this.heroAnnotRows = [];
     this.heroLockedWords = [];
@@ -1649,7 +1770,7 @@ export class StudyView extends ItemView {
   }
 
   /** 这一句在本机解析过吗（引擎对不上 = 旧口径的解析，当作没解析，等重新解析） */
-  private isAnalyzed(slice: SliceRow): boolean {
+  private isAnalyzed(slice: StudySentence): boolean {
     return Boolean(slice.analysis?.done && slice.analysis.engine === ANALYSIS_ENGINE);
   }
 
@@ -1806,7 +1927,7 @@ export class StudyView extends ItemView {
   }
 
   /** 纠错弹窗（能改日文/中文/注音）—— 直接开，不带任何前置提醒。 */
-  private openCorrectionModal(slice: SliceRow): void {
+  private openCorrectionModal(slice: StudySentence): void {
     const modal = new CorrectionModal(this.app, {
       slice,
       annots: this.heroAnnotRows,
@@ -1827,11 +1948,11 @@ export class StudyView extends ItemView {
   }
 
   /** 副标题：作品 · 集 · 第 N 句（与其它弹窗放作品名的口径一致） */
-  private correctionSubtitle(slice: SliceRow): string {
+  private correctionSubtitle(slice: StudySentence): string {
     const item = this.item;
     if (!item) return `第 ${this.slices.indexOf(slice) + 1} 句`;
-    const label = episodeLabel(item.episode.season, item.episode.number);
-    const head = [item.work.title || item.work.titleJa, label].filter(Boolean).join(" · ");
+    const label = episodeLabel(item.record.season, item.record.number);
+    const head = [item.record.title || item.record.titleJa, label].filter(Boolean).join(" · ");
     return [head, `第 ${this.slices.indexOf(slice) + 1} 句`].filter(Boolean).join(" · ");
   }
 
@@ -1842,8 +1963,8 @@ export class StudyView extends ItemView {
    * 弹窗一关用户就看不到自己改了什么，等于白改。
    */
   private async persistCorrection(
-    slice: SliceRow,
-    fixes: { textFixes: SliceRow["textFixes"]; readingFixes: SliceRow["readingFixes"] },
+    slice: StudySentence,
+    fixes: { textFixes: StudySentence["textFixes"]; readingFixes: StudySentence["readingFixes"] },
   ): Promise<void> {
     // 先乐观更新内存行：保存成功后要靠它重铺原句与注音
     const nextJa = fixes.textFixes?.ja;
@@ -2217,7 +2338,7 @@ export class StudyView extends ItemView {
 
   // ── 三步的落库 ───────────────────────────────────────────────────────────
 
-  private currentSlice(): SliceRow | null {
+  private currentSlice(): StudySentence | null {
     return this.slices[this.index - 1] ?? null;
   }
 
@@ -2228,12 +2349,12 @@ export class StudyView extends ItemView {
    * 窗口小；现在时机归人，点完检查再去翻句是正常操作，不能把 A 句的结果
    * 记到 B 句头上。
    */
-  private sliceByCid(sliceCid: string): SliceRow | null {
+  private sliceByCid(sliceCid: string): StudySentence | null {
     return this.slices.find((slice) => slice.cid === sliceCid) ?? null;
   }
 
   /** 每一步落库之后的统一收尾。 */
-  private async afterProgress(slice: SliceRow, row: ProgressRow): Promise<void> {
+  private async afterProgress(slice: StudySentence, row: ProgressRow): Promise<void> {
     this.progressRows.set(slice.cid, row);
     this.refreshSteps(slice);
     this.refreshProgressBar();
@@ -2258,7 +2379,7 @@ export class StudyView extends ItemView {
    * 本地只查有没有出声 / 无麦「标记完成」= false（卡片说「已完成」）。
    */
   private async markReadAloudDone(
-    slice: SliceRow,
+    slice: StudySentence,
     seconds: number | null,
     verified: boolean,
   ): Promise<void> {
@@ -2272,7 +2393,7 @@ export class StudyView extends ItemView {
    * 发音、想评估可以用内置模型"——那句话里「内置模型」是可点的（虚线），点了才问
    * 「现在配置吗」，界面不自动跳（与「充值」那条同口径）。
    */
-  private async localReadAloudCheck(slice: SliceRow, payload: {
+  private async localReadAloudCheck(slice: StudySentence, payload: {
     blob: Blob;
     seconds: number;
   }): Promise<ReadVerifyOutcome> {
@@ -2557,7 +2678,7 @@ export class StudyView extends ItemView {
    * 汉字词读音缺失留空 —— 抄写提示把它跳过；跟读那路拿词面占位（见
    * handleVerifyReadAloud），别拿字面冒充读音。
    */
-  private sliceReadings(slice: SliceRow, tokens: Token[]): string[] {
+  private sliceReadings(slice: StudySentence, tokens: Token[]): string[] {
     const aiReadings = slice.analysis?.done
       ? matchAiReadings(
           tokens,
@@ -2581,7 +2702,7 @@ export class StudyView extends ItemView {
    * 读音走 sliceReadings 的三层来源（纠音 > AI 解析 > 词典），与原句注音、
    * 跟读核对同口径。提示永远不主动触发 AI，花钱的动作只有「AI 解析」按钮。
    */
-  private async copyRomaji(slice: SliceRow): Promise<string> {
+  private async copyRomaji(slice: StudySentence): Promise<string> {
     const dict = this.dictPath();
     if (!dict) return "";
     const tokens = await tokenize(dict, effectiveJa(slice));
@@ -2598,7 +2719,7 @@ export class StudyView extends ItemView {
       .join(" ");
   }
 
-  private async renderAnalysis(slice: SliceRow): Promise<void> {
+  private async renderAnalysis(slice: StudySentence): Promise<void> {
     // 换句就掐掉上一句还在跑的流式解读：那份解读已经没有观众了，
     // 让它跑完只是替用户继续花钱（中断时服务端也不会扣费）
     if (this.explainStreamCid && this.explainStreamCid !== slice.cid) {
@@ -2658,10 +2779,10 @@ export class StudyView extends ItemView {
    * 中间那一句，语境只是参考（口径写在 ANALYZE_SYSTEM 里）。
    * 按 cid 找下标而不是用 this.index：笔记补记的句子可能不是当前正在看的那句。
    */
-  private explainContextFor(slice: SliceRow): { work: string; prevJa: string; nextJa: string } {
+  private explainContextFor(slice: StudySentence): { work: string; prevJa: string; nextJa: string } {
     const index = this.slices.findIndex((row) => row.cid === slice.cid);
     return {
-      work: (this.item?.work.title ?? "").trim(),
+      work: (this.item?.record.title ?? "").trim(),
       prevJa: index > 0 ? effectiveJa(this.slices[index - 1]) : "",
       nextJa: index >= 0 && index + 1 < this.slices.length ? effectiveJa(this.slices[index + 1]) : "",
     };
@@ -2856,7 +2977,7 @@ export class StudyView extends ItemView {
    * @returns 合并后的那份；没有可合并的记录时返回 null
    */
   private async mergeExplanation(
-    slice: SliceRow,
+    slice: StudySentence,
     explanation: SentenceExplanation,
   ): Promise<SentenceAnalysis | null> {
     const previous = slice.analysis;
@@ -2942,7 +3063,7 @@ export class StudyView extends ItemView {
     input: ExplainInput,
     settings: PluginSettings,
     controller: AbortController,
-    slice: SliceRow,
+    slice: StudySentence,
     refresh = false,
   ): Promise<
     | { aborted: true }
@@ -3008,7 +3129,7 @@ export class StudyView extends ItemView {
    */
   private async fetchWords(
     input: ExplainInput,
-    slice: SliceRow,
+    slice: StudySentence,
     settings: PluginSettings,
   ): Promise<WordEntry[] | null> {
     const attempt = async (): Promise<WordEntry[] | null> => explainWords(input, settings);
@@ -3060,7 +3181,7 @@ export class StudyView extends ItemView {
    * 句内读音与词源；这样与界面看到的那一份结构一致，读回来渲染时不差分毫。
    */
   private async persistAnalysis(
-    slice: SliceRow,
+    slice: StudySentence,
     explanation: SentenceExplanation,
     words: WordEntry[],
   ): Promise<void> {

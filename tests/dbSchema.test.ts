@@ -47,7 +47,7 @@ describe("本地库升级", () => {
     vault.close();
 
     expect(names).not.toContain("tts");
-    expect(names).toContain(STORE.slices);
+    expect(names).toContain(STORE.sentences);
     expect(names).toContain(STORE.recordings);
   });
 

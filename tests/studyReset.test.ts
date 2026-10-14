@@ -2,7 +2,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
 import { STORE, VaultDb } from "../src/storage/db";
-import type { SliceRow } from "../src/types/entities";
+import type { StudySentence } from "../src/types/entities";
 import { deleteRecording, loadRecording, saveRecording } from "../src/services/recordings";
 import {
   recordReadAloud,
@@ -19,10 +19,8 @@ import {
  * completedAt 由三步齐全推导，缺一步整句就回到未完成。
  */
 
-const slice: SliceRow = {
+const slice: StudySentence = {
   cid: "slice-1",
-  episodeCid: "ep-1",
-  assetCid: "asset-1",
   index: 1,
   startMs: 0,
   endMs: 1500,
@@ -30,12 +28,7 @@ const slice: SliceRow = {
   zh: "猫在睡觉。",
   speaker: "",
   textHash: "hash",
-  parserVersion: 1,
   analysis: null,
-  rev: 0,
-  rowDigest: "",
-  clientUpdatedAt: "2026-10-04T00:00:00Z",
-  deletedAt: null,
 };
 
 /** 三步全部做完（跟读 + 抄写两遍 + 仿写 AI 判过），拿到"已学完"的状态 */

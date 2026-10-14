@@ -1,9 +1,17 @@
 /**
  * 「存储」页的盘点 —— 本机每一类数据占多少、在不在、会不会上云。
  *
- * **只算用户自己产生的数据**（2026-10-04 用户拍板）：插件自带的词典、演示素材
- * （`demo/` 里的示例视频与字幕，靠作品名认亲，见 `demoSeed.ts`）是插件分发的
- * 东西，不是用户的，一律不计入 —— 素材清单、学习档案里的对应行都扣掉。
+ * **只算用户自己产生的数据**（2026-10-04 用户拍板）：插件自带的**词典**是插件
+ * 分发的内容，不计入。
+ *
+ * 🔥 **演示素材反过来 —— 下载后就算用户的**（2026-10-14 用户拍板）。10-04 的旧
+ *    口径把演示集整个扣掉，前提是它打在 main.js 里、随插件分发；而 10-13 起演示包
+ *    改走服务端按需下载（见 `services/demoPack.ts`），用户点首页「示例」的「开始学」
+ *    才落进**本机空间的素材库**（与用户自己导入的同一个目录，见 `resolveMediaDir`）——
+ *    那几 MB 是用户自己点下来的、真实占着这台机器的盘，存储页必须如实反映：素材清单、
+ *    句子原文、学习记录照常计入，与用户自己导入的一视同仁。
+ *    ⚠️ 登录认领判据（`spaceData.ts`）仍然排除演示集 —— 那是「要不要把匿名数据
+ *       搬进账号」的另一回事，不跟着这里改。
  *
  * 这一层只回答"现在是什么样"，不做任何改写（也没有写库的路径），
  * 三条纪律改动前先读：
@@ -21,16 +29,16 @@ import { stat } from "node:fs/promises";
 
 import type { PluginSettings } from "../settings/types";
 import { STORE, type VaultDb } from "../storage/db";
-import { DEMO_LEGACY_WORK_TITLES, DEMO_WORK_TITLE } from "./demoSeed";
+import { assetShaCid, normalizeTitle } from "../core/ids";
 import type {
   AssetRow,
-  EpisodeRow,
   MyNoteRow,
   ProgressRow,
-  SliceRow,
+  RecordLineRow,
+  RecordRow,
+  SentenceRow,
   StudyDayRow,
   WordRow,
-  WorkRow,
 } from "../types/entities";
 import type { RecordingRow } from "./recordings";
 import { insideMediaRoot, resolveMediaDir } from "./mediaStore";
@@ -73,11 +81,15 @@ export interface MediaFileRow {
   insideMedia: boolean;
 }
 
-/** 素材清单按作品分的一组。 */
+/** 素材清单按「同一部作品」分的一组（分桶键 = 归一化标题 + 年份，见 collectInventory）。 */
 export interface MediaGroupRow {
-  workCid: string;
+  /** 分桶键（展开态记账用） */
+  key: string;
   title: string;
-  episodes: number;
+  /** 组内学习记录条数（同一部作品的不同剪辑/字幕版本各算一条） */
+  records: number;
+  /** 组内学习记录的 cid（「删除组素材」要逐条移除记录用） */
+  recordCids: string[];
   videoCount: number;
   subtitleCount: number;
   bytes: number;
@@ -231,24 +243,6 @@ function lives<T extends { deletedAt: string | null }>(rows: readonly T[]): T[] 
   return rows.filter((row) => !row.deletedAt);
 }
 
-/** 按作品名认出来的演示作品 cid 集 —— 认亲口径与 demoSeed 一致（精确同名）。 */
-function demoWorkCidsOf(works: readonly WorkRow[]): Set<string> {
-  const demoTitles = [DEMO_WORK_TITLE, ...DEMO_LEGACY_WORK_TITLES];
-  return new Set(
-    works.filter((row) => !row.deletedAt && demoTitles.includes(row.title)).map((row) => row.cid),
-  );
-}
-
-/** 演示作品名下的活着的集（它们的素材与句子都是插件分发的，不算用户数据）。 */
-function demoEpisodeCidsOf(
-  episodes: readonly EpisodeRow[],
-  demoWorks: Set<string>,
-): Set<string> {
-  return new Set(
-    lives(episodes).filter((row) => demoWorks.has(row.workCid)).map((row) => row.cid),
-  );
-}
-
 /** 现在还在不在 + 现在多大。移走的外接盘、整理过的下载目录都会被这里抓出来。 */
 async function probePath(path: string): Promise<{ exists: boolean; size: number | null }> {
   if (!path) return { exists: false, size: null };
@@ -268,23 +262,30 @@ export async function collectInventory(deps: InventoryDeps): Promise<Inventory> 
   const { db, settings } = deps;
   const mediaDir = resolveMediaDir(settings.mediaDir, settings.activeSpaceId);
 
-  const [works, episodes, assets, inventoryParts] = await Promise.all([
-    db.getAll<WorkRow>(STORE.works),
-    db.getAll<EpisodeRow>(STORE.episodes),
+  const [records, assets, inventoryParts] = await Promise.all([
+    db.getAll<RecordRow>(STORE.records),
     db.getAll<AssetRow>(STORE.assets),
     collectRest(deps),
   ]);
 
-  // ── 素材库：群体明细（演示集的素材不计 —— 那是插件自带的，不是用户导的）───
-  const workTitle = new Map<string, string>();
-  for (const row of lives(works)) workTitle.set(row.cid, row.title || row.titleJa || "未命名");
-  const episodesById = new Map<string, string>();
-  for (const row of lives(episodes)) episodesById.set(row.cid, row.workCid);
-  const demoEpisodes = demoEpisodeCidsOf(episodes, demoWorkCidsOf(works));
+  const liveRecords = lives(records);
+
+  // ── 素材库：群体明细 ──
+  /** 素材 cid → 引用它的活记录（分桶、视频时长都从这里来） */
+  const recordsByAsset = new Map<string, RecordRow[]>();
+  for (const row of liveRecords) {
+    for (const sha of [row.videoSha256, row.jaSubSha256, row.zhSubSha256]) {
+      if (!sha) continue;
+      const cid = assetShaCid(sha);
+      const list = recordsByAsset.get(cid) ?? [];
+      list.push(row);
+      recordsByAsset.set(cid, list);
+    }
+  }
 
   const buckets = new Map<string, MediaGroupRow>();
-  /** 每个作品名下集到过哪些 episode（"多少集"按它算：一集常常挂着两个文件） */
-  const episodesSeen = new Map<string, Set<string>>();
+  /** 每组到过哪些记录（「多少条记录」按它算：一份素材常被多条记录共享） */
+  const recordsSeen = new Map<string, Set<string>>();
   let mediaCount = 0;
   let mediaBytes = 0;
   let missing = 0;
@@ -292,11 +293,17 @@ export async function collectInventory(deps: InventoryDeps): Promise<Inventory> 
 
   for (const row of lives(assets)) {
     if (!row.localPath) continue;
-    if (demoEpisodes.has(row.episodeCid)) continue;
+    const usingRecords = recordsByAsset.get(row.cid) ?? [];
     const probe = await probePath(row.localPath);
     const insideMedia = insideMediaRoot(row.localPath, mediaDir);
     if (!probe.exists) missing += 1;
     else if (!insideMedia) outside += 1;
+
+    // 视频时长取引用它的记录里第一个非空的 durationMs（同一视频共享一条素材行）
+    const durationMs =
+      row.kind === "video"
+        ? (usingRecords.find((rec) => rec.durationMs)?.durationMs ?? null)
+        : null;
 
     const file: MediaFileRow = {
       cid: row.cid,
@@ -304,17 +311,21 @@ export async function collectInventory(deps: InventoryDeps): Promise<Inventory> 
       filename: row.filename,
       localPath: row.localPath,
       bytes: probe.size ?? row.sizeBytes,
-      durationSeconds: row.durationSeconds,
+      durationSeconds: durationMs === null ? null : Math.round(durationMs / 1000),
       language: row.language,
       exists: probe.exists,
       insideMedia,
     };
 
-    const workCid = episodesById.get(row.episodeCid) ?? "";
-    const bucket = buckets.get(workCid) ?? {
-      workCid,
-      title: workTitle.get(workCid) ?? "没能对上作品名的文件",
-      episodes: 0,
+    // 分桶键 = 归一化标题 + 年份（同一部作品的不同剪辑版本归一组）
+    const firstTitle = usingRecords[0]?.title ?? "";
+    const firstYear = usingRecords[0]?.year ?? null;
+    const key = `${normalizeTitle(firstTitle)}|${firstYear ?? ""}`;
+    const bucket = buckets.get(key) ?? {
+      key,
+      title: firstTitle || "没能对上作品名的文件",
+      records: 0,
+      recordCids: [],
       videoCount: 0,
       subtitleCount: 0,
       bytes: 0,
@@ -323,9 +334,9 @@ export async function collectInventory(deps: InventoryDeps): Promise<Inventory> 
       inLibraryBytes: 0,
       files: [],
     };
-    const episodesOfWork = episodesSeen.get(workCid) ?? new Set<string>();
-    episodesOfWork.add(row.episodeCid);
-    episodesSeen.set(workCid, episodesOfWork);
+    const recordsOfBucket = recordsSeen.get(key) ?? new Set<string>();
+    for (const rec of usingRecords) recordsOfBucket.add(rec.cid);
+    recordsSeen.set(key, recordsOfBucket);
 
     bucket.files.push(file);
     bucket.bytes += file.bytes;
@@ -337,7 +348,7 @@ export async function collectInventory(deps: InventoryDeps): Promise<Inventory> 
       bucket.inLibraryCount += 1;
       bucket.inLibraryBytes += file.bytes;
     }
-    buckets.set(workCid, bucket);
+    buckets.set(key, bucket);
 
     mediaCount += 1;
     mediaBytes += file.bytes;
@@ -345,7 +356,9 @@ export async function collectInventory(deps: InventoryDeps): Promise<Inventory> 
 
   const groups = [...buckets.values()].sort((a, b) => b.bytes - a.bytes);
   for (const group of groups) {
-    group.episodes = episodesSeen.get(group.workCid)?.size ?? 0;
+    const seen = recordsSeen.get(group.key);
+    group.records = seen?.size ?? 0;
+    group.recordCids = [...(seen ?? [])];
     group.files.sort((a, b) => a.filename.localeCompare(b.filename, "ja"));
   }
 
@@ -475,22 +488,18 @@ async function collectArchivePart(
   db: VaultDb,
   settings: PluginSettings,
 ): Promise<{ archive: ArchiveRow[]; localSettings: ArchiveRow[]; media: ArchiveRow[] }> {
-  const [progress, slices, words, days, recordings, myNotes, rows] = await Promise.all([
+  const [progress, sentences, lines, words, days, recordings, myNotes, assets] = await Promise.all([
     db.getAll<ProgressRow>(STORE.progress),
-    db.getAll<SliceRow>(STORE.slices),
+    db.getAll<SentenceRow>(STORE.sentences),
+    db.getAll<RecordLineRow>(STORE.lines),
     db.getAll<WordRow>(STORE.words),
     db.getAll<StudyDayRow>(STORE.studyDays),
     db.getAll<RecordingRow>(STORE.recordings),
     db.getAll<MyNoteRow>(STORE.myNotes),
-    Promise.all([
-      db.getAll<WorkRow>(STORE.works),
-      db.getAll<EpisodeRow>(STORE.episodes),
-      db.getAll<AssetRow>(STORE.assets),
-    ]),
+    db.getAll<AssetRow>(STORE.assets),
   ]);
 
   const liveProgress = lives(progress);
-  const liveSlicesAll = lives(slices);
   const imitationRows = liveProgress.filter((row) => (row.imitationText ?? "").trim().length > 0);
   const chatRows = liveProgress.filter((row) => (row.imitationChat ?? []).length > 0);
   // 录音是 Blob，JSON 序列化会把它摊成 {} —— 大小必须按 blob 自己报的算
@@ -505,25 +514,27 @@ async function collectArchivePart(
     });
   }
 
-  const [works, episodes, assets] = rows;
+  // 演示包下载后就是本机上的真实数据（2026-10-14 用户拍板，见文件头）：素材、
+  // 台词、记录一视同仁，不再按作品名扣掉；学没学它（进度、录音、句子层沉淀）
+  // 同样照常计入。
+  const [records] = await Promise.all([db.getAll<RecordRow>(STORE.records)]);
 
-  // 演示集的句子、索引、作品行是插件分发的，不算用户数据；学没学它（进度、
-  // 录音）是用户自己的行为，照常计入。
-  const demoWorks = demoWorkCidsOf(works);
-  const demoEpisodes = demoEpisodeCidsOf(episodes, demoWorks);
-  const liveWorks = lives(works).filter((row) => !demoWorks.has(row.cid));
-  const liveEpisodes = lives(episodes).filter((row) => !demoEpisodes.has(row.cid));
-  const liveAssets = lives(assets).filter((row) => !demoEpisodes.has(row.episodeCid));
-  const liveSlices = liveSlicesAll.filter((row) => !demoEpisodes.has(row.episodeCid));
+  const liveAssets = lives(assets);
+  const liveLines = lines;
+
+  // 句子层：被台词行引用到的句子才算数（没人引的孤儿行不计）。
+  // ⚠️ sentences 行没有 deletedAt（句子层没有删除概念），不走 lives()。
+  const sentenceCidsInUse = new Set(liveLines.map((row) => row.sentenceCid));
+  const liveSentences = sentences.filter((row) => sentenceCidsInUse.has(row.cid));
 
   // 句子本身的两个上云子集：你改过的覆盖层（corrections）与 AI 解析结果（analysis）。
-  const correctionsRows = liveSlices.filter(
+  const correctionsRows = liveSentences.filter(
     (row) =>
       (row.textFixes?.ja ?? "").trim().length > 0 ||
       (row.textFixes?.zh ?? "").trim().length > 0 ||
       Object.keys(row.readingFixes ?? {}).length > 0,
   );
-  const analysisRows = liveSlices.filter((row) => row.analysis);
+  const analysisRows = liveSentences.filter((row) => row.analysis);
 
   // 我的笔记：登录后笔记存在服务端（本机不留一份），未登录才落本机这张表。
   const loggedIn = isLoggedIn(settings);
@@ -575,11 +586,11 @@ async function collectArchivePart(
       trait: "cloud",
     },
     {
-      key: "works",
-      label: "作品与单集",
-      hint: "作品的标题、封面、共多少集",
-      count: liveWorks.length + liveEpisodes.length,
-      bytes: utf8Bytes(liveWorks) + utf8Bytes(liveEpisodes),
+      key: "records",
+      label: "学习记录",
+      hint: "每条记录的标题、季集号这些展示信息",
+      count: lives(records).length,
+      bytes: utf8Bytes(lives(records)),
       trait: "cloud",
     },
     {
@@ -609,7 +620,7 @@ async function collectArchivePart(
     {
       key: "assets-info",
       label: "文件信息",
-      hint: "每个文件的名字、大小、时长、语种；不含它放在哪儿",
+      hint: "每个文件的名字、大小、语种；不含它放在哪儿",
       count: liveAssets.length,
       bytes: utf8Bytes(
         liveAssets.map((row) => pick(row as unknown as Record<string, unknown>, ASSET_KEYS)),
@@ -634,9 +645,9 @@ async function collectArchivePart(
       key: "slices-text",
       label: "句子原文",
       hint: "日文原句、译文和出现的时间；台词原文不出这台机器",
-      count: liveSlices.length,
+      count: liveLines.length,
       bytes: utf8Bytes(
-        liveSlices.map((row) =>
+        liveLines.map((row) =>
           pick(row as unknown as Record<string, unknown>, [
             "ja", "zh", "index", "startMs", "endMs", "speaker",
           ]),

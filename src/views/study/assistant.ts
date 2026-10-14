@@ -41,7 +41,7 @@ import { setIcon } from "obsidian";
 import { AiUnavailableError, askAboutSentenceStream, isNoBalanceError } from "../../services/ai/client";
 import type { AiGate } from "../../services/ai/gate";
 import type { PluginSettings } from "../../settings/types";
-import type { ChatTurn, SliceRow } from "../../types/entities";
+import type { ChatTurn, StudySentence } from "../../types/entities";
 import { log } from "../../core/logger";
 import { onClickOutside } from "../../core/onClickOutside";
 import { renderHintWithRecharge } from "./hintText";
@@ -91,7 +91,7 @@ export interface AssistantHandle {
    * @param stored 库里存着的问答记录（`ProgressRow.imitationChat`）——
    *               这次会话内存里没有时用它还原：插件重载后翻回来，之前问过的还在。
    */
-  load(slice: SliceRow, stored?: ChatTurn[]): void;
+  load(slice: StudySentence, stored?: ChatTurn[]): void;
   /** 解析/仿写做完时把结果喂进来，追问时才会带上 */
   setContext(context: AssistantContext): void;
   /** 登录状态变了（刚连接上 / 刚退出）后重算发送键的锁定态 */
@@ -177,7 +177,7 @@ export function buildAssistant(opts: {
   });
   sendButton.innerHTML = SEND_ARROW_SVG;
 
-  let slice: SliceRow | null = null;
+  let slice: StudySentence | null = null;
   let context: AssistantContext = {};
   let history: ChatTurn[] = [];
   let pending = false;
@@ -336,7 +336,7 @@ export function buildAssistant(opts: {
    * 就是一堆没有问题的回答，那还不如不存。落哪句由调用方显式给：
    * 回答在路上的几秒里当前句可能已经换人，落「当前句」就是串台。
    */
-  function pushTurnTo(target: SliceRow, into: ChatTurn[], turn: Omit<ChatTurn, "ts">): void {
+  function pushTurnTo(target: StudySentence, into: ChatTurn[], turn: Omit<ChatTurn, "ts">): void {
     const full: ChatTurn = { ...turn, ts: new Date().toISOString() };
     into.push(full);
     opts.onTurn?.(target.cid, full);
@@ -493,7 +493,7 @@ export function buildAssistant(opts: {
 
   return {
     root,
-    load(nextSlice: SliceRow, stored?: ChatTurn[]) {
+    load(nextSlice: StudySentence, stored?: ChatTurn[]) {
       // 上一句的回答还在路上：掐掉（换句 = 换话题，旧的回答没处落了）
       askAbort?.abort();
       if (slice && slice.cid !== nextSlice.cid) cache.set(slice.cid, history);

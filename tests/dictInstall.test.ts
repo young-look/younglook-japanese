@@ -25,7 +25,7 @@ import {
 const sha = (content: string) => createHash("sha256").update(content).digest("hex");
 
 function fileBody(name: string, content: string) {
-  return { name, url: `/storage/dict/${name}`, sha256: sha(content), bytes: content.length };
+  return { name, url: `/storage/assets/dict/${name}`, sha256: sha(content), bytes: content.length };
 }
 
 const BODY = { "base.dat.gz": "BASE", "tid_pos.dat.gz": "TIDPOS", "unk.dat.gz": "UNK" };
@@ -35,7 +35,7 @@ function manifestOf(names = Object.keys(BODY)): DictManifest {
     version: "1",
     files: names.map((name) => ({
       name,
-      url: `https://x.cc/storage/dict/${name}`,
+      url: `https://x.cc/storage/assets/dict/${name}`,
       sha256: sha(BODY[name as keyof typeof BODY]),
       bytes: BODY[name as keyof typeof BODY].length,
     })),
@@ -70,14 +70,14 @@ describe("fetchDictManifest", () => {
       new Response(
         JSON.stringify({
           version: "1",
-          files: [{ name: "base.dat.gz", url: "/storage/dict/base.dat.gz", sha256: "AB12", bytes: 10 }],
+          files: [{ name: "base.dat.gz", url: "/storage/assets/dict/base.dat.gz", sha256: "AB12", bytes: 10 }],
         }),
         { status: 200 },
       ),
     );
     expect(manifest?.version).toBe("1");
     // 🔥 渲染进程里 fetch 相对路径会拼到 app:// 源上必挂 —— 必须在这里归一化
-    expect(manifest?.files[0].url).toBe("https://x.cc/storage/dict/base.dat.gz");
+    expect(manifest?.files[0].url).toBe("https://x.cc/storage/assets/dict/base.dat.gz");
     expect(manifest?.files[0].sha256).toBe("ab12");
     expect(manifest?.files[0].bytes).toBe(10);
   });
@@ -94,7 +94,7 @@ describe("fetchDictManifest", () => {
     for (const name of ["", " ", "../evil", "a/b.dat.gz", "a\\b.dat.gz", "."]) {
       const manifest = await fetchDictManifest("https://x.cc", async () =>
         new Response(
-          JSON.stringify({ files: [{ name, url: "/storage/dict/x", sha256: "AA" }] }),
+          JSON.stringify({ files: [{ name, url: "/storage/assets/dict/x", sha256: "AA" }] }),
           { status: 200 },
         ),
       );

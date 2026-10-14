@@ -30,7 +30,7 @@ const MANIFEST: DictManifest = {
   files: [
     {
       name: "base.dat.gz",
-      url: "https://x.cc/storage/dict/base.dat.gz",
+      url: "https://x.cc/storage/assets/dict/base.dat.gz",
       sha256: createHash("sha256").update(CONTENT).digest("hex"),
       bytes: 17 << 20,
     },

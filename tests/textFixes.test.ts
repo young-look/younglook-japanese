@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { effectiveJa, effectiveZh, normalizeTextFix } from "../src/services/study";
-import type { SliceRow } from "../src/types/entities";
+import type { StudySentence } from "../src/types/entities";
 
 /**
  * 字幕修正（`textFixes`）的取值口径。
@@ -13,7 +13,7 @@ import type { SliceRow } from "../src/types/entities";
  * 所以「改日文」只能是**显示时套一层覆盖**，本文件钉的就是这一层。
  */
 
-const base = { ja: "ちょっと待って", zh: "等一下" } as Pick<SliceRow, "ja" | "zh" | "textFixes">;
+const base = { ja: "ちょっと待って", zh: "等一下" } as Pick<StudySentence, "ja" | "zh" | "textFixes">;
 
 describe("effectiveJa / effectiveZh", () => {
   it("没改过就返回原片字幕", () => {

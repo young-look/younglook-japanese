@@ -1,92 +1,100 @@
 /**
  * 学习流程的数据层（本地）。
  *
- * 对齐服务端 `core/learning/services/study.py` 的行为口径：
- *   · 进度跟着切片走（progressCid = P:<sliceCid>），三步各自的完成时刻分开记；
+ *   · 进度跟着句子走（progressCid = P:<三句哈希>），三步各自的完成时刻分开记；
  *   · 「重置」把那一步**完全恢复初始**（完成时刻、留档、草稿一并清，
  *     2026-10-04 用户拍板，取代旧"重做不动完成时刻"的约定）——
  *     completedAt 由三步齐全推导，缺一步整句就回到未完成；
- *   · 会话记录"在学哪集、学到第几句"，中途退出再进来从这一句接着来。
+ *   · 会话记录"在学哪条记录、学到第几句"，中途退出再进来从这一句接着来。
+ *
+ * 身份模型（2026-10-14 重构）：进度/笔记/录音/解析全挂在**句子哈希**上，
+ * 跨学习记录共享——同一句（三句哈希相同）出现在哪条记录里都算学过。
+ * 学习记录 = 文件哈希对（见 core/ids.ts::recordCid），删除记录绝不碰句子层。
  *
  * 业务行直接写在同一个事务里（outbox 已随 2026-10-06 统一快照同步退役——
  * 全量快照重推不依赖逐行待办）。
  */
 
 import { rowDigest } from "../core/digest";
-import { progressCid, sessionCid } from "../core/ids";
+import { assetShaCid, progressCid, sessionCid } from "../core/ids";
 import { STORE, type StoreName, type VaultDb } from "../storage/db";
+import { fileExists } from "../storage/files";
 import { bumpStudyDay, type StudyDayPatch } from "./studyDays";
 import type {
   AssetRow,
   ChatTurn,
-  EpisodeRow,
   ProgressRow,
+  RecordLineRow,
+  RecordRow,
   SentenceAnalysis,
+  SentenceRow,
   SessionRow,
-  SliceRow,
-  WorkRow,
+  StudySentence,
 } from "../types/entities";
 
-export interface EpisodeListItem {
-  work: WorkRow;
-  episode: EpisodeRow;
+// 视图层从 types/entities 拿 StudySentence；这里 re-export 保持旧 import 路径可用。
+export type { StudySentence } from "../types/entities";
+
+export interface RecordListItem {
+  record: RecordRow;
   total: number;
   completed: number;
-  /** 这一集最近一次会话（"上次学到第 N 句"的来源）；没学过为 null */
+  /** 这条记录最近一次会话（"上次学到第 N 句"的来源）；没学过为 null */
   lastSession: SessionRow | null;
+  /** 视频文件在磁盘上还找不找得到 —— 首页「文件丢失」灰态分组的依据 */
+  videoAvailable: boolean;
 }
 
 const live = <T extends { deletedAt: string | null }>(rows: T[]): T[] =>
   rows.filter((row) => !row.deletedAt);
 
-/** 首页列表：本机导入过的每一集，带句数、已学句数和上次学到的位置。 */
-export async function loadEpisodeList(db: VaultDb): Promise<EpisodeListItem[]> {
-  const [works, episodes, slices, sessions, progress] = await Promise.all([
-    db.getAll<WorkRow>(STORE.works),
-    db.getAll<EpisodeRow>(STORE.episodes),
-    db.getAll<SliceRow>(STORE.slices),
+/** 首页列表：本机导入过的每条学习记录，带句数、已学句数和上次学到的位置。 */
+export async function loadRecordList(db: VaultDb): Promise<RecordListItem[]> {
+  const [records, lines, sessions, progress, assets] = await Promise.all([
+    db.getAll<RecordRow>(STORE.records),
+    db.getAll<RecordLineRow>(STORE.lines),
     db.getAll<SessionRow>(STORE.sessions),
     db.getAll<ProgressRow>(STORE.progress),
+    db.getAll<AssetRow>(STORE.assets),
   ]);
 
-  const completedBySlice = new Map<string, number>();
+  const completedBySentence = new Map<string, number>();
   for (const row of live(progress)) {
-    if (row.completedAt) completedBySlice.set(row.sliceCid, (completedBySlice.get(row.sliceCid) ?? 0) + 1);
-  }
-
-  const totalByEpisode = new Map<string, number>();
-  const sliceCidsByEpisode = new Map<string, string[]>();
-  for (const slice of live(slices)) {
-    totalByEpisode.set(slice.episodeCid, (totalByEpisode.get(slice.episodeCid) ?? 0) + 1);
-    const bucket = sliceCidsByEpisode.get(slice.episodeCid) ?? [];
-    bucket.push(slice.cid);
-    sliceCidsByEpisode.set(slice.episodeCid, bucket);
-  }
-
-  const latestSessionByEpisode = new Map<string, SessionRow>();
-  for (const session of live(sessions)) {
-    if (!session.episodeCid) continue;
-    const current = latestSessionByEpisode.get(session.episodeCid);
-    if (!current || session.startedAt > current.startedAt) {
-      latestSessionByEpisode.set(session.episodeCid, session);
+    if (row.completedAt) {
+      completedBySentence.set(row.sliceCid, (completedBySentence.get(row.sliceCid) ?? 0) + 1);
     }
   }
 
-  const items: EpisodeListItem[] = [];
-  for (const episode of live(episodes)) {
-    const work = works.find((row) => row.cid === episode.workCid && !row.deletedAt);
-    const total = totalByEpisode.get(episode.cid) ?? 0;
-    if (!work || total === 0) continue;
-    const completed = (sliceCidsByEpisode.get(episode.cid) ?? []).reduce(
-      (sum, sliceCid) => sum + (completedBySlice.get(sliceCid) ? 1 : 0),
+  const latestSessionByRecord = new Map<string, SessionRow>();
+  for (const session of live(sessions)) {
+    if (!session.recordCid) continue;
+    const current = latestSessionByRecord.get(session.recordCid);
+    if (!current || session.startedAt > current.startedAt) {
+      latestSessionByRecord.set(session.recordCid, session);
+    }
+  }
+
+  const assetByCid = new Map(live(assets).map((row) => [row.cid, row]));
+
+  const items: RecordListItem[] = [];
+  for (const record of live(records)) {
+    const recordLines = lines.filter((row) => row.recordCid === record.cid);
+    if (recordLines.length === 0) continue;
+    const total = recordLines.length;
+    const completed = recordLines.reduce(
+      (sum, line) => sum + (completedBySentence.get(line.sentenceCid) ? 1 : 0),
       0,
     );
+    // 「文件丢失」判定：视频素材行的本地路径在磁盘上还打不打得开。
+    // 跨会话回来才核对一次，列表页的 I/O 量 = 记录数，可接受。
+    const videoAsset = assetByCid.get(assetShaCid(record.videoSha256));
+    const videoAvailable = videoAsset ? await fileExists(videoAsset.localPath) : false;
     items.push({
-      work,
-      episode,
+      record,
       total,
       completed,
-      lastSession: latestSessionByEpisode.get(episode.cid) ?? null,
+      lastSession: latestSessionByRecord.get(record.cid) ?? null,
+      videoAvailable,
     });
   }
 
@@ -97,11 +105,13 @@ export async function loadEpisodeList(db: VaultDb): Promise<EpisodeListItem[]> {
     return number.trim() && Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
   };
 
-  // 同一部番排一起、集号从小到大；最近学过的集排最前（服务端选集页同款）
+  // 同一部番排一起、集号从小到大；最近学过的记录排最前
   items.sort((a, b) => {
-    const byWork = (a.work.title || a.work.titleJa).localeCompare(b.work.title || b.work.titleJa);
-    if (byWork !== 0) return byWork;
-    const byNumber = episodeOrder(a.episode.number) - episodeOrder(b.episode.number);
+    const byTitle = (a.record.title || a.record.titleJa).localeCompare(
+      b.record.title || b.record.titleJa,
+    );
+    if (byTitle !== 0) return byTitle;
+    const byNumber = episodeOrder(a.record.number) - episodeOrder(b.record.number);
     if (byNumber !== 0) return byNumber;
     const aAt = a.lastSession?.startedAt ?? "";
     const bAt = b.lastSession?.startedAt ?? "";
@@ -111,84 +121,83 @@ export async function loadEpisodeList(db: VaultDb): Promise<EpisodeListItem[]> {
 }
 
 /**
- * 从列表里移除一集（软删）。
+ * 从列表里移除一条学习记录（软删）。
  *
- * 给**内置演示素材**配的出口 —— 用户看够了要能删掉，不能白送一集删不掉的。
- * 但它对任何一集都通用：没有理由只让示例能删。
- *
- * 是**软删**不是真删：挂上 `deletedAt`，`live()` 一过滤列表里立刻消失，而
- * 学习记录（progress / sessions）和已经生成的笔记文件**一律不动** —— 那些是
- * 用户自己学出来的东西，删一集视频不该把它们一起烧掉。
- *
- * 连带一起软删的只有**这一集自己的**素材与切片（它们没有独立存在的意义），
- * 以及**这部作品在没有别的集之后**的作品行（否则列表里会剩一条空壳作品）。
+ * ⚠️ 硬边界（2026-10-14 重构定稿）：**只软删记录行本身**。
+ * 句子行（sentences）是跨记录共享的内容层，进度/笔记/录音全挂句子哈希——
+ * 删记录绝不能碰它们，否则同句子所在的其它记录会被连带清空。
+ * 素材行也是共享的（同一视频可被多条记录引用），同样不动；
+ * 素材库副本的清理由 RemoveModal 的引用计数单独把关。
+ * 同一对文件重新导入时记录键相同 → 复活（见 importer）。
  */
-export async function removeEpisode(db: VaultDb, episodeCid: string): Promise<void> {
-  const episode = await db.get<EpisodeRow>(STORE.episodes, episodeCid);
-  if (!episode || episode.deletedAt) return;
-
-  const [siblings, assets, slices] = await Promise.all([
-    db.getAllByIndex<EpisodeRow>(STORE.episodes, "by_work", episode.workCid),
-    db.getAllByIndex<AssetRow>(STORE.assets, "by_episode", episodeCid),
-    db.getAllByIndex<SliceRow>(STORE.slices, "by_episode", episodeCid),
-  ]);
+export async function removeRecord(db: VaultDb, recordCid: string): Promise<void> {
+  const record = await db.get<RecordRow>(STORE.records, recordCid);
+  if (!record || record.deletedAt) return;
 
   const now = new Date().toISOString();
   // ⚠️ `deletedAt` / `clientUpdatedAt` 都是 volatile 字段（见 core/digest.ts），
-  // 不参与摘要计算，所以这几行的 rowDigest **不用重算** —— 删不删它都一样。
+  // 不参与摘要计算，所以这一行的 rowDigest **不用重算**。
   // 上行靠统一快照全量重推（见 sync/snapshot.ts），跟摘要没关系。
-  const dead = <T extends { deletedAt: string | null; clientUpdatedAt: string }>(row: T): T => ({
-    ...row,
-    deletedAt: now,
-    clientUpdatedAt: now,
-  });
-
-  const work =
-    siblings.some((row) => row.cid !== episodeCid && !row.deletedAt)
-      ? null
-      : (await db.get<WorkRow>(STORE.works, episode.workCid)) ?? null;
-  const deadWork = work && !work.deletedAt ? work : null;
-
-  const stores: StoreName[] = [STORE.episodes, STORE.assets, STORE.slices];
-  if (deadWork) stores.push(STORE.works);
-
-  await db.transaction(stores, "readwrite", async (tx) => {
-    await tx.put(STORE.episodes, dead(episode));
-    for (const row of assets) await tx.put(STORE.assets, dead(row));
-    for (const row of slices) await tx.put(STORE.slices, dead(row));
-    if (deadWork) await tx.put(STORE.works, dead(deadWork));
-  });
+  await db.put(STORE.records, { ...record, deletedAt: now, clientUpdatedAt: now });
 }
 
-export async function loadSlices(db: VaultDb, episodeCid: string): Promise<SliceRow[]> {
-  const rows = await db.getAllByIndex<SliceRow>(STORE.slices, "by_episode", episodeCid);
-  return live(rows).sort((a, b) => a.index - b.index);
+/** 学习视图句：记录层台词 × 句子覆盖层 拼出来的视图行。 */
+function toStudySentence(line: RecordLineRow, sentence: SentenceRow | undefined): StudySentence {
+  return {
+    cid: line.sentenceCid,
+    index: line.index,
+    startMs: line.startMs,
+    endMs: line.endMs,
+    ja: line.ja,
+    zh: line.zh,
+    speaker: line.speaker,
+    textHash: sentence?.textHash ?? "",
+    analysis: sentence?.analysis ?? null,
+    textFixes: sentence?.textFixes,
+    readingFixes: sentence?.readingFixes,
+    correctionsUpdatedAt: sentence?.correctionsUpdatedAt,
+  };
 }
 
-export async function loadProgress(db: VaultDb, sliceCid: string): Promise<ProgressRow | undefined> {
-  return db.get<ProgressRow>(STORE.progress, progressCid(sliceCid));
+/** 一条记录的全部学习句（按集内序号排好）。 */
+export async function loadStudySentences(db: VaultDb, recordCid: string): Promise<StudySentence[]> {
+  const recordLines = await db.getAll<RecordLineRow>(STORE.lines, IDBKeyRange.bound(
+    [recordCid, 0],
+    [recordCid, Number.MAX_SAFE_INTEGER],
+  ));
+  if (recordLines.length === 0) return [];
+  const sentences = new Map(
+    (await db.getAll<SentenceRow>(STORE.sentences)).map((row) => [row.cid, row]),
+  );
+  return recordLines
+    .map((line) => toStudySentence(line, sentences.get(line.sentenceCid)))
+    .sort((a, b) => a.index - b.index);
 }
 
-/** 这一集最近一次会话（没有就 null）。 */
-export async function lastSessionOf(db: VaultDb, episodeCid: string): Promise<SessionRow | null> {
-  const rows = live(await db.getAllByIndex<SessionRow>(STORE.sessions, "by_episode", episodeCid));
+export async function loadProgress(db: VaultDb, sentenceCid: string): Promise<ProgressRow | undefined> {
+  return db.get<ProgressRow>(STORE.progress, progressCid(sentenceCid));
+}
+
+/** 这条记录最近一次会话（没有就 null）。 */
+export async function lastSessionOf(db: VaultDb, recordCid: string): Promise<SessionRow | null> {
+  const rows = live(await db.getAllByIndex<SessionRow>(STORE.sessions, "by_record", recordCid));
   if (rows.length === 0) return null;
   return rows.reduce((latest, row) => (row.startedAt > latest.startedAt ? row : latest));
 }
 
-/** 进一集：开一条新会话。 */
-export async function startSession(db: VaultDb, episodeCid: string): Promise<SessionRow> {
+/** 进一条记录：开一条新会话。 */
+export async function startSession(db: VaultDb, recordCid: string): Promise<SessionRow> {
   const now = new Date().toISOString();
   const session: SessionRow = {
     cid: sessionCid(),
-    episodeCid,
+    recordCid,
     startedAt: now,
     endedAt: null,
     currentIndex: 0,
     clientUpdatedAt: now,
     deletedAt: null,
     rev: 0,
-    rowDigest: await rowDigest({ episodeCid, startedAt: now, endedAt: null, currentIndex: 0 }),
+    rowDigest: await rowDigest({ recordCid, startedAt: now, endedAt: null, currentIndex: 0 }),
   };
   await db.transaction([STORE.sessions], "readwrite", (tx) => tx.put(STORE.sessions, session));
   return session;
@@ -199,7 +208,7 @@ export async function saveSession(db: VaultDb, session: SessionRow): Promise<voi
   const now = new Date().toISOString();
   const next: SessionRow = { ...session, clientUpdatedAt: now };
   next.rowDigest = await rowDigest({
-    episodeCid: next.episodeCid,
+    recordCid: next.recordCid,
     startedAt: next.startedAt,
     endedAt: next.endedAt,
     currentIndex: next.currentIndex,
@@ -258,10 +267,10 @@ export interface ImitationStepInput {
   };
 }
 
-function baseProgress(sliceCid: string, now: string): ProgressRow {
+function baseProgress(sentenceCid: string, now: string): ProgressRow {
   return {
-    cid: progressCid(sliceCid),
-    sliceCid,
+    cid: progressCid(sentenceCid),
+    sliceCid: sentenceCid,
     copyAttempts: 0,
     copyDoneAt: null,
     copyEpoch: 0,
@@ -340,12 +349,12 @@ async function persistProgress(
  */
 export async function recordReadAloud(
   db: VaultDb,
-  slice: SliceRow,
+  sentence: StudySentence,
   seconds: number | null,
   verified: boolean,
 ): Promise<ProgressRow> {
   const now = new Date().toISOString();
-  const row = (await loadProgress(db, slice.cid)) ?? baseProgress(slice.cid, now);
+  const row = (await loadProgress(db, sentence.cid)) ?? baseProgress(sentence.cid, now);
   row.readAloudAt = now;
   row.readAloudVerifiedAt = verified ? now : null;
   if (seconds !== null) row.readAloudSeconds = seconds;
@@ -355,11 +364,11 @@ export async function recordReadAloud(
 /** 抄写检查通过/失败都算一次尝试；对了落完成时刻并留档。 */
 export async function submitCopy(
   db: VaultDb,
-  slice: SliceRow,
+  sentence: StudySentence,
   input: CopyStepInput,
 ): Promise<ProgressRow> {
   const now = new Date().toISOString();
-  const row = (await loadProgress(db, slice.cid)) ?? baseProgress(slice.cid, now);
+  const row = (await loadProgress(db, sentence.cid)) ?? baseProgress(sentence.cid, now);
   row.copyAttempts += 1;
   if (input.passed) {
     row.copyDoneAt = row.copyDoneAt ?? now;
@@ -378,11 +387,11 @@ export async function submitCopy(
  */
 export async function submitImitation(
   db: VaultDb,
-  slice: SliceRow,
+  sentence: StudySentence,
   input: ImitationStepInput,
 ): Promise<ProgressRow> {
   const now = new Date().toISOString();
-  const row = (await loadProgress(db, slice.cid)) ?? baseProgress(slice.cid, now);
+  const row = (await loadProgress(db, sentence.cid)) ?? baseProgress(sentence.cid, now);
   row.imitationText = input.text.trim();
   row.imitationCorrect = input.correct;
   row.imitationVerifiedAt = input.correct && input.verified ? now : null;
@@ -408,16 +417,16 @@ export async function submitImitation(
  */
 export async function resetPracticeRecord(
   db: VaultDb,
-  slice: SliceRow,
+  sentence: StudySentence,
   step: "read" | "copy" | "imitation",
 ): Promise<ProgressRow> {
   const now = new Date().toISOString();
-  const row = (await loadProgress(db, slice.cid)) ?? baseProgress(slice.cid, now);
+  const row = (await loadProgress(db, sentence.cid)) ?? baseProgress(sentence.cid, now);
   if (step === "read") {
     row.readEpoch += 1;
     row.readAloudAt = null;
     // 「有没有让 AI 判过」也是这一步的状态，跟着清 —— 留着它，下一遍还没核对
-    // 就会显示成青蓝的「正解 ✓」（与上面 imitationVerifiedAt 同一个道理）。
+    // 就会显示成青蓝的「正解 ✓」（与下面 imitationVerifiedAt 同一个道理）。
     row.readAloudVerifiedAt = null;
     row.readAloudSeconds = 0;
   } else if (step === "copy") {
@@ -472,19 +481,19 @@ export async function healLegacyImitationRows(db: VaultDb): Promise<number> {
 }
 
 /**
- * 进一集时落在哪一句：
+ * 进一条记录时落在哪一句：
  * 上次会话停的那句优先；没学过就从第一句没学过的开始；都学完了回第一句。
  */
 export function resumeIndex(
-  slices: readonly SliceRow[],
+  sentences: readonly StudySentence[],
   lastSession: SessionRow | null,
-  completedSliceCids: ReadonlySet<string>,
+  completedSentenceCids: ReadonlySet<string>,
 ): number {
-  const total = slices.length;
+  const total = sentences.length;
   if (total === 0) return 0;
   const fromSession = lastSession?.currentIndex ?? 0;
   if (fromSession >= 1 && fromSession <= total) return fromSession;
-  const firstOpen = slices.find((slice) => !completedSliceCids.has(slice.cid));
+  const firstOpen = sentences.find((sentence) => !completedSentenceCids.has(sentence.cid));
   return firstOpen?.index ?? 1;
 }
 
@@ -499,36 +508,51 @@ export function resumeIndex(
 //   · **用户手改的台词/翻译/注音**（2026-10-06 起）—— 走 `corrections/push|pull`
 //     的私有同步（用户主动编辑的内容，存整句；见 `sync/snapshot.ts` 的 corrections 集合）。
 //
-// 下面两处都是普通直写（outbox 已退役；同步是全量快照重推，不需要逐行待办）：
-//   · 解析结果是纯缓存 —— 服务端有自己那份（跨用户共享，见
-//     `learning.AnalysisCache`），本机这份丢了顶多重解析一次，
-//     不该占着「待同步 N」的计数一直涨；AI 解析的读音（`aiReading`）同理，
-//     不是用户写的，**永不上行**；
-//   · 助手对话只是当前这句的上下文 —— 用户明确说了**聊天记录只留本地、
-//     2026-10-06 起随统一快照上云（用户拍板：白名单之外全上云，聊天也是用户写的内容）。
-//   （同一理由见 `studyDays.ts` 头部：写待办只会让 outbox 无限增长。）
+// 解析/纠错覆盖层写在**句子行**（sentences，三句哈希寻址）上——跨记录共享：
+// 在哪条记录里学过/改过，别的记录翻开同一句直接就有。
+
+/** 覆盖层的落库口：句子行不存在时兜底建一行（正常导入流程里它已经在）。 */
+async function persistSentence(
+  db: VaultDb,
+  sentence: StudySentence,
+  patch: Partial<Pick<SentenceRow, "analysis" | "textFixes" | "readingFixes" | "correctionsUpdatedAt">>,
+): Promise<void> {
+  const existing = await db.get<SentenceRow>(STORE.sentences, sentence.cid);
+  const next: SentenceRow = existing
+    ? { ...existing, ...patch, clientUpdatedAt: new Date().toISOString() }
+    : {
+        cid: sentence.cid,
+        ja: sentence.ja,
+        textHash: sentence.textHash,
+        analysis: null,
+        clientUpdatedAt: new Date().toISOString(),
+        ...patch,
+        rev: 0,
+        rowDigest: "",
+      };
+  next.rowDigest = await rowDigest(next as unknown as Record<string, unknown>);
+  await db.put(STORE.sentences, next);
+}
 
 /**
- * 把一份解析结果写进切片行 —— 翻回来不用再点、也不再花钱。
+ * 把一份解析结果写进句子行 —— 翻回来不用再点、也不再花钱。
  *
  * ⚠️ 摘要照实重算，但这条改动**不登记为待上行**（见本节开头）。
  */
 export async function saveSliceAnalysis(
   db: VaultDb,
-  slice: SliceRow,
+  sentence: StudySentence,
   analysis: SentenceAnalysis,
 ): Promise<void> {
-  const next: SliceRow = { ...slice, analysis, clientUpdatedAt: new Date().toISOString() };
-  next.rowDigest = await rowDigest(next as unknown as Record<string, unknown>);
-  await db.put(STORE.slices, next);
+  await persistSentence(db, sentence, { analysis });
 }
 
 /**
  * 保存用户对日文 / 中文字幕的修正（`textFixes`）。
  *
- * 🔥 **绝不动 `ja` / `zh` 字段** —— 日文参与 `sliceCid`（三句 hash）派生，
- * 改了它这个句子的 cid 就对不上，已有进度 / 录音 / 单词卡全成孤儿（见 entities.ts 的说明）。
- * 覆盖层只改「显示与解析时读到的文本」。
+ * 🔥 覆盖层存「覆盖后的文本」，记录层的 `ja` / `zh` 原文一律不动 ——
+ * 身份永远锚在原片字幕上（三句哈希），用户改的版本叠加在显示层。
+ * 显示与解析一律读 `effectiveJa(sentence)` / `effectiveZh(sentence)`。
  *
  * 用户主动编辑的内容，走**私有同步**上云（见 `sync/snapshot.ts` 的 corrections 集合）；
  * 传 undefined = 撤销全部字幕修正 —— 覆盖层删掉，同时抬 `correctionsUpdatedAt`
@@ -537,37 +561,33 @@ export async function saveSliceAnalysis(
  */
 export async function saveSliceTextFixes(
   db: VaultDb,
-  slice: SliceRow,
-  fixes: SliceRow["textFixes"],
+  sentence: StudySentence,
+  fixes: StudySentence["textFixes"],
 ): Promise<void> {
-  const next: SliceRow = {
-    ...slice,
+  await persistSentence(db, sentence, {
     textFixes: fixes,
     correctionsUpdatedAt: new Date().toISOString(),
-    clientUpdatedAt: new Date().toISOString(),
-  };
-  next.rowDigest = await rowDigest(next as unknown as Record<string, unknown>);
-  await db.put(STORE.slices, next);
+  });
 }
 
 /** 这句的**实际**日文：用户改过就用他改的。空字符串算「没改」（见 `normalizeTextFix`）。 */
-export function effectiveJa(slice: Pick<SliceRow, "ja" | "textFixes">): string {
-  return slice.textFixes?.ja?.trim() ? slice.textFixes.ja : slice.ja;
+export function effectiveJa(sentence: Pick<StudySentence, "ja" | "textFixes">): string {
+  return sentence.textFixes?.ja?.trim() ? sentence.textFixes.ja : sentence.ja;
 }
 
 /** 这句的实际中文。同 `effectiveJa`。 */
-export function effectiveZh(slice: Pick<SliceRow, "zh" | "textFixes">): string {
-  return slice.textFixes?.zh?.trim() ? slice.textFixes.zh : slice.zh;
+export function effectiveZh(sentence: Pick<StudySentence, "zh" | "textFixes">): string {
+  return sentence.textFixes?.zh?.trim() ? sentence.textFixes.zh : sentence.zh;
 }
 
 /**
  * 把弹窗里两个输入框的值整理成 `textFixes`。
  *
- * 空 / 只剩空白 = **撤销这一项的修正**（存undefined 而不是空串），
+ * 空 / 只剩空白 = **撤销这一项的修正**（存 undefined 而不是空串），
  * 否则「清空 = 恢复原片字幕」这个动作在数据层看不出来，等于没实现。
  */
-export function normalizeTextFix(ja: string, zh: string): SliceRow["textFixes"] {
-  const out: NonNullable<SliceRow["textFixes"]> = {};
+export function normalizeTextFix(ja: string, zh: string): StudySentence["textFixes"] {
+  const out: NonNullable<StudySentence["textFixes"]> = {};
   const jaTrim = ja.trim();
   const zhTrim = zh.trim();
   if (jaTrim) out.ja = jaTrim;
@@ -584,17 +604,13 @@ export function normalizeTextFix(ja: string, zh: string): SliceRow["textFixes"] 
  */
 export async function saveSliceReadingFixes(
   db: VaultDb,
-  slice: SliceRow,
-  fixes: SliceRow["readingFixes"],
+  sentence: StudySentence,
+  fixes: StudySentence["readingFixes"],
 ): Promise<void> {
-  const next: SliceRow = {
-    ...slice,
+  await persistSentence(db, sentence, {
     readingFixes: fixes,
     correctionsUpdatedAt: new Date().toISOString(),
-    clientUpdatedAt: new Date().toISOString(),
-  };
-  next.rowDigest = await rowDigest(next as unknown as Record<string, unknown>);
-  await db.put(STORE.slices, next);
+  });
 }
 
 /**
@@ -605,11 +621,11 @@ export async function saveSliceReadingFixes(
  */
 export async function appendChatTurn(
   db: VaultDb,
-  slice: SliceRow,
+  sentence: StudySentence,
   turn: Omit<ChatTurn, "ts">,
 ): Promise<ProgressRow> {
   const now = new Date().toISOString();
-  const row = (await loadProgress(db, slice.cid)) ?? baseProgress(slice.cid, now);
+  const row = (await loadProgress(db, sentence.cid)) ?? baseProgress(sentence.cid, now);
   row.imitationChat = [...row.imitationChat, { ...turn, ts: now }];
   return persistProgress(db, row);
 }

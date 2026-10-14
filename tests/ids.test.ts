@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  assetCid,
-  episodeCid,
+  assetShaCid,
   normalizeEpisodeNumber,
   normalizeTitle,
   progressCid,
   randomUuid,
+  recordCid,
   sentenceTextHash,
   shortCid,
   sliceCid,
   wordCid,
-  workCid,
 } from "../src/core/ids";
 
 /**
@@ -20,51 +19,24 @@ import {
  * 任何一条挂了，说明两端实现漂移了 —— 不要改期望值去迁就，去找漂移的那一行。
  *
  * ⚠️ 2026-10-09 起切片身份改由三句 hash 派生（不再有跨端共享的固定向量，
- * 见「切片 cid」那组测试），`slice` 字段只作 `progressCid` 的输入样例。
+ * 见「切片 cid」那组测试）；2026-10-14 起 work/episode/asset 的元数据派生 cid
+ * 全部退役 —— 学习记录 = `R:` + sha256(视频 sha256 ⟨US⟩ 日文字幕 sha256)，
+ * 素材 = `A:` + 文件 sha256（纯前缀拼接，无归一化空间，不需要共享向量）。
  */
 
-const TITLE = "BanG Dream! It's MyGO!!!!!";
-const YEAR = 2023;
 const JA = "睦、連れて行ってくれた";
-const FINGERPRINT = "deadbeef".repeat(8);
+const VIDEO_SHA = "a".repeat(64);
+const JA_SHA = "b".repeat(64);
 
 const VECTORS = {
-  work: "W:931c14c130cbd74ed75cc5c64c897aa57f534a5e859b2b6a7a9a35ce6b5da057",
-  episode: "E:a49af59fb146aa26dbc09c59043c855f0de47a3b8de781317bc8d93074e1f9f2",
-  asset: "A:bf5d5bfce9f86f3e3a60837782eb3329411af93d5bb45fe9f0c5b48b90485db2",
   slice: "S:aa687d85c0129ec32326e3733da90d5fa41799db74c82aa00885b051a9a71362",
   word: "w:668e6f15568d75e9cb32046efc8e8e71a1614a519fdf6ab9af9db03b4a442fe6",
   textHash: "0ee437389fd4f7e0f46f8bb6a04971556adfcc1cd74dad8bd993f60ad97e2c1a",
-  episodeSpecial: "E:c1606c375cc7d74cff3318793b9f4975315492f38305e6ee87f3a3278f87a38f",
 } as const;
 
 describe("cid 共享测试向量", () => {
-  it("作品 cid", async () => {
-    expect(await workCid(TITLE, YEAR)).toBe(VECTORS.work);
-  });
-
-  it("年份缺失时用空串占位", async () => {
-    expect(await workCid(TITLE, null)).not.toBe(VECTORS.work);
-    expect(await workCid(TITLE, null)).toBe(await workCid(TITLE, undefined));
-  });
-
-  it("集 cid", async () => {
-    expect(await episodeCid(VECTORS.work, null, 4.0)).toBe(VECTORS.episode);
-  });
-
-  it("特别篇保留小数，不会和整数集的 cid 撞上", async () => {
-    expect(await episodeCid(VECTORS.work, 1, 1.5)).toBe(VECTORS.episodeSpecial);
-    expect(await episodeCid(VECTORS.work, 1, 1.5)).not.toBe(
-      await episodeCid(VECTORS.work, 1, 1),
-    );
-  });
-
   it("句子指纹", async () => {
     expect(await sentenceTextHash(JA)).toBe(VECTORS.textHash);
-  });
-
-  it("素材 cid", async () => {
-    expect(await assetCid("subtitle", FINGERPRINT)).toBe(VECTORS.asset);
   });
 
   it("切片 cid：三句 hash，首尾退化两句", async () => {
@@ -122,6 +94,32 @@ describe("cid 共享测试向量", () => {
   });
 });
 
+describe("学习记录 cid（文件哈希对）", () => {
+  it("R: 前缀 + 64 hex = 66 字符（服务端 cid 列宽 80 天然放行，不用迁移）", async () => {
+    const cid = await recordCid(VIDEO_SHA, JA_SHA);
+    expect(cid).toMatch(/^R:[0-9a-f]{64}$/u);
+    expect(cid.length).toBe(66);
+  });
+
+  it("同一对文件 → 同一条记录；任一文件换版 → 另一条记录", async () => {
+    expect(await recordCid(VIDEO_SHA, JA_SHA)).toBe(await recordCid(VIDEO_SHA, JA_SHA));
+    expect(await recordCid(VIDEO_SHA, "c".repeat(64))).not.toBe(await recordCid(VIDEO_SHA, JA_SHA));
+    expect(await recordCid("d".repeat(64), JA_SHA)).not.toBe(await recordCid(VIDEO_SHA, JA_SHA));
+  });
+
+  it("顺序敏感：视频和字幕对调不是同一条记录", async () => {
+    expect(await recordCid(VIDEO_SHA, JA_SHA)).not.toBe(await recordCid(JA_SHA, VIDEO_SHA));
+  });
+});
+
+describe("素材 cid（文件 sha256 寻址）", () => {
+  it("A: + 文件 sha256 原样拼接，跨记录共享", () => {
+    expect(assetShaCid(VIDEO_SHA)).toBe(`A:${VIDEO_SHA}`);
+    expect(assetShaCid(VIDEO_SHA)).toBe(assetShaCid(VIDEO_SHA));
+    expect(assetShaCid(VIDEO_SHA)).not.toBe(assetShaCid(JA_SHA));
+  });
+});
+
 describe("归一化", () => {
   it("标题：NFKC + 折叠空白 + 小写", () => {
     expect(normalizeTitle("  ＭＹＧＯ　!!!!! ")).toBe("mygo !!!!!");
@@ -148,18 +146,7 @@ describe("归一化", () => {
 
 describe("cid 的关键性质", () => {
   it("同一份内容在两次调用得到同一个 cid（内容派生而非随机）", async () => {
-    expect(await workCid(TITLE, YEAR)).toBe(await workCid(TITLE, YEAR));
-  });
-
-  it("内容不同 → cid 不同", async () => {
-    expect(await workCid("MyGO", 2023)).not.toBe(await workCid("Ave Mujica", 2023));
-  });
-
-  it("无指纹的素材退化成随机 ID，并且两次不同（避免误合并两个不同的文件）", async () => {
-    const a = await assetCid("video", null);
-    const b = await assetCid("video", null);
-    expect(a).not.toBe(b);
-    expect(a.startsWith("A:")).toBe(true);
+    expect(await recordCid(VIDEO_SHA, JA_SHA)).toBe(await recordCid(VIDEO_SHA, JA_SHA));
   });
 
   it("进度 cid 派生自切片 cid", () => {
@@ -174,8 +161,9 @@ describe("cid 的关键性质", () => {
     expect(await wordCid("行く", "verb")).not.toBe(await wordCid("行く", "noun"));
   });
 
-  it("shortCid 保留前缀，便于日志里辨认实体类型", () => {
-    expect(shortCid(VECTORS.work).startsWith("W:")).toBe(true);
-    expect(shortCid(VECTORS.work).length).toBeLessThan(VECTORS.work.length);
+  it("shortCid 保留前缀，便于日志里辨认实体类型", async () => {
+    const cid = await recordCid(VIDEO_SHA, JA_SHA);
+    expect(shortCid(cid).startsWith("R:")).toBe(true);
+    expect(shortCid(cid).length).toBeLessThan(cid.length);
   });
 });

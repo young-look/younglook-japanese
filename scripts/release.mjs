@@ -10,7 +10,7 @@
  *   npm_package_version 已由 package.json 决定（node versions.mjs 同步进 manifest）
  *   node scripts/release.mjs ["本次更新的说明文字"]
  *
- * 推送到服务端: ./yolo plugin-release（rsync 到 storage/plugin/）
+ * 推送到服务端: ./yolo plugin-release（rsync 到 storage/assets/packages/）
  */
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -67,10 +67,11 @@ await esbuild.build({
   bundle: true,
   // 图片资源以 dataurl 内联进 main.js（海獭 logo 等）：产物保持单文件。
   // .svg 走 text（存储页那三枚去向图标要拿源码现插进 DOM）。
-  // .mp4/.srt = 内置演示素材（dataurl/text），与 esbuild.config.mjs 同步维护。
+  // 演示素材（demo.mp4 / demo.srt）**不再内联**（曾把 main.js 撑到近 6MB），
+  // 改走服务端按需下载：scripts/demo-manifest.mjs + services/demoPack.ts。
   // ⚠️ 与 esbuild.config.mjs 必须一致 —— 少了哪一项，凡是 import 了对应资源的
   //    产物都会构建失败（发版路径曾因漏 .png 断掉，线上停在旧版本没人察觉）。
-  loader: { ".png": "dataurl", ".svg": "text", ".mp4": "dataurl", ".srt": "text" },
+  loader: { ".png": "dataurl", ".svg": "text" },
   external,
   format: "cjs",
   target: "es2020",
@@ -90,16 +91,16 @@ await esbuild.build({
 fs.copyFileSync(path.join(pluginDir, "manifest.json"), path.join(outDir, "manifest.json"));
 fs.copyFileSync(path.join(pluginDir, "styles.css"), path.join(outDir, "styles.css"));
 
-// 演示素材不再走服务器：plugin/demo/ 随插件目录自带（见 demo/ATTRIBUTION.md），
-// 首次运行由 services/demoSeed.ts 直接从插件目录导入。下次发版 rsync --delete
-// 会顺带删掉线上遗留的 /storage/plugin/demo/，那是预期的（不再有人下载它）。
+// 演示素材走**独立的按需下载通道**（服务端 /storage/media/videos/，见 scripts/demo-manifest.mjs
+// 与 ./yolo demo-release），不随发布三件套走。发版前若换过演示素材，先跑
+// `npm run demo-manifest` + `./yolo demo-release`，再发插件。
 
 const files = {};
 for (const name of ["main.js", "manifest.json", "styles.css"]) {
   const buffer = fs.readFileSync(path.join(outDir, name));
   files[name] = {
     // 相对路径：插件拼在 serverUrl 后面，换域名也不用重发 latest.json
-    url: `/storage/plugin/${pkg.version}/${name}`,
+    url: `/storage/assets/packages/${pkg.version}/${name}`,
     sha256: createHash("sha256").update(buffer).digest("hex"),
   };
 }

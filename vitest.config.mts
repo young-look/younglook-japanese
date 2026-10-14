@@ -2,32 +2,14 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 /**
- * 测试环境把 demo 素材（.mp4 / .srt）的 import 全指到空桩。
- *
- * 这两个文件在真实构建里由 esbuild 的 dataurl/text loader 打进 main.js
- * （见 esbuild.config.mjs 与 services/demoAssets.ts）；vite 这边没有对应
- * loader，默认会拿 SRT 的**文本内容**当 JS 解析然后炸掉。桩返回空字符串 ——
- * demoAssets 的恢复逻辑认「不是 data URL / 不是 SRT」会自动跳过，测试自己造
- * 文件，不依赖内置包（demoSeed.test.ts 里另有针对恢复函数的直接用例）。
- */
-const demoAssetStub = {
-  name: "yl-demo-asset-stub",
-  enforce: "pre" as const,
-  resolveId(id: string) {
-    if (id.endsWith(".mp4") || id.endsWith(".srt")) return "\0yl-demo-asset-stub";
-    return null;
-  },
-  load(id: string) {
-    if (id === "\0yl-demo-asset-stub") return "export default '';";
-    return null;
-  },
-};
-
-/**
  * 单测默认跑在 node 环境。
  *
  * 涉及 IndexedDB 的用例需要在文件头加 `// @vitest-environment jsdom`
  * 并配 `fake-indexeddb`（真实 IndexedDB 在 Node 里不存在）。
+ *
+ * ⚠️ 以前这里挂过一个把 `.mp4`/`.srt` import 指到空桩的插件 —— 那时演示素材
+ * 由 esbuild 的 loader 内联进 main.js。现在演示素材改走服务端按需下载
+ * （services/demoPack.ts），代码里不再 import 这两个扩展名，桩随之删除。
  */
 export default defineConfig({
   // 跟 esbuild.config.mjs 同一个注入点。测试里默认按开发构建跑；
@@ -36,7 +18,6 @@ export default defineConfig({
     __YL_ENV__: JSON.stringify("dev"),
     __YL_BRANCH__: JSON.stringify("test"),
   },
-  plugins: [demoAssetStub],
   resolve: {
     alias: {
       // obsidian 包没有 node 运行时入口，谁在测试里 import 到它就指向桩模块

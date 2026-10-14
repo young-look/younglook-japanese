@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { SliceRow } from "../src/types/entities";
+import type { StudySentence } from "../src/types/entities";
 import { collectVocabFromSlices, type SliceLearnInfo } from "../src/services/vocabLibrary";
 
-function slice(cid: string, surface: string): SliceRow {
+function slice(cid: string, surface: string): StudySentence {
   return {
     cid,
     analysis: {
@@ -15,7 +15,7 @@ function slice(cid: string, surface: string): SliceRow {
         { surface, pos: "noun", reading: "", aiReading: "", romaji: "", def: "" },
       ],
     },
-  } as unknown as SliceRow;
+  } as unknown as StudySentence;
 }
 
 const AT1 = "2026-10-01T10:00:00Z";

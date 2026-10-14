@@ -52,12 +52,10 @@ vi.mock("../src/services/audioTrim", async (importOriginal) => {
 });
 
 import { buildReadAloud, type ReadAloudHandle } from "../src/views/study/practices";
-import type { ProgressRow, SliceRow } from "../src/types/entities";
+import type { ProgressRow, StudySentence } from "../src/types/entities";
 
-const sliceAt = (cid: string): SliceRow => ({
+const sliceAt = (cid: string): StudySentence => ({
   cid,
-  episodeCid: "ep-1",
-  assetCid: "asset-1",
   index: 1,
   startMs: 0,
   endMs: 1500,
@@ -65,12 +63,7 @@ const sliceAt = (cid: string): SliceRow => ({
   zh: "猫在睡觉。",
   speaker: "",
   textHash: "hash",
-  parserVersion: 1,
   analysis: null,
-  rev: 0,
-  rowDigest: "",
-  clientUpdatedAt: "2026-10-10T00:00:00Z",
-  deletedAt: null,
 });
 
 const RAW_BYTES = "raw-bytes"; // 9 字节 —— 用体积当"这是哪一份"的指纹

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { STORE, VaultDb, listVaultDatabaseKeys, probeVaultDatabase } from "../src/storage/db";
 import { pickLibrary } from "../src/services/vaultKey";
 import { recoverLocalLibrary } from "../src/services/recover";
-import type { ProgressRow, SliceRow } from "../src/types/entities";
+import type { ProgressRow, SentenceRow } from "../src/types/entities";
 
 /**
  * 回归测试：本地库的**库名必须稳定 + 老库必须能被认回来并合并**。
@@ -16,24 +16,15 @@ import type { ProgressRow, SliceRow } from "../src/types/entities";
 
 const VAULT = "/Users/you/Vaults/douyin";
 
-function slice(cid: string, index: number): SliceRow {
+function slice(cid: string, index: number): SentenceRow {
   return {
+    rev: 0,
+    rowDigest: "",
     cid,
-    episodeCid: "E:test",
-    assetCid: "A:test",
-    index,
-    startMs: index * 1000,
-    endMs: index * 1000 + 900,
     ja: `テスト${index}`,
-    zh: "",
-    speaker: "",
     textHash: `h${index}`,
-    parserVersion: 1,
     analysis: null,
     clientUpdatedAt: "2026-09-25T00:00:00.000Z",
-    deletedAt: null,
-    rev: 1,
-    rowDigest: `d${index}`,
   };
 }
 
@@ -51,7 +42,7 @@ describe("本地库找回（真实 IndexedDB）", () => {
   it("老库能被探测到内容，新开的空库不会冒充", async () => {
     // 老版本留下的库：一个随机 id，装着 3 句台词
     const old = await VaultDb.open("oldkey0000000");
-    for (let index = 1; index <= 3; index += 1) await old.put(STORE.slices, slice(`S:${index}`, index));
+    for (let index = 1; index <= 3; index += 1) await old.put(STORE.sentences, slice(`S:${index}`, index));
     await old.put(STORE.meta, { key: "vaultPath", value: VAULT });
     old.close();
 
@@ -69,9 +60,9 @@ describe("本地库找回（真实 IndexedDB）", () => {
     }
     const oldProbe = probes.find((probe) => probe.key === "oldkey0000000");
     const freshProbe = probes.find((probe) => probe.key === "freshkey000000");
-    expect(oldProbe?.slices).toBe(3);
+    expect(oldProbe?.sentences).toBe(3);
     expect(oldProbe?.vaultPath).toBe(VAULT);
-    expect(freshProbe?.slices).toBe(0);
+    expect(freshProbe?.sentences).toBe(0);
 
     // 找回：当前空库 fresh 不参与候选，oldkey 被认回来
     const picked = pickLibrary(probes, VAULT, "freshkey000000");
@@ -80,26 +71,26 @@ describe("本地库找回（真实 IndexedDB）", () => {
 
   it("探测不存在的库不会炸，只是报 0", async () => {
     const probe = await probeVaultDatabase("never-existed-key");
-    expect(probe.slices).toBe(0);
+    expect(probe.sentences).toBe(0);
     expect(probe.vaultPath).toBeNull();
   });
 
   it("多份旧库并进认回来的那份：不用重新导入，且登记了待同步", async () => {
     // 第 4 集那份旧库：学过第 1 句
     const ep4 = await VaultDb.open("orphan-ep4");
-    await ep4.put(STORE.slices, slice("S:ep4-1", 1));
-    await ep4.put(STORE.slices, slice("S:ep4-2", 2));
+    await ep4.put(STORE.sentences, slice("S:ep4-1", 1));
+    await ep4.put(STORE.sentences, slice("S:ep4-2", 2));
     ep4.close();
 
     // 第 8 集那份旧库：带着学习进度，而且**同一集**也学过另一句
     const ep8 = await VaultDb.open("orphan-ep8");
-    await ep8.put(STORE.slices, slice("S:ep8-1", 1));
+    await ep8.put(STORE.sentences, slice("S:ep8-1", 1));
     await ep8.put(STORE.progress, progress("S:ep8-1"));
     ep8.close();
 
     // 另一个 vault 的库：归属标记对不上，绝不能碰
     const stranger = await VaultDb.open("other-vault-lib");
-    await stranger.put(STORE.slices, slice("S:other-1", 1));
+    await stranger.put(STORE.sentences, slice("S:other-1", 1));
     await stranger.put(STORE.meta, { key: "vaultPath", value: "/Users/you/Vaults/网文" });
     stranger.close();
 
@@ -120,7 +111,7 @@ describe("本地库找回（真实 IndexedDB）", () => {
 
     // 认回来的库里两边内容都在，别 vault 的一条都没进来
     const adopted = await VaultDb.open(adoptedKey as string);
-    const rows = await adopted.getAll<SliceRow>(STORE.slices);
+    const rows = await adopted.getAll<SentenceRow>(STORE.sentences);
     const cids = rows.map((row) => row.cid).sort();
     expect(cids).toEqual(["S:ep4-1", "S:ep4-2", "S:ep8-1"]);
     const progressRow = await adopted.get<ProgressRow>(STORE.progress, "P:S:ep8-1");
@@ -133,7 +124,7 @@ describe("本地库找回（真实 IndexedDB）", () => {
 
     // 别 vault 的库原封不动
     const untouched = await VaultDb.open("other-vault-lib");
-    expect((await untouched.getAll<SliceRow>(STORE.slices)).map((row) => row.cid)).toEqual(["S:other-1"]);
+    expect((await untouched.getAll<SentenceRow>(STORE.sentences)).map((row) => row.cid)).toEqual(["S:other-1"]);
     untouched.close();
   });
 });

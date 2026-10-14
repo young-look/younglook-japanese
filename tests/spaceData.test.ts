@@ -1,10 +1,10 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { DEMO_LEGACY_WORK_TITLES, DEMO_WORK_TITLE } from "../src/services/demoSeed";
+import { DEMO_WORK_TITLE } from "../src/services/demo";
 import { spaceHasUserData } from "../src/services/spaceData";
 import { STORE, VaultDb } from "../src/storage/db";
-import type { WorkRow } from "../src/types/entities";
+import type { RecordRow } from "../src/types/entities";
 
 /**
  * 「这份本机库里有没有**用户自己的**数据」—— 首次登录时的认领判据。
@@ -12,16 +12,15 @@ import type { WorkRow } from "../src/types/entities";
  * 登录时若本机没有该账号的空间，会看匿名空间是否为空：空 → 直接新建账号空间；
  * 非空 → 弹窗问「要不要认领」。
  *
- * 🔥 这组用例守的就是那个**最容易被忽略的坑**：插件首启会往当前库里铺一份
- *    演示素材（services/demoSeed.ts），于是**每个全新用户的匿名库立刻就有数据**
- *    —— 判据要是连演示集一起数进去，"空"永远不成立，每个新用户一登录就被问
- *    "要不要认领"，认领还会把演示集一起搬进账号空间。
- *    所以演示集**必须不算**用户数据（这正是不能直接用 `probeVaultDatabase`
- *    的原因：它只数 slices/progress，那些恰恰被演示集填满）。
+ * 🔥 这组用例守的就是那个**最容易被忽略的坑**：用户下载过示例素材后，它会落成一条
+ *    学习记录躺在当前库里（services/demoPack.ts），于是判据要是连演示记录一起数进去，
+ *    "空"就不成立了，用户一登录就被问"要不要认领"，认领还会把演示记录一起搬进
+ *    账号空间。所以演示记录**必须不算**用户数据（这正是不能直接用 `probeVaultDatabase`
+ *    的原因：它只数 sentences/progress，那些恰恰会被演示记录填满）。
  */
 
-function work(cid: string, title: string): WorkRow {
-  return { cid, title, deletedAt: null } as unknown as WorkRow;
+function record(cid: string, title: string): RecordRow {
+  return { cid, title, deletedAt: null } as unknown as RecordRow;
 }
 
 describe("spaceHasUserData", () => {
@@ -35,26 +34,19 @@ describe("spaceHasUserData", () => {
     expect(await spaceHasUserData(db)).toBe(false);
   });
 
-  it("🔥 只有演示作品 → false（新用户首启就是这个状态，不能算「非空」）", async () => {
-    await db.put(STORE.works, work("w-demo", DEMO_WORK_TITLE));
+  it("🔥 只有演示记录 → false（下载过示例素材就是这个状态，不能算「非空」）", async () => {
+    await db.put(STORE.records, record("r-demo", DEMO_WORK_TITLE));
     expect(await spaceHasUserData(db)).toBe(false);
   });
 
-  it("🔥 演示素材的**历史作品名**同样不算（换过名字的老演示集）", async () => {
-    for (const title of DEMO_LEGACY_WORK_TITLES) {
-      await db.put(STORE.works, work(`w-${title}`, title));
-    }
-    expect(await spaceHasUserData(db)).toBe(false);
-  });
-
-  it("用户自己导入的作品 → true", async () => {
-    await db.put(STORE.works, work("w-mine", "MyGO!!!!!"));
+  it("用户自己导入的记录 → true", async () => {
+    await db.put(STORE.records, record("r-mine", "MyGO!!!!!"));
     expect(await spaceHasUserData(db)).toBe(true);
   });
 
-  it("演示集 + 自己导入的作品 → true（用户那一条说了算）", async () => {
-    await db.put(STORE.works, work("w-demo", DEMO_WORK_TITLE));
-    await db.put(STORE.works, work("w-mine", "MyGO!!!!!"));
+  it("演示记录 + 自己导入的记录 → true（用户那一条说了算）", async () => {
+    await db.put(STORE.records, record("r-demo", DEMO_WORK_TITLE));
+    await db.put(STORE.records, record("r-mine", "MyGO!!!!!"));
     expect(await spaceHasUserData(db)).toBe(true);
   });
 
@@ -63,8 +55,8 @@ describe("spaceHasUserData", () => {
     expect(await spaceHasUserData(db)).toBe(true);
   });
 
-  it("作品标题前后带空白时按去掉空白比对（免得演示集因为空格被当成用户的）", async () => {
-    await db.put(STORE.works, work("w-demo", `  ${DEMO_WORK_TITLE}  `));
+  it("记录标题前后带空白时按去掉空白比对（免得演示记录因为空格被当成用户的）", async () => {
+    await db.put(STORE.records, record("r-demo", `  ${DEMO_WORK_TITLE}  `));
     expect(await spaceHasUserData(db)).toBe(false);
   });
 });

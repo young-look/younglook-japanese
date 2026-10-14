@@ -6,7 +6,8 @@ import {
   removeMediaFiles,
   resolveMediaDir,
 } from "../services/mediaStore";
-import { removeEpisode, type EpisodeListItem } from "../services/study";
+import { removeRecord, type RecordListItem } from "../services/study";
+import { assetShaCid } from "../core/ids";
 import { STORE } from "../storage/db";
 import type { AssetRow } from "../types/entities";
 import type YoungLookPlugin from "../main";
@@ -23,7 +24,7 @@ import { DialogModal } from "../ui/dialog";
  * 复选框按现状出现：素材没收进库（落在用户原位置的兜底情况）就没有「删文件」
  * 这一项 —— 用户自己的原文件永远不由我们删（素材库的硬边界，见 mediaStore.ts）。
  *
- * 执行顺序：先 `removeEpisode`（主操作），再尽力清理勾选的文件 ——
+ * 执行顺序：先 `removeRecord`（主操作），再尽力清理勾选的文件 ——
  * 清理失败只提示一句，不把「移除」整个算失败。
  *
  * 🔥 壳（宽度/圆角/标题行/底栏）由 `DialogModal` 统一给 —— 2026-10-02 用户拍板
@@ -48,7 +49,7 @@ export class RemoveModal extends DialogModal {
   constructor(
     app: App,
     private readonly plugin: YoungLookPlugin,
-    private readonly entry: EpisodeListItem,
+    private readonly entry: RecordListItem,
     private readonly options: { onRemoved?: () => void | Promise<void> } = {},
   ) {
     super(app);
@@ -62,11 +63,15 @@ export class RemoveModal extends DialogModal {
   // ── 现状盘点 ─────────────────────────────────────────────────────────────
 
   private async loadFacts(): Promise<void> {
-    const { episode } = this.entry;
+    const record = this.entry.record;
     const mediaDir = resolveMediaDir(this.plugin.settings.mediaDir, this.plugin.settings.activeSpaceId);
+    // 这条记录引用到的素材（视频 + 日文字幕 + 可选中文字幕），按 sha256 寻址
+    const assetCids = [record.videoSha256, record.jaSubSha256, record.zhSubSha256 ?? ""]
+      .filter(Boolean)
+      .map((sha) => assetShaCid(sha));
     const assets = (
-      await this.plugin.db.getAllByIndex<AssetRow>(STORE.assets, "by_episode", episode.cid)
-    ).filter((row) => !row.deletedAt && row.localPath);
+      await Promise.all(assetCids.map((cid) => this.plugin.db.get<AssetRow>(STORE.assets, cid)))
+    ).filter((row): row is AssetRow => Boolean(row && !row.deletedAt && row.localPath));
     // 只有收进了素材库的副本可删；落在用户原位置的（兜底路径）一律不算进来
     const inLibrary = assets.filter((row) => insideMediaRoot(row.localPath, mediaDir));
     const mediaPaths = inLibrary.map((row) => row.localPath);
@@ -78,16 +83,16 @@ export class RemoveModal extends DialogModal {
 
   // ── 渲染 ────────────────────────────────────────────────────────────────
 
-  /** 跟列表行同一套拼法：作品名 · 第 N 季第 N 集 集标题 */
+  /** 跟列表行同一套拼法：视频名 · 第 N 季第 N 集 集标题 */
   private targetText(): string {
-    const { episode, work } = this.entry;
-    const label = episodeLabel(episode.season, episode.number);
-    const head = [work.title || work.titleJa, label].filter(Boolean).join(" · ");
-    return `${head}${episode.title ? ` ${episode.title}` : ""}`;
+    const record = this.entry.record;
+    const label = episodeLabel(record.season, record.number);
+    const head = [record.title || record.titleJa, label].filter(Boolean).join(" · ");
+    return `${head}${record.episodeTitle ? ` ${record.episodeTitle}` : ""}`;
   }
 
   private workTitle(): string {
-    return this.entry.work.title || this.entry.work.titleJa || "未命名";
+    return this.entry.record.title || this.entry.record.titleJa || "未命名";
   }
 
   private render(): void {
@@ -178,11 +183,11 @@ export class RemoveModal extends DialogModal {
     this.busy = true;
     if (this.confirmButton) this.confirmButton.disabled = true;
 
-    const { episode } = this.entry;
+    const record = this.entry.record;
     try {
       // 主操作先行：它是软删、几乎不会失败。后面的清理尽力而为，
       // 失败只提示 —— 记录已经移除，不该让用户误以为整个动作没生效。
-      await removeEpisode(this.plugin.db, episode.cid);
+      await removeRecord(this.plugin.db, record.cid);
 
       if (this.deleteFiles && this.facts && this.facts.mediaPaths.length > 0) {
         const result = await removeMediaFiles(

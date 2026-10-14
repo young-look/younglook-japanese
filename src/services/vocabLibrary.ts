@@ -12,7 +12,7 @@
  *
  * 数据都在本地，不需要联网。
  */
-import { CONTENT_POS, type SliceRow } from "../types/entities";
+import { CONTENT_POS, type StudySentence } from "../types/entities";
 
 export interface VocabEntry {
   surface: string;
@@ -48,7 +48,7 @@ export interface SliceLearnInfo {
  * @param into     跨集聚合的词表，key = 词面（同一词跨集累加 seen）
  */
 export function collectVocabFromSlices(
-  slices: SliceRow[],
+  slices: StudySentence[],
   completed: ReadonlyMap<string, SliceLearnInfo>,
   source: string,
   into: Map<string, VocabEntry>,

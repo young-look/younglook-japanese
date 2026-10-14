@@ -26,7 +26,7 @@
  */
 
 import { Notice, setIcon } from "obsidian";
-import type { ProgressRow, SliceRow } from "../../types/entities";
+import type { ProgressRow, StudySentence } from "../../types/entities";
 import { normalizeForCopy, type CopyResult } from "../../services/copyCheck";
 import { cleanSuggestion } from "../../services/verdictSuggestion";
 import { micConstraints } from "../../services/micCapture";
@@ -123,7 +123,7 @@ export function readAloudStatus(progress: ProgressRow | undefined): StepStatus |
 // ── 跟读 ─────────────────────────────────────────────────────────────────
 export interface ReadAloudHandle {
   root: HTMLElement;
-  load(slice: SliceRow, progress: ProgressRow | undefined): void;
+  load(slice: StudySentence, progress: ProgressRow | undefined): void;
   /** 充值状态变了（刚连上账号 / 刚充上值）后重算按钮文案与提示 */
   refreshGate(): void;
   dispose(): void;
@@ -901,7 +901,7 @@ export interface CopyOutcome {
 
 export interface CopyPracticeHandle {
   root: HTMLElement;
-  load(slice: SliceRow, progress: ProgressRow | undefined): void;
+  load(slice: StudySentence, progress: ProgressRow | undefined): void;
   setOutcome(outcome: CopyOutcome): void;
   /**
    * 把罗马音行摆出来（不用用户再点一次「提示」）。
@@ -942,7 +942,7 @@ export function buildCopyPractice(
     /** 「重置」：上层清掉这步的完成标记、留档和尝试次数 */
     onReset(): Promise<ProgressRow>;
     /** 「提示」用的罗马音：**键盘键序**（IME 键序，を=wo、ぢ=di），照着敲用；拿不到给空串 */
-    getRomaji(slice: SliceRow): Promise<string>;
+    getRomaji(slice: StudySentence): Promise<string>;
     /**
      * 本机词典装上了没。
      *
@@ -1027,7 +1027,7 @@ export function buildCopyPractice(
 
   const resultBox = root.createDiv({ cls: "yl-copy-result" });
 
-  let slice: SliceRow | null = null;
+  let slice: StudySentence | null = null;
   let progress: ProgressRow | undefined;
   let submitting = false;
   let resetting = false;
@@ -1326,7 +1326,7 @@ export function buildCopyPractice(
 
 export interface ImitationPracticeHandle {
   root: HTMLElement;
-  load(slice: SliceRow, progress: ProgressRow | undefined): void;
+  load(slice: StudySentence, progress: ProgressRow | undefined): void;
   /** 登录状态变了（刚连接上 / 刚退出）后重算提示文案 */
   refreshGate(): void;
   /** 收尾：把还没落库的草稿兜底存掉（关视图/销毁时走） */
@@ -1460,7 +1460,7 @@ export function buildImitation(opts: {
   const verdictBox = root.createDiv({ cls: "yl-verdict" });
   verdictBox.hide();
 
-  let slice: SliceRow | null = null;
+  let slice: StudySentence | null = null;
   let progress: ProgressRow | undefined;
   /** 判定 / 浅检查放行进行中 */
   let busy = false;

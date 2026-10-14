@@ -1,7 +1,7 @@
 import { Notice, type App } from "obsidian";
 import { kanaToRomaji } from "../services/jaTokenize";
 import { normalizeTextFix } from "../services/study";
-import type { SliceRow } from "../types/entities";
+import type { StudySentence } from "../types/entities";
 import { DialogModal } from "../ui/dialog";
 import { createButton, setButtonIcon } from "../ui/button";
 
@@ -50,7 +50,7 @@ export interface CorrectionAnnot {
 }
 
 export interface CorrectionOptions {
-  slice: SliceRow;
+  slice: StudySentence;
   /** 当前句**可注音**的词（只有带汉字的那些），由 StudyView 分词后给 */
   annots: CorrectionAnnot[];
   /** 句中纯假名的词，只用来在面板上说清「为什么它们没列出来」 */
@@ -68,8 +68,8 @@ export interface CorrectionOptions {
   /** 关窗收尾：把播放器还给宿主 —— 停下、倍速回 1×，别留一句 0.5× 的在响 */
   onTeardown(): void;
   onSave: (fixes: {
-    textFixes: SliceRow["textFixes"];
-    readingFixes: SliceRow["readingFixes"];
+    textFixes: StudySentence["textFixes"];
+    readingFixes: StudySentence["readingFixes"];
   }) => void | Promise<void>;
 }
 
@@ -271,7 +271,7 @@ export class CorrectionModal extends DialogModal {
    */
   private async save(): Promise<void> {
     const slice = this.opts.slice;
-    const fixes: NonNullable<SliceRow["readingFixes"]> = { ...(slice.readingFixes ?? {}) };
+    const fixes: NonNullable<StudySentence["readingFixes"]> = { ...(slice.readingFixes ?? {}) };
 
     for (const row of this.annotRows) {
       const value = row.input.value.trim();

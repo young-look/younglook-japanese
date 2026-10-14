@@ -23,43 +23,13 @@
  *       9 = 便签退役（`notes` 整表删除）—— 2026-10-09「笔记」改版：登录用户的
  *           笔记搬到服务端共享笔记（`/api/v1/notes/`，按账号走），未登录的纯单机
  *           笔记落新表 `my_notes`；快照同步不再携带任何笔记集合。
- *       10 = 清掉 7 个「声明了但全仓零查询」的索引（见 RETIRED_INDEXES）——
- *            建库起就没被任何 getAllByIndex 用过，白占写入开销。只删索引不动数据。
+ *       10 = 清掉 7 个「声明了但全仓零查询」的索引——只删索引不动数据。
+ *       11 = 🔥 身份模型重构硬切（2026-10-14 用户拍板）：works/episodes/slices
+ *            三表退役，换成 records/assets/sentences/lines——学习记录键改为
+ *            「视频+字幕」文件哈希对，句子键 = 三句哈希，旧键体系无法换算，
+ *            **升级即全库清空**（不写兼容层，项目无公开市场用户）。用户重新导入即可。
  */
-export const DB_VERSION = 10;
-
-/**
- * 已退役的 store：升级时**整表删掉**。
- *
- * ⚠️ 必须是显式清单，**不要从 SCHEMA 反推**（"不在清单里的都删"）——
- * SCHEMA 里少写一个字，就会把一整张还在用的表删掉，那是不可逆的。
- */
-const RETIRED_STORES: readonly string[] = [
-  "tts", // 整句 TTS 读音（mp3）；TTS 10-02 下线，留着只是白占空间
-  "review_events", // 翻卡复习事件；翻卡从未落地，表从建库起就没人写过
-  "term_memory", // 术语补正记忆表；纠错实际长在 slices 的覆盖层上，这张没被用过
-  "outbox", // 待上行队列；统一快照同步（全量重推）上线后没有消费者
-  "notes", // 老便签（键 = sliceCid）；2026-10-09 改版退役：登录的笔记在服务端、
-  //   未登录的重写在 my_notes，老数据不迁移（项目未上线）
-];
-
-/**
- * 已退役的索引：`[store 名, 索引名]`。升级时删掉。
- * 同 RETIRED_STORES 的纪律：显式清单，不从 SCHEMA 反推。
- */
-const RETIRED_INDEXES: readonly (readonly [string, string])[] = [
-  ["words", "by_due"], // 建在 dueAt 上；SRS 调度不做，dueAt 字段已删
-  // 2026-10-10 清理：以下 7 个索引从建库起就没有任何 getAllByIndex 查询过
-  // （有的是按字段名在 JS 侧过滤、有的是功能下线后留下的），留着只是每次写入
-  // 都要多维护一棵 B 树。删索引不动数据，业务表与行全部保留。
-  ["assets", "by_fingerprint"], // 指纹去重在 JS 侧比，未走索引
-  ["slices", "by_episode_index"], // `[episodeCid, index]` 复合索引无人查
-  ["slices", "by_text_hash"], // textHash 匹配在 JS 侧比
-  ["progress", "by_slice"], // 进度按 cid 主键取，未按 sliceCid 查
-  ["words", "by_status"], // 词表状态过滤在 JS 侧做
-  ["words", "by_last_seen"], // 未见按 lastSeenAt 查询
-  ["ai_usage", "by_ts"], // BYOK 用量只按主键自增读，未按时间查
-];
+export const DB_VERSION = 11;
 
 /** 库名前缀。改这个等于把所有人的本地数据丢掉，别改。 */
 export const DB_PREFIX = "younglook-";
@@ -70,10 +40,14 @@ export function vaultDbName(key: string): string {
 }
 
 export const STORE = {
-  works: "works",
-  episodes: "episodes",
+  /** 学习记录（键 = 文件哈希对，见 core/ids.ts::recordCid） */
+  records: "records",
+  /** 素材文件行（键 = A:+文件 sha256，跨记录共享） */
   assets: "assets",
-  slices: "slices",
+  /** 句子共享内容层（键 = S: 三句哈希；解析与纠错覆盖层挂这里） */
+  sentences: "sentences",
+  /** 记录层台词表（本地 only，不上云——原文红线） */
+  lines: "lines",
   progress: "progress",
   words: "words",
   studyDays: "study_days",
@@ -95,35 +69,24 @@ export type StoreName = (typeof STORE)[keyof typeof STORE];
 
 interface StoreSpec {
   name: StoreName;
-  keyPath?: string;
+  /** 复合主键（如 lines 的 ["recordCid","index"]）允许是数组 */
+  keyPath?: string | string[];
   autoIncrement?: boolean;
   indexes?: Array<{ name: string; keyPath: string | string[]; unique?: boolean }>;
 }
 
 const SCHEMA: readonly StoreSpec[] = [
-  { name: STORE.works, keyPath: "cid" },
-  {
-    name: STORE.episodes,
-    keyPath: "cid",
-    indexes: [{ name: "by_work", keyPath: "workCid" }],
-  },
-  {
-    name: STORE.assets,
-    keyPath: "cid",
-    indexes: [{ name: "by_episode", keyPath: "episodeCid" }],
-  },
-  {
-    name: STORE.slices,
-    keyPath: "cid",
-    indexes: [{ name: "by_episode", keyPath: "episodeCid" }],
-  },
+  { name: STORE.records, keyPath: "cid" },
+  { name: STORE.assets, keyPath: "cid" },
+  { name: STORE.sentences, keyPath: "cid" },
+  { name: STORE.lines, keyPath: ["recordCid", "index"] },
   { name: STORE.progress, keyPath: "cid" },
   { name: STORE.words, keyPath: "cid" },
   { name: STORE.studyDays, keyPath: "day" },
   {
     name: STORE.sessions,
     keyPath: "cid",
-    indexes: [{ name: "by_episode", keyPath: "episodeCid" }],
+    indexes: [{ name: "by_record", keyPath: "recordCid" }],
   },
   { name: STORE.meta, keyPath: "key" },
   { name: STORE.aiUsage, keyPath: "id", autoIncrement: true },
@@ -190,26 +153,19 @@ export class VaultDb {
     const request = indexedDB.open(name, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
+      // v11 = 身份模型硬切：旧键体系（works/episodes/slices）与新键无法换算，
+      // 升级即全库清空重建（用户已拍板不写兼容层）。deleteObjectStore 只能
+      // 在这个升级事务里调。
+      for (const name of Array.from(db.objectStoreNames)) {
+        db.deleteObjectStore(name);
+      }
       for (const spec of SCHEMA) {
-        if (db.objectStoreNames.contains(spec.name)) continue;
         const store = db.createObjectStore(spec.name, {
           keyPath: spec.keyPath,
           autoIncrement: spec.autoIncrement,
         });
         for (const index of spec.indexes ?? []) {
           store.createIndex(index.name, index.keyPath, { unique: index.unique ?? false });
-        }
-      }
-      // 退役的表顺手清掉（deleteObjectStore 只能在这个升级事务里调）
-      for (const name of RETIRED_STORES) {
-        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
-      }
-      // 退役的索引同理（deleteIndex 也只能在升级事务里调）
-      const upgradeTx = request.transaction!;
-      for (const [storeName, indexName] of RETIRED_INDEXES) {
-        if (db.objectStoreNames.contains(storeName)) {
-          const store = upgradeTx.objectStore(storeName);
-          if (store.indexNames.contains(indexName)) store.deleteIndex(indexName);
         }
       }
     };
@@ -256,8 +212,8 @@ export class VaultDb {
     return this.transaction([store], "readonly", (tx) => tx.get<T>(store, key));
   }
 
-  async getAll<T>(store: StoreName): Promise<T[]> {
-    return this.transaction([store], "readonly", (tx) => tx.getAll<T>(store));
+  async getAll<T>(store: StoreName, query?: IDBKeyRange | IDBValidKey): Promise<T[]> {
+    return this.transaction([store], "readonly", (tx) => tx.getAll<T>(store, query));
   }
 
   async getAllByIndex<T>(store: StoreName, index: string, query: IDBKeyRange | IDBValidKey): Promise<T[]> {
@@ -311,12 +267,12 @@ export async function listVaultDatabaseKeys(): Promise<string[]> {
  */
 export async function probeVaultDatabase(
   key: string,
-): Promise<{ slices: number; progress: number; vaultPath: string | null }> {
+): Promise<{ sentences: number; progress: number; vaultPath: string | null }> {
   let db: IDBDatabase;
   try {
     db = await promisify(indexedDB.open(vaultDbName(key)));
   } catch {
-    return { slices: 0, progress: 0, vaultPath: null };
+    return { sentences: 0, progress: 0, vaultPath: null };
   }
   try {
     const count = (store: StoreName): Promise<number> =>
@@ -330,9 +286,14 @@ export async function probeVaultDatabase(
       )) as { key: string; value: string } | undefined;
       vaultPath = row?.value ?? null;
     }
-    return { slices: await count(STORE.slices), progress: await count(STORE.progress), vaultPath };
+    // v11 起句子表叫 sentences；老库（v10 及以前）叫 slices——探测历史库时两个都看
+    const legacySlices = db.objectStoreNames.contains("slices")
+      ? await promisify(db.transaction("slices", "readonly").objectStore("slices").count())
+      : 0;
+    const sentences = (await count(STORE.sentences)) || legacySlices;
+    return { sentences, progress: await count(STORE.progress), vaultPath };
   } catch {
-    return { slices: 0, progress: 0, vaultPath: null };
+    return { sentences: 0, progress: 0, vaultPath: null };
   } finally {
     db.close();
   }

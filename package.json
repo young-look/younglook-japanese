@@ -1,6 +1,6 @@
 {
   "name": "young-look-plugin",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "private": true,
   "type": "module",
   "description": "Obsidian plugin: learn Japanese from anime with local video + subtitle files",
@@ -11,6 +11,7 @@
     "build:prod": "node scripts/sync-dict.mjs && node scripts/sync-prompts.mjs && node esbuild.config.mjs production",
     "sync-dict": "node scripts/sync-dict.mjs",
     "dict-manifest": "node scripts/dict-manifest.mjs",
+    "demo-manifest": "node scripts/demo-manifest.mjs",
     "type-check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"

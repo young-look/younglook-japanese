@@ -7,7 +7,7 @@ import {
   updateNickname,
 } from "../services/auth/authApi";
 import { chat } from "../services/ai/client";
-import { byokUiState, resolveAiRoute } from "../services/ai/gate";
+import { byokUiState } from "../services/ai/gate";
 import {
   fetchWallet,
   sceneText,
@@ -23,25 +23,26 @@ import { dayCounts, heatmapSeries, STREAK_GRACE, streakOf } from "../services/pe
 import {
   effectiveJa,
   effectiveZh,
-  loadEpisodeList,
-  loadSlices,
-  type EpisodeListItem,
+  loadRecordList,
+  loadStudySentences,
+  type RecordListItem,
 } from "../services/study";
 import {
   collectVocabFromSlices,
   type SliceLearnInfo,
   type VocabEntry,
 } from "../services/vocabLibrary";
+import { assetShaCid } from "../core/ids";
 import { blockAnchor } from "../markdown/templates";
 import { fileExists } from "../storage/files";
 import { STORE } from "../storage/db";
-import type { AssetRow, EpisodeRow, ProgressRow, SliceRow, WorkRow } from "../types/entities";
+import type { AssetRow, ProgressRow, RecordRow, StudySentence } from "../types/entities";
 import { loadMyNotes, peekMyNotes } from "../services/notes/mine";
-import { revertAssociation } from "../services/crossDeviceRebind";
 import { ShareCardModal } from "./ShareCardModal";
 import { log } from "../core/logger";
 import { createButton, setButtonIcon } from "../ui/button";
 import { signedYuanMilli as signedYuan, yuanMilli as yuan } from "../ui/money";
+import { setViewTitle } from "../ui/viewTitle";
 import {
   ICON_FLAKE,
   ICON_FLAME,
@@ -137,8 +138,8 @@ interface OrphanInfo {
  * provenance()）。只列历史页用得到的字段。
  */
 interface SyncProvenance {
-  work_cid?: string;
-  work_title?: string;
+  record_cid?: string;
+  record_title?: string;
   episode_number?: number;
   slice_index?: number;
 }
@@ -146,17 +147,11 @@ interface SyncProvenance {
 /** 历史页的一行：学完的一个句子（现行切片 + 完成时刻 + 这句的笔记，没写是空串）。 */
 interface SentenceRow {
   /** 本地现行切片；孤儿行为 null（句面用 OrphanInfo 顶替，见上） */
-  slice: SliceRow | null;
+  slice: StudySentence | null;
   completedAt: string;
   /** 用户在学习页亲手写的笔记；空串 = 没写过（或清空了） */
   note: string;
   orphan?: OrphanInfo;
-  /**
-   * 「关联恢复」标记（原样带自 progress 行 `recovery`）：这行的进度是换机后从
-   * 云端接回来的（`source: "cloud-assoc"`）或换字幕接回的（`"slice-rebind"`）。
-   * 只有 cloud-assoc 才给「撤销这次关联」入口（见组头）。
-   */
-  recovery?: { from: string; source: string };
 }
 
 /**
@@ -178,7 +173,7 @@ interface ByokUsageRow {
  * 行渲染只读这个标志，不再碰文件系统。
  */
 interface SentenceGroup {
-  episodeCid: string;
+  recordCid: string;
   label: string;
   /** 实测视频文件还在（AssetRow.available 是上次核对时的旧账，不做数） */
   videoOk: boolean;
@@ -187,6 +182,21 @@ interface SentenceGroup {
   lastAt: string;
 }
 
+
+/** 列表/历史通用的记录标签：视频名 · 第 N 季第 N 集 / E N（非剧集类只有名字）。 */
+function recordLabelOf(record: {
+  title: string;
+  titleJa: string;
+  season: number | null;
+  number: string;
+}): string {
+  const head = record.title || record.titleJa || "未命名";
+  const label =
+    record.number.trim() === ""
+      ? ""
+      : `第${record.season != null ? ` ${record.season} 季` : ""}第 ${record.number} 集`;
+  return [head, label.trim()].filter(Boolean).join(" · ");
+}
 
 function localDayOf(iso: string): string {
   const d = new Date(iso);
@@ -309,8 +319,12 @@ export class PersonalCenterView extends ItemView {
     return VIEW_TYPE_PERSONAL;
   }
 
+  /**
+   * 页签带品牌前缀（2026-10-14 用户定）；页头（页签下面那行）由 render 里的
+   * setViewTitle 另行写成「个人中心」。
+   */
   getDisplayText(): string {
-    return "个人中心";
+    return "洋流 · 个人中心";
   }
 
   getIcon(): string {
@@ -460,6 +474,8 @@ export class PersonalCenterView extends ItemView {
     await this.loadV3Stats();
     this.build();
     await this.renderTab(this.activeTab);
+    // 页头只写页面名，页签才是「洋流 · 个人中心」（见 ui/viewTitle.ts）
+    setViewTitle(this.leaf, this.containerEl, "洋流 · 个人中心", "个人中心");
   }
 
   /** 词库 / 存储页签的灰色小字；没配小字的页签把它藏起来（正文回到标题行正下方）。 */
@@ -497,7 +513,8 @@ export class PersonalCenterView extends ItemView {
 
   /**
    * 「存储」页：本机各类数据量 + 哪些会上传到云端。只算用户自己产生的数据 ——
-   * 插件自带的词典与演示素材不计入（过滤在 dataInventory 里做）。
+   * 插件自带的词典不计入；示例那一集是用户点下载才进来的，占着本机的盘，照常
+   * 计入（口径都在 dataInventory 里做）。
    *
    * 单独一个 `DataPane` 而不是在这里写一长串方法：这一页要读真实文件（stat 素材、
    * 组一遍同步 payload），有自己的加载态与筛选状态，混进本文件
@@ -542,13 +559,13 @@ export class PersonalCenterView extends ItemView {
     }
     const into = new Map<string, VocabEntry>();
     let notes = 0;
-    const episodes = await loadEpisodeList(this.plugin.db);
+    const items = await loadRecordList(this.plugin.db);
     const localSliceCids = new Set<string>();
-    for (const item of episodes) {
-      const slices = await loadSlices(this.plugin.db, item.episode.cid);
+    for (const item of items) {
+      const slices = await loadStudySentences(this.plugin.db, item.record.cid);
       for (const s of slices) localSliceCids.add(s.cid);
       if (slices.some((s) => done.has(s.cid))) notes += 1;
-      const label = `${item.work.title || item.work.titleJa} S${item.episode.season}E${item.episode.number}`;
+      const label = recordLabelOf(item.record);
       collectVocabFromSlices(slices, done, label, into);
     }
     // 换机拉回了进度、但素材还没重导：这些句子在本地没有切片行，
@@ -981,50 +998,44 @@ export class PersonalCenterView extends ItemView {
     // stack.createDiv({ cls: "yl-pc-sec", text: "你是怎么用洋流的" });
     const tracks = stack.createDiv({ cls: "yl-pc-grid2" });
 
-    // 实际生效的轨道：**用户选谁就用谁**（2026-10-12 拍板，废除「有余额先扣余额」
-    // 的自动顺序）。自定义模型仍须「已保存」才生效（byokSaved 快照，草稿不参与判定）。
-    const route = resolveAiRoute(settings);
+    // 用户**显式选**的轨道（2026-10-14 用户拍板）：双卡永远可自由切换 ——
+    // 不看余额、不看自定义模型参数填没填完；配没配好、余额够不够，都是
+    // **实际调用时**由 resolveAiGate 出各自的报错（need-key / need-balance…）。
+    // 所以这里认 settings.aiMode（用户的选择），不认 resolveAiRoute（生效解析：
+    // 选了 byok 但没保存过配置时它是 off）。角标「你正在用」跟选择走。
+    const picked = settings.aiMode;
     const byokUi = byokUiState(settings);
 
     /**
      * 方案一（2026-10-12 用户挑定）：双卡等权，**点整卡选中**。
-     * 正在用的卡带「你正在用」角标；另一张配置好的卡角标「点这里切换」；
-     * 自定义模型没保存过配置时整卡置灰、角标「先去配置」。
+     * 正在用的卡带「你正在用」角标，另一张角标「点这里切换」。
      * 卡内的表单/按钮点击不算选卡（否则点输入框就把轨道切了）。
      */
-    const pickTrack = (card: HTMLElement, side: "byok" | "hosted") => (event: MouseEvent) => {
+    const pickTrack = (side: "byok" | "hosted") => (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, button, a, .yl-pc-select, .yl-pc-form")) return;
-      if (card.classList.contains("is-locked")) {
-        new Notice("先在下面填好 Key 并保存，才能启用自定义模型。");
-        return;
-      }
-      if (route === side) return;
+      if (picked === side) return;
       settings.aiMode = side;
       void this.plugin.saveSettings().then(() => this.renderWallet());
     };
 
     // A 轨：自定义模型 —— 用自己的 Key，数据不出本机。
-    // 2026-10-12 改口径：整卡可点选 = 切到这条轨（须已保存配置；没保存过则
-    // 置灰只能先填表单）。表单本身仍是 2026-10-10 的「保存/编辑」机制：
-    // 草稿（settings.byok）随时可填，**生效的永远是已保存快照**（byokSaved），
-    // 点「保存」先测连接，测通才落快照并把轨道切到 byok。
+    // 2026-10-14 改口径：整卡可点选 = 切到这条轨，**不再要求已保存配置** ——
+    // 参数没填完也允许先选上，实际调用时由 gate 报「自定义模型还没配好」。
+    // 表单本身仍是 2026-10-10 的「保存/编辑」机制：草稿（settings.byok）
+    // 随时可填，**生效的永远是已保存快照**（byokSaved），点「保存」先测
+    // 连接，测通才落快照并把轨道切到 byok。
     const byok = tracks.createDiv({
-      cls: `yl-pc-track is-clickable${route === "byok" ? " is-pick" : ""}${byokUi.hasSaved ? "" : " is-locked"}`,
+      cls: `yl-pc-track is-clickable${picked === "byok" ? " is-pick" : ""}`,
     });
-    byok.addEventListener("click", pickTrack(byok, "byok"));
+    byok.addEventListener("click", pickTrack("byok"));
     const byokTop = byok.createDiv({ cls: "yl-pc-track-top" });
     byokTop.createSpan({ cls: "yl-pc-track-radio" });
     setIcon(byokTop.createDiv({ cls: "yl-pc-track-ic" }), "key");
     byokTop.createSpan({ cls: "yl-pc-track-name", text: "自定义模型" });
     byokTop.createSpan({
       cls: "yl-pc-track-flag",
-      text:
-        route === "byok"
-          ? "你正在用"
-          : byokUi.hasSaved
-            ? "点这里切换"
-            : "先去配置",
+      text: picked === "byok" ? "你正在用" : "点这里切换",
     });
     byok.createDiv({
       cls: "yl-pc-track-copy",
@@ -1203,16 +1214,16 @@ export class PersonalCenterView extends ItemView {
     }
     // B 轨：内置模型 —— 省事的另一条，余额只在这一行里。整卡可点选（方案一）。
     const hosted = tracks.createDiv({
-      cls: `yl-pc-track is-clickable${route === "hosted" ? " is-pick" : ""}`,
+      cls: `yl-pc-track is-clickable${picked === "hosted" ? " is-pick" : ""}`,
     });
-    hosted.addEventListener("click", pickTrack(hosted, "hosted"));
+    hosted.addEventListener("click", pickTrack("hosted"));
     const hostedTop = hosted.createDiv({ cls: "yl-pc-track-top" });
     hostedTop.createSpan({ cls: "yl-pc-track-radio" });
     setIcon(hostedTop.createDiv({ cls: "yl-pc-track-ic is-dim" }), "cloud");
     hostedTop.createSpan({ cls: "yl-pc-track-name", text: "内置模型" });
     hostedTop.createSpan({
       cls: "yl-pc-track-flag",
-      text: route === "hosted" ? "你正在用" : "点这里切换",
+      text: picked === "hosted" ? "你正在用" : "点这里切换",
     });
     hosted.createDiv({
       cls: "yl-pc-track-copy",
@@ -1251,7 +1262,7 @@ export class PersonalCenterView extends ItemView {
     this.spend?.destroy();
     this.spend = null;
     const records = stack.createDiv({ cls: "yl-pc-card" });
-    if (route === "off") {
+    if (picked === "off") {
       const recHead = records.createDiv({ cls: "yl-pc-h3" });
       recHead.createSpan({ text: "消费记录" });
       recHead.createSpan({ cls: "yl-pc-cnt", text: "AI 还没开启" });
@@ -1267,7 +1278,7 @@ export class PersonalCenterView extends ItemView {
       // ⚠️ 两条轨的 `source` 各是各的类型（本机行 / 服务端流水行），
       //    合成一个三元表达式会让泛型推断成 union 而报错 —— 分两支各建各的。
       this.spend =
-        route === "byok"
+        picked === "byok"
           ? buildSpendSection(records, { ...common, source: this.byokSpendSource() })
           : buildSpendSection(records, { ...common, source: this.hostedSpendSource() });
     }
@@ -1740,40 +1751,34 @@ export class PersonalCenterView extends ItemView {
     // 笔记一趟整库取回（一句一行、键 = sliceCid；空 text 是删除墓碑）：
     // 历史页几十行逐句 get 太碎，一次 getAll 建好映射
     const noteTexts = await this.loadNoteTexts();
-    const items = await loadEpisodeList(this.plugin.db);
+    const items = await loadRecordList(this.plugin.db);
     for (const item of items) {
       const rows: SentenceRow[] = [];
-      for (const slice of await loadSlices(this.plugin.db, item.episode.cid)) {
+      for (const slice of await loadStudySentences(this.plugin.db, item.record.cid)) {
         const at = doneAt.get(slice.cid);
         if (!at) continue;
-        const recovery = (doneRow.get(slice.cid) as unknown as
-          | { recovery?: { from?: string; source?: string } }
-          | undefined)?.recovery;
         rows.push({
           slice,
           completedAt: at,
           note: noteTexts.get(slice.cid.slice(2)) ?? "",
-          recovery: recovery?.source ? { from: recovery.from ?? "", source: recovery.source } : undefined,
         });
       }
       if (rows.length === 0) continue;
       // 视频在不在拿现行文件实测：AssetRow.available 是上次核对时的旧账，
       // 外接盘拔了它还说是 —— 灰不灰得以文件说话
-      const assets = await this.plugin.db.getAllByIndex<AssetRow>(
+      const video = await this.plugin.db.get<AssetRow>(
         STORE.assets,
-        "by_episode",
-        item.episode.cid,
+        assetShaCid(item.record.videoSha256),
       );
-      const video = assets.find((a) => a.kind === "video" && !a.deletedAt);
       const group: SentenceGroup = {
-        episodeCid: item.episode.cid,
-        label: `${item.work.title || item.work.titleJa} S${item.episode.season}E${item.episode.number}`,
+        recordCid: item.record.cid,
+        label: recordLabelOf(item.record),
         videoOk: video ? await fileExists(video.localPath) : false,
         rows,
         lastAt: rows.reduce((max, r) => (r.completedAt > max ? r.completedAt : max), rows[0].completedAt),
       };
       groups.push(group);
-      groupByEpisode.set(group.episodeCid, group);
+      groupByEpisode.set(group.recordCid, group);
     }
     await this.mergeOrphanRows(doneAt, doneRow, noteTexts, items, groups, groupByEpisode);
     groups.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
@@ -1781,57 +1786,29 @@ export class PersonalCenterView extends ItemView {
     this.sentenceGroups = groups;
   }
 
-  /** 行排序键：真切片用句序；孤儿行用 provenance 里的句序，混在一组里也能排进去。 */
-  private rowIndexOf(row: SentenceRow): number {
-    return row.slice ? row.slice.index : (row.orphan?.index ?? 0);
-  }
-
-  /**
-   * 孤儿兜底（2026-10-09 用户拍板）：有完成记录、但本地没有切片行的句子。
-   *
-   * 来源：换机/重装后同步拉回（素材还没重导）、换字幕没认回的旧句、删了素材
-   * 的旧账。出处读 progress 行上行时内嵌的 provenance（作品/集数/句序一起上
-   * 的云，换机也在）；这集本机还有就并进它的组，没有就按 作品+集数 合成一组。
-   * 句面用用户当时写的仿写/抄写顶替（OrphanInfo）。
-   *
-   * 两条不显示：
-   *   · 作品/剧集在本机**被删过**（deletedAt）—— 用户明确删掉的东西不复活；
-   *   · 行上没有 provenance —— 那是本机学完、从没上行过的账，出处算不出来。
-   *     （provenance 是同步打包时算的，本机在学句子必有切片行，轮不到孤儿兜底。）
-   */
   private async mergeOrphanRows(
     doneAt: Map<string, string>,
     doneRow: Map<string, ProgressRow>,
     noteTexts: Map<string, string>,
-    items: EpisodeListItem[],
+    items: RecordListItem[],
     groups: SentenceGroup[],
-    groupByEpisode: Map<string, SentenceGroup>,
+    groupByRecord: Map<string, SentenceGroup>,
   ): Promise<void> {
-    // "本机没有这一集"分两种：从来没导过（可合成展示）、导过又删了（不复活）
-    const [allWorks, allEpisodes] = await Promise.all([
-      this.plugin.db.getAll<WorkRow>(STORE.works),
-      this.plugin.db.getAll<EpisodeRow>(STORE.episodes),
-    ]);
-    const deletedWorkCids = new Set(allWorks.filter((w) => w.deletedAt).map((w) => w.cid));
-    const deletedEpisodeKeys = new Set(
-      allEpisodes.filter((e) => e.deletedAt).map((e) => `${e.workCid}\u0000${e.number}`),
+    // "本机没有这条记录"分两种：从来没导过（可合成展示）、导过又删了（不复活）
+    const allRecords = await this.plugin.db.getAll<RecordRow>(STORE.records);
+    const deletedRecordCids = new Set(allRecords.filter((r) => r.deletedAt).map((r) => r.cid));
+    const liveRecordByCid = new Map(
+      allRecords.filter((r) => !r.deletedAt).map((r) => [r.cid, r] as const),
     );
-    const liveEpisodeByKey = new Map(
-      allEpisodes
-        .filter((e) => !e.deletedAt)
-        .map((e) => [`${e.workCid}\u0000${e.number}` as string, e]),
-    );
-    const itemByEpisodeCid = new Map(items.map((i) => [i.episode.cid, i]));
+    const itemByRecordCid = new Map(items.map((i) => [i.record.cid, i] as const));
 
     for (const [sliceCid, at] of doneAt) {
       const row = doneRow.get(sliceCid);
       if (!row) continue;
       const prov = (row as unknown as { provenance?: SyncProvenance }).provenance;
-      if (!prov || typeof prov.work_cid !== "string") continue;
-      const workCid = prov.work_cid;
-      const number = typeof prov.episode_number === "number" ? prov.episode_number : 0;
-      const key = `${workCid}\u0000${number}`;
-      if (deletedWorkCids.has(workCid) || deletedEpisodeKeys.has(key)) continue;
+      if (!prov || typeof prov.record_cid !== "string") continue;
+      const recordCid = prov.record_cid;
+      if (deletedRecordCids.has(recordCid)) continue;
 
       const orphan: OrphanInfo = {
         cid: sliceCid,
@@ -1850,28 +1827,33 @@ export class PersonalCenterView extends ItemView {
         orphan,
       };
 
-      // 这一集本机还有：并进它的组（组还没开就现开一个 —— 行全是孤儿，跳不了）
-      const episode = liveEpisodeByKey.get(key);
-      let group = episode ? groupByEpisode.get(episode.cid) : undefined;
+      // 这条记录本机还有：并进它的组（组还没开就现开一个 —— 行全是孤儿，跳不了）
+      const record = liveRecordByCid.get(recordCid);
+      let group = record ? groupByRecord.get(record.cid) : undefined;
       if (!group) {
-        const item = episode ? itemByEpisodeCid.get(episode.cid) : undefined;
-        const work = item?.work ?? allWorks.find((w) => w.cid === workCid);
+        const item = record ? itemByRecordCid.get(record.cid) : undefined;
+        const number = typeof prov.episode_number === "number" ? prov.episode_number : 0;
         const label = item
-          ? `${item.work.title || item.work.titleJa} S${item.episode.season}E${item.episode.number}`
-          : `${(prov.work_title || work?.title || work?.titleJa || "已学过的句子").trim()} E${number}`;
+          ? recordLabelOf(item.record)
+          : `${(prov.record_title || "已学过的句子").trim()}${number ? ` E${number}` : ""}`;
         group = {
-          episodeCid: episode ? episode.cid : `orphan:${key}`,
+          recordCid: record ? record.cid : `orphan:${recordCid}`,
           label,
           videoOk: false,
           rows: [],
           lastAt: at,
         };
         groups.push(group);
-        if (episode) groupByEpisode.set(episode.cid, group);
+        if (record) groupByRecord.set(record.cid, group);
       }
       group.rows.push(srow);
       if (at > group.lastAt) group.lastAt = at;
     }
+  }
+
+  /** 行排序键：真切片用句序；孤儿行用 provenance 里的句序，混在一组里也能排进去。 */
+  private rowIndexOf(row: SentenceRow): number {
+    return row.slice ? row.slice.index : (row.orphan?.index ?? 0);
   }
 
   /** 我的笔记一趟取回（键 = 三句 hash，走统一缓存；登录拉服务端、未登录读本机）。 */
@@ -1998,26 +1980,14 @@ export class PersonalCenterView extends ItemView {
       emptyText: "这一档没有学完的句子。",
       loadPage: (month, cursor) => this.loadHistoryPage(month, cursor),
       groupInfo: (group) => ({
-        key: group.episodeCid,
+        key: group.recordCid,
         label: group.label,
         // 组头的「学完 N 句」是**档内**的数（窗口过滤按行算，一集跨两档各算各的）
-        count: this.historyCounts.get(group.episodeCid) ?? group.rows.length,
+        count: this.historyCounts.get(group.recordCid) ?? group.rows.length,
       }),
       renderGroupHead: (parent, group, info) => {
         parent.createSpan({ text: group.label });
         parent.createSpan({ cls: "yl-pc-cnt", text: `学完 ${info.count} 句` });
-        // 换机关联恢复过的组给「撤销」入口 —— 关联是**推断**出来的（位置锚定），
-        // 接错了要能退。只有云端接回的（cloud-assoc）才给；换字幕 rebind 没有批次可撤。
-        if (
-          group.episodeCid.startsWith("E:") &&
-          group.rows.some((r) => r.recovery?.source === "cloud-assoc")
-        ) {
-          createButton(parent, {
-            shape: "text",
-            text: "撤销这次关联",
-            onClick: () => void this.undoAssociation(group.episodeCid),
-          });
-        }
       },
       renderGroupTail: (card, group) => {
         if (group.rows.some((r) => r.orphan)) {
@@ -2064,8 +2034,8 @@ export class PersonalCenterView extends ItemView {
     this.historyCounts = new Map();
     for (const { group } of inWindow) {
       this.historyCounts.set(
-        group.episodeCid,
-        (this.historyCounts.get(group.episodeCid) ?? 0) + 1,
+        group.recordCid,
+        (this.historyCounts.get(group.recordCid) ?? 0) + 1,
       );
     }
     const offset = cursor ? Number(cursor) || 0 : 0;
@@ -2159,8 +2129,6 @@ export class PersonalCenterView extends ItemView {
     el.className = `yl-sl-item${group.videoOk && !orphan ? "" : " is-missing"}`;
     const day = el.createDiv({ cls: "yl-sl-tlday" });
     day.createSpan({ text: humanDay(localDayOf(row.completedAt)) });
-    // 这行的进度是「接回来」的（换机关联 / 换字幕重导）—— 留个痕，用户看得出区别
-    if (row.recovery) day.createSpan({ cls: "yl-sl-recovery", text: " · 关联恢复" });
     const line = el.createDiv({ cls: "yl-sl-line" });
     line.createDiv({ cls: "yl-sl-no", text: String(orphan ? orphan.index : (row.slice?.index ?? 0)) });
     if (orphan) {
@@ -2184,32 +2152,13 @@ export class PersonalCenterView extends ItemView {
       createButton(side, {
         shape: "text",
         text: "打开",
-        onClick: () => void this.plugin.jumpToSentence(group.episodeCid, slice.index),
+        onClick: () => void this.plugin.jumpToSentence(group.recordCid, slice.index),
       });
     }
     // 笔记：用户亲手写的字，不用点任何按钮直接跟在句下（白纸容器，左缘对齐日语句子）
     if (row.note) el.createDiv({ cls: "yl-sl-paper", text: row.note });
     return el;
   }
-
-  /**
-   * 撤销一次跨设备关联（best-effort）：把记录挂回原来的句子、清掉批次记录。
-   *
-   * 关联是位置锚定**推断**出来的 —— 用户觉得接错了就该能退，与「不静默合并」
-   * 同一口径。只动这一集的 progress，云端那两行靠 `recovery` 标记在下一趟同步自愈。
-   * 动了 progress 与切片，整页要重读 → 走 `refreshOpenViews` 重建本视图
-   * （与刷新余额同一口径）。
-   */
-  private async undoAssociation(episodeCid: string): Promise<void> {
-    const { reverted } = await revertAssociation(this.plugin.db, episodeCid);
-    new Notice(
-      reverted > 0
-        ? `已撤销这次关联：${reverted} 条记录挂回了原来的句子。`
-        : "这次关联已经撤销过了。",
-    );
-    window.setTimeout(() => void this.plugin.refreshOpenViews(), 0);
-  }
-
 
 }
 

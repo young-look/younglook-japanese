@@ -12,15 +12,15 @@ installObsidianDomHelpers();
 import type YoungLookPlugin from "../src/main";
 import { DeleteWorkMediaModal, type DeleteWorkTarget } from "../src/views/DeleteWorkMediaModal";
 import { STORE, VaultDb } from "../src/storage/db";
-import type { AssetRow, EpisodeRow, WorkRow } from "../src/types/entities";
+import type { AssetRow, RecordRow } from "../src/types/entities";
 
 /**
- * 「删除这个作品的素材」确认窗的契约（2026-10-09）。
+ * 「删除这个作品的素材」确认窗的契约（2026-10-09，2026-10-14 随身份模型更新）。
  *
  * 三条要钉住：
  *  1. 壳走全站统一弹窗，标题与作品名都在；
- *  2. **后果必须说在明面上** —— 学习记录不删、库外文件不碰、重新导入可恢复；
- *  3. 确认后按作品删：各集与素材行软删、库内副本真删、**库外文件一个不动**。
+ *  2. **后果必须说在明面上** —— 学习进度不删、库外文件不碰、重新导入可恢复；
+ *  3. 确认后按组删：组内各记录软删、库内副本真删、**库外文件一个不动**。
  */
 
 let root = "";
@@ -45,12 +45,12 @@ function buttonByText(modal: DeleteWorkMediaModal, text: string): HTMLButtonElem
 }
 
 const TARGET: DeleteWorkTarget = {
-  workCid: "w1",
   title: "MyGO",
-  episodeCount: 2,
-  fileCount: 3,
+  recordCount: 2,
+  inLibraryPaths: ["/media/MyGO/ep1.mkv", "/media/MyGO/ep2.mkv"],
   bytes: 3 * 1024 * 1024,
   outsideCount: 1,
+  recordCids: ["r1", "r2"],
 };
 
 function build(overrides: Partial<DeleteWorkTarget> = {}): DeleteWorkMediaModal {
@@ -67,12 +67,12 @@ describe("删除作品素材的确认窗", () => {
     expect(modal.contentEl.textContent).toContain("MyGO");
   });
 
-  it("把后果说在明面上：学习记录不删、库外文件不动、可恢复", () => {
+  it("把后果说在明面上：学习进度不删、库外文件不动、可恢复", () => {
     const text = build().contentEl.textContent ?? "";
-    expect(text).toContain("学习记录不会被删除");
+    expect(text).toContain("学习进度不会被删除");
     expect(text).toContain("重新导入同一集就能恢复");
     expect(text).toContain("留在你原来的位置，不会被删");
-    expect(text).toContain("共 2 集 · 3 个文件");
+    expect(text).toContain("共 2 条记录 · 2 个文件");
   });
 
   it("没有库外文件时不必提「留在原来的位置」", () => {
@@ -89,7 +89,7 @@ describe("删除作品素材的确认窗", () => {
     expect(modal.contentEl.textContent).toBe("");
   });
 
-  it("确认后按作品删：各集与素材行软删、库内副本删掉、库外文件不动", async () => {
+  it("确认后按组删：各记录软删、库内副本删掉、库外文件与素材行不动", async () => {
     root = mkdtempSync(join(tmpdir(), "yl-del-work-"));
     const mediaDir = join(root, "media");
     mkdirSync(join(mediaDir, "MyGO"), { recursive: true });
@@ -103,90 +103,75 @@ describe("删除作品素材的确认窗", () => {
 
     const db = await VaultDb.open("delete-work-media");
     await Promise.all([
-      db.put<WorkRow>(STORE.works, {
+      db.put<RecordRow>(STORE.records, {
         ...syncFields(),
-        cid: "w1",
+        cid: "r1",
+        videoSha256: "sha-video-1",
+        jaSubSha256: "sha-ja-1",
+        zhSubSha256: null,
         title: "MyGO",
         titleJa: "",
         romaji: "",
         year: null,
         coverUrl: "",
         note: "",
-      }),
-      db.put<EpisodeRow>(STORE.episodes, {
-        ...syncFields(),
-        cid: "e1",
-        workCid: "w1",
         season: 1,
         number: "1",
-        title: "",
+        episodeTitle: "",
         durationMs: null,
       }),
-      db.put<EpisodeRow>(STORE.episodes, {
+      db.put<RecordRow>(STORE.records, {
         ...syncFields(),
-        cid: "e2",
-        workCid: "w1",
+        cid: "r2",
+        videoSha256: "sha-video-2",
+        jaSubSha256: "sha-ja-2",
+        zhSubSha256: null,
+        title: "MyGO",
+        titleJa: "",
+        romaji: "",
+        year: null,
+        coverUrl: "",
+        note: "",
         season: 1,
         number: "2",
-        title: "",
+        episodeTitle: "",
         durationMs: null,
       }),
       db.put<AssetRow>(STORE.assets, {
         ...syncFields(),
-        cid: "a1",
+        cid: "A:sha-video-1",
         kind: "video",
-        episodeCid: "e1",
+        sha256: "sha-video-1",
         filename: "ep1.mkv",
         sizeBytes: 10,
-        durationSeconds: null,
         language: "ja",
         subtitleFormat: "",
-        subtitleGroup: "",
-        fingerprint: null,
-        fpVersion: 1,
         localPath: insideA,
         available: true,
       }),
       db.put<AssetRow>(STORE.assets, {
         ...syncFields(),
-        cid: "a2",
+        cid: "A:sha-video-2",
         kind: "video",
-        episodeCid: "e2",
+        sha256: "sha-video-2",
         filename: "ep2.mkv",
         sizeBytes: 10,
-        durationSeconds: null,
         language: "ja",
         subtitleFormat: "",
-        subtitleGroup: "",
-        fingerprint: null,
-        fpVersion: 1,
         localPath: insideB,
-        available: true,
-      }),
-      db.put<AssetRow>(STORE.assets, {
-        ...syncFields(),
-        cid: "a3",
-        kind: "subtitle",
-        episodeCid: "e1",
-        filename: "ep1.ja-zh.ass",
-        sizeBytes: 7,
-        durationSeconds: null,
-        language: "ja-zh",
-        subtitleFormat: "ass",
-        subtitleGroup: "",
-        fingerprint: null,
-        fpVersion: 1,
-        localPath: outside,
         available: true,
       }),
     ]);
 
     const plugin = { db, settings: { mediaDir } } as unknown as YoungLookPlugin;
-    const modal = new DeleteWorkMediaModal({} as never, plugin, TARGET);
+    const modal = new DeleteWorkMediaModal({} as never, plugin, {
+      ...TARGET,
+      inLibraryPaths: [insideA, insideB],
+    });
     modal.open();
     buttonByText(modal, "删除").click();
 
-    // 两集的库内副本都删干净 = 整个循环跑完了
+    // 库内副本都删掉 = 整个流程跑完了
     await vi.waitFor(
       () => {
         expect(existsSync(insideA)).toBe(false);
@@ -195,17 +180,15 @@ describe("删除作品素材的确认窗", () => {
       { timeout: 3000 },
     );
 
-    const [e1, e2, a1, a3] = await Promise.all([
-      db.get<EpisodeRow>(STORE.episodes, "e1"),
-      db.get<EpisodeRow>(STORE.episodes, "e2"),
-      db.get<AssetRow>(STORE.assets, "a1"),
-      db.get<AssetRow>(STORE.assets, "a3"),
+    const [r1, r2, a1] = await Promise.all([
+      db.get<RecordRow>(STORE.records, "r1"),
+      db.get<RecordRow>(STORE.records, "r2"),
+      db.get<AssetRow>(STORE.assets, "A:sha-video-1"),
     ]);
-    expect(e1?.deletedAt).not.toBeNull();
-    expect(e2?.deletedAt).not.toBeNull();
-    expect(a1?.deletedAt).not.toBeNull();
-    // 库外那一条的记录也跟着这一集走，但磁盘上的文件一个都不碰
-    expect(a3?.deletedAt).not.toBeNull();
+    expect(r1?.deletedAt).not.toBeNull();
+    expect(r2?.deletedAt).not.toBeNull();
+    // 素材行不删：软删的是记录行，素材行可能被别的记录共享（跨记录共享的硬边界）
+    expect(a1?.deletedAt).toBeNull();
     expect(existsSync(outside)).toBe(true);
 
     db.close();

@@ -3,11 +3,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  DEMO_MEDIA_SUBDIR,
   defaultMediaDir,
   insideMediaRoot,
   removeMediaFiles,
-  resolveDemoMediaDir,
   resolveMediaDir,
 } from "../src/services/mediaStore";
 
@@ -91,7 +89,9 @@ describe("removeMediaFiles", () => {
  * 去重**（用户拍板：简单起见宁可各存一份）。指纹复用与删除都天然被锁在本空间内，
  * 顺手解决了"一方删素材穿透到另一方"的隐患。
  *
- * ⚠️ 演示素材是**唯一例外**：插件自带、可能几十 MB，走共享的 `_demo/`，不按空间各拷一份。
+ * ⚠️ **演示素材也走这里**（2026-10-14 用户拍板：与用户导入一视同仁）：示例那一集下载后
+ *    落在本空间的素材库里，不再有共享的 `_demo/` 特殊目录 —— 盘点、删除、「在不在库里」
+ *    的判断都只需要这一个根。
  */
 describe("resolveMediaDir（素材按本机空间隔离）", () => {
   function baseDir(): string {
@@ -112,11 +112,6 @@ describe("resolveMediaDir（素材按本机空间隔离）", () => {
 
   it("留空 = 默认位置，同样按空间再分一层", () => {
     expect(resolveMediaDir("", "base")).toBe(join(defaultMediaDir(), "base"));
-  });
-
-  it("演示素材走共享目录，不按空间分", () => {
-    const base = baseDir();
-    expect(resolveDemoMediaDir(base)).toBe(join(base, DEMO_MEDIA_SUBDIR));
   });
 });
 

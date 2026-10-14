@@ -12,15 +12,5 @@ declare module "*.svg" {
   export default source;
 }
 
-// 内置演示素材（plugin/demo/）：mp4 走 dataurl 打成 base64 data URL 字符串，
-// srt 走 text 拿到字幕源码。二者由 services/demoAssets.ts 消费，启动时若插件
-// 目录里缺文件就落盘一份（社区商店/BRAT 只装三件套，目录不跟过去）。
-declare module "*.mp4" {
-  const src: string;
-  export default src;
-}
-
-declare module "*.srt" {
-  const source: string;
-  export default source;
-}
+// ⚠️ 演示素材（demo.mp4 / demo.srt）已不再经 esbuild 内联进 main.js ——
+// 改走服务端按需下载（services/demoPack.ts）。所以这里不再有 *.mp4 / *.srt 声明。

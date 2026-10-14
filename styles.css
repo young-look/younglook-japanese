@@ -660,13 +660,19 @@ button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
   gap: 14px;
   min-width: 0;
   font-weight: 600;
-  /* 整块可点：打开官网（点击绑定见 StudyView.buildList 的 brand.onclick） */
+  /* h3 只负责占位（flex:1 把右侧按钮推到最右），**不带点击态** ——
+     可点范围圈在 .yl-brand-link 上（2026-10-14 用户：整行可点会误触跳官网）。
+     唯一的 flex 子项默认不放大，实际宽度 = logo + 文字的 fit-content。 */
+}
+/* 点击落点 = logo + 附近文字：悬停反馈也只落在这里，别处 hover 不再整块变淡 */
+.yl-brand-link {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   cursor: pointer;
   transition: opacity 120ms ease;
 }
-/* 只给一点透明度反馈，别的都不动：海獭徽标是用户拍板过的"裸放不加边框/底色"，
-   悬停冒描边或换底会破坏那条定稿；也不加位移，免得跟右侧按钮的顶端对齐打架。 */
-.yl-list-header h3.yl-brand:hover {
+.yl-brand-link:hover {
   opacity: 0.72;
 }
 .yl-brand-mark {
@@ -706,6 +712,36 @@ button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
   border-radius: 12px;
   margin-bottom: 8px;
   background: transparent;
+}
+/* 首页「示例」占位行：演示包还没下载时的临时一行（见 views/DemoDownloadModal.ts）。
+   复用真实行的骨架，只把实线描边改成虚线 —— 一眼看出"这一集还没落到库里"，
+   跟用户自己导入的那些实线行区分开。下载成功、导入成真后这条类就消失了。 */
+.yl-demo-row {
+  border-style: dashed;
+}
+/* ── 首页「未绑定视频」分组（2026-10-14 方案一定稿）────────────────────
+   没绑上视频的集沉到列表最底，先用一根分隔线隔开（线左侧一句小字说明这一组
+   的含义），行内整条置灰 —— 用户不用点就知道这一集暂时学不了。
+   ⚠️ 只灰「行」不灰按钮：行尾「补视频」保持正常可点（点了弹导入窗口，预填
+   这一集的名字/季集号）。按钮要是也灰掉，用户会以为插件坏了。 */
+.yl-unbound-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 10px;
+}
+/* 线只铺按钮右侧之外的剩余宽度，小字坐在最左 */
+.yl-unbound-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--background-modifier-border);
+}
+.yl-episode-row.yl-unbound .yl-episode-title {
+  color: var(--text-faint);
+}
+.yl-episode-row.yl-unbound .yl-mini-progress-fill {
+  background: var(--text-faint);
 }
 .yl-episode-info {
   flex: 1;
@@ -4074,13 +4110,13 @@ button.yl-locked:hover:not(:disabled) {
   padding: 13px 15px;
 }
 /* ── 双卡等权点选（2026-10-12 用户挑定方案一）──────────────────────────
- * 两张卡平级：整卡可点 = 切到这条轨（卡内表单/按钮的点击不算，代码里拦）；
- * 没保存过配置的自定义卡置灰不可选。radio 圆点跟 demo 同款。 */
+ * 两张卡平级：整卡可点 = 切到这条轨（卡内表单/按钮的点击不算，代码里拦）。
+ * 2026-10-14 用户拍板：**永远可自由切换** —— 不看余额、不看自定义模型参数
+ * 填没填完，配没配好都是实际调用时才报错，所以不再有置灰不可选的锁定态。
+ * radio 圆点跟 demo 同款。 */
 .yl-pc-track.is-clickable { cursor: pointer; }
 .yl-pc-track.is-clickable:hover { border-color: var(--yl-acc-line); }
 .yl-pc-track.is-pick:hover { border-color: var(--yl-acc-line); }
-.yl-pc-track.is-locked { opacity: 0.62; }
-.yl-pc-track.is-locked:hover { border-color: var(--background-modifier-border); }
 .yl-pc-track-radio {
   flex: none;
   width: 15px;

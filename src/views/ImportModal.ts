@@ -1,11 +1,10 @@
 import { Notice, type App } from "obsidian";
 import type YoungLookPlugin from "../main";
-import { importSubtitle } from "../services/importer";
-import { applyCrossDeviceRebind } from "../services/crossDeviceRebind";
+import { importSubtitle, type ImportProgress } from "../services/importer";
 import { resolveMediaDir } from "../services/mediaStore";
 import { guessFromFilename } from "../services/guess";
 import { lookupEpisodeTitle, lookupSubject } from "../services/bangumi";
-import { probeFile, readTextFile } from "../storage/files";
+import { fileSize, readTextFile } from "../storage/files";
 import {
   containsLanguages,
   detectFormat,
@@ -16,7 +15,6 @@ import {
   type RawLine,
 } from "../services/subtitle/parse";
 import { VIEW_TYPE_STUDY } from "./StudyView";
-import { AssociationModal } from "./AssociationModal";
 import { createButton } from "../ui/button";
 import { DialogModal } from "../ui/dialog";
 
@@ -116,6 +114,11 @@ export class ImportModal extends DialogModal {
   private guessedTitle = "";
   private detectRun = 0;
   private busy = false;
+  /**
+   * 导入进行到哪个慢阶段（importer 的 onProgress 报上来），footer 提示用它。
+   * 几 GB 的视频算哈希/拷素材库要 10~30 秒 —— 不挂状态用户会以为卡死了。
+   */
+  private phase: string | null = null;
 
   // ── 只重画这几块，别整个表单重建（会抢走名字栏的焦点）──
   private videoTileEl: HTMLElement | null = null;
@@ -459,7 +462,8 @@ export class ImportModal extends DialogModal {
 
     let note = `还差：${need.join(" · ")}`;
     let noteOk = false;
-    if (coverage.reading) note = "正在读字幕…";
+    if (this.busy) note = this.phase ?? "正在导入…";
+    else if (coverage.reading) note = "正在读字幕…";
     else if (coverage.bad.length > 0) note = "先处理读不出来的字幕";
     else if (need.length === 0) {
       note = "✓ 都齐了";
@@ -499,7 +503,7 @@ export class ImportModal extends DialogModal {
     this.videoSize = null;
     this.refresh();
     try {
-      this.videoSize = (await probeFile(path)).sizeBytes;
+      this.videoSize = await fileSize(path);
     } catch {
       new Notice("读不到这个视频文件，看看它还在不在原处。");
       this.videoPath = "";
@@ -511,7 +515,7 @@ export class ImportModal extends DialogModal {
   /** 只把体积补上（右键视频进来时用）；文件已经不在了就悄悄清掉，别吓人。 */
   private async loadVideoInfo(path: string): Promise<void> {
     try {
-      this.videoSize = (await probeFile(path)).sizeBytes;
+      this.videoSize = await fileSize(path);
     } catch {
       this.videoPath = "";
     }
@@ -708,6 +712,7 @@ export class ImportModal extends DialogModal {
     const zhEntry = jaEntry.zh ? undefined : ready.find((entry) => entry !== jaEntry && entry.zh);
 
     this.busy = true;
+    this.phase = null;
     this.renderFoot();
     try {
       const outcome = await importSubtitle(this.plugin.db, {
@@ -720,6 +725,11 @@ export class ImportModal extends DialogModal {
         number: episodeNumber,
         episodeTitle: isSeries ? this.episodeTitle.trim() || undefined : undefined,
         mediaDir: resolveMediaDir(this.plugin.settings.mediaDir, this.plugin.settings.activeSpaceId),
+        // 慢阶段挂状态：算哈希/拷素材库动辄 10~30 秒，干瞪眼像卡死（见 PHASE_TEXT）
+        onProgress: (phase) => {
+          this.phase = PHASE_TEXT[phase];
+          this.renderFoot();
+        },
       });
 
       if (!outcome.ok) {
@@ -736,42 +746,20 @@ export class ImportModal extends DialogModal {
       await this.plugin.refreshOpenViews();
       this.close();
 
-      // 换机后把云端旧记录接到本次字幕上（2026-10-09）：只在规划**过闸**时才问，
-      // 不过闸就什么都不做（记录留在历史里）。默认动作是「先不接」。
-      const association = result.association;
-      if (association?.ok) {
-        await new Promise<void>((resolve) => {
-          new AssociationModal(this.app, {
-            plan: association,
-            workTitle: title,
-            episodeLabel: episodeNumber ? `第 ${episodeNumber} 集` : "这一集",
-            onConfirm: async () => {
-              try {
-                await applyCrossDeviceRebind(this.plugin.db, association, result.episodeCid);
-                await this.plugin.refreshOpenViews();
-                new Notice(`已接回 ${association.stats.aligned} 条学习记录。`);
-                return true;
-              } catch {
-                new Notice("接回没成功，记录还在历史里，稍后可以再试。");
-                return false;
-              }
-            },
-            onSettled: resolve,
-          }).open();
-        });
-      }
-
+      // 进度/笔记全挂在句子哈希上（2026-10-14 身份模型重构）：同一个文件对
+      // 重新导入，旧进度自动接上，不再有「跨设备接回」这一步。
       // 导完不让人自己找入口：直接进这一集的学习界面
       try {
         await this.plugin.activateLeaf(VIEW_TYPE_STUDY, true);
         const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
-        const view = leaf?.view as { openEpisode?: (episodeCid: string) => Promise<void> };
-        if (view?.openEpisode) await view.openEpisode(result.episodeCid);
+        const view = leaf?.view as { openEpisode?: (recordCid: string) => Promise<void> };
+        if (view?.openEpisode) await view.openEpisode(result.recordCid);
       } catch {
         // 跳不过去不碍事：选集页里也能点「开始学」
       }
     } finally {
       this.busy = false;
+      this.phase = null;
       this.renderFoot();
     }
   }
@@ -787,6 +775,12 @@ const SUBTITLE_ACCEPT = ".ass,.ssa,.srt,.vtt,.lrc";
 const VIDEO_ACCEPT = "video/*,.mp4,.mkv,.m4v,.avi,.mov,.webm,.ts,.m2ts,.wmv,.flv";
 /** 日文一份、中文一份 —— 再多也没有第三种语言要学。 */
 const MAX_SUBTITLES = 2;
+
+/** importer 的慢阶段 → footer 的人话（「save」拷几个 GB 的视频一样要等）。 */
+const PHASE_TEXT: Record<ImportProgress, string> = {
+  hash: "正在计算文件指纹…（几 GB 的视频要等一会儿）",
+  save: "正在收进素材库…",
+};
 
 const ICON_VIDEO =
   '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M10 9.5l4.5 2.5L10 14.5z" fill="currentColor" stroke="none"/></svg>';

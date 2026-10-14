@@ -22,7 +22,7 @@
  *
  * 🔥 解析是**两次请求**（2026-10-07 用户拍板）：这一张卡显示的是**第一块**
  * （解读）；**第二块**（逐词释义）不在这儿渲染 —— 它们随解析结果落进
- * `SliceRow.analysis.tokens[].def/.aiReading/.origin`，改由**句子卡片上的词
+ * `StudySentence.analysis.tokens[].def/.aiReading/.origin`，改由**句子卡片上的词
  * 点击弹卡**展示：词表落地时句子卡变青蓝、词加虚线变可点。
  * 2026-10-08 起两块**并行发出**（解读流式 + 词表同时在路上），词表更早到。
  *
@@ -39,7 +39,7 @@ import {
   EXPLANATION_SECTIONS,
   type ExplanationSections,
   type SentenceAnalysis,
-  type SliceRow,
+  type StudySentence,
   type Token,
 } from "../../types/entities";
 import { explainTargets } from "../../services/jaTokenize";
@@ -51,7 +51,7 @@ import { createButton } from "../../ui/button";
 export interface AnalysisHandle {
   root: HTMLElement;
   /** 换句：清空上一句的解读，回到"未解析"状态 */
-  load(slice: SliceRow): void;
+  load(slice: StudySentence): void;
   /** 分词结果（本地）：**只留底账不渲染** —— 解析区点之前必须是空的 */
   showTokens(tokens: Token[], unavailableReason?: string): void;
   /**

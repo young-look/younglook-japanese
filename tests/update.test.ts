@@ -27,9 +27,9 @@ describe("fetchLatestRelease", () => {
     version: "0.2.0",
     notes: "修复登录稳定性",
     files: {
-      "main.js": { url: "/storage/plugin/0.2.0/main.js", sha256: "AA11" },
-      "manifest.json": { url: "/storage/plugin/0.2.0/manifest.json", sha256: "BB22" },
-      "styles.css": { url: "/storage/plugin/0.2.0/styles.css", sha256: "CC33" },
+      "main.js": { url: "/storage/assets/packages/0.2.0/main.js", sha256: "AA11" },
+      "manifest.json": { url: "/storage/assets/packages/0.2.0/manifest.json", sha256: "BB22" },
+      "styles.css": { url: "/storage/assets/packages/0.2.0/styles.css", sha256: "CC33" },
     },
   };
 
@@ -46,7 +46,7 @@ describe("fetchLatestRelease", () => {
     const outcome = await fetchLatestRelease("https://x.cc", async () =>
       new Response(JSON.stringify(okBody), { status: 200 }),
     );
-    expect(outcome?.files["main.js"].url).toBe("https://x.cc/storage/plugin/0.2.0/main.js");
+    expect(outcome?.files["main.js"].url).toBe("https://x.cc/storage/assets/packages/0.2.0/main.js");
   });
 
   it("缺任何一个文件条目都视为无效（更新必须是完整三件套）", async () => {

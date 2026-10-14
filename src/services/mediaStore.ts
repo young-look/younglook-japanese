@@ -23,13 +23,10 @@
 import { copyFile, mkdir, rmdir, rm, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { appDataDir } from "./appData";
-import { fileExists, probeFile } from "../storage/files";
+import { fileExists, sha256File } from "../storage/files";
 
 /** 素材库在应用数据目录下的子目录名。 */
 export const MEDIA_SUBDIR = "media";
-
-/** 演示素材（插件自带）在基准目录下的共享子目录名 —— 不按空间分。 */
-export const DEMO_MEDIA_SUBDIR = "_demo";
 
 /** 默认素材库位置。vault 外面，跟笔记彻底分开（见文件头）。 */
 export function defaultMediaDir(): string {
@@ -50,22 +47,17 @@ function mediaRoot(setting?: string): string {
  * 发生；删除也天然只覆盖本空间（见 `removeMediaFiles`）。这也顺手解决了"一方删素材
  * 穿透到另一方"的隐患。
  *
+ * 🔥 **演示素材也走这里，没有例外**（2026-10-14 用户拍板）：示例那一集与用户自己导入的
+ *    一视同仁，都落在本空间的素材库里 —— 所以不再有那个共享的 `_demo/` 子目录，删除/
+ *    盘点/「在不在库里」的判断都只需要这一个根。
+ *    ⚠️ 代价：演示包按空间各存一份（每个账号一份，不再共享）。项目未上线，接受。
+ *
  * ⚠️ 项目未上线，旧全局目录里的素材**不做迁移**：新模型下它们不在任何空间根内、
  *    既不能删也不影响新导入。
  */
 export function resolveMediaDir(setting: string | undefined, spaceId: string): string {
   const base = mediaRoot(setting);
   return spaceId ? join(base, spaceId) : base;
-}
-
-/**
- * **演示素材**的共享目录 —— 插件自带，不按空间分。
- *
- * 演示视频可能几十 MB，按空间各拷一份纯属浪费；它不算用户数据（存储盘点里也被
- * `demoEpisodeCidsOf` 排除），共享一份不违反"两账号隔离"。
- */
-export function resolveDemoMediaDir(setting?: string): string {
-  return join(mediaRoot(setting), DEMO_MEDIA_SUBDIR);
 }
 
 export interface IngestResult {
@@ -101,8 +93,11 @@ function isInside(path: string, dir: string): boolean {
 }
 
 /**
- * path 是否落在素材库根里面。给「删除」把关的公开口子：
- * 移除一集时，只有收进了素材库的副本可以删，用户自己原位置的那份永远不能碰。
+ * path 是否落在素材库根里面。给「删除」「算不算收进了库」把关的公开口子：
+ * 只有收进了素材库的副本算数/可以删，用户自己原位置的那份永远不碰。
+ *
+ * 演示素材与用户导入的一视同仁 —— 都在本机空间的素材库里（`<基准>/<空间 id>/…`），
+ * 所以这里只需要**一个根**（2026-10-14 用户拍板后不再有共享目录那类例外）。
  */
 export function insideMediaRoot(path: string, mediaDir: string): boolean {
   return isInside(resolve(path), resolve(mediaDir));
@@ -111,22 +106,28 @@ export function insideMediaRoot(path: string, mediaDir: string): boolean {
 /**
  * 挑一个不撞车的落点。
  *
- * 同名冲突时先看内容：指纹一样就是同一份文件（重导同一个视频），复用它、不复制第二份；
- * 指纹不一样才加序号区分 —— 同名不同内容的两个文件谁也不许覆盖谁。
+ * 同名冲突时先看内容：整文件 sha256 一样就是同一份文件（重导同一个视频），
+ * 复用它、不复制第二份；不一样才加序号区分 —— 同名不同内容的两个文件谁也不许覆盖谁。
+ * 大小不同必然不是同一份，先用 size 把绝大多数冲突筛掉，免得给几 GB 的文件白算一遍哈希。
  */
 async function pickTarget(
   dirPath: string,
   filename: string,
-  fingerprint: string | null,
+  sha256: string,
+  sizeBytes: number,
 ): Promise<{ target: string; reused: boolean }> {
   const ext = extname(filename);
   const stem = basename(filename, ext);
   for (let round = 1; round <= 50; round += 1) {
     const target = round === 1 ? join(dirPath, filename) : join(dirPath, `${stem} (${round})${ext}`);
     if (!(await fileExists(target))) return { target, reused: false };
-    if (fingerprint) {
-      const probe = await probeFile(target);
-      if (probe.fingerprint && probe.fingerprint === fingerprint) return { target, reused: true };
+    try {
+      const targetStat = await stat(target);
+      if (targetStat.size !== sizeBytes) continue;
+      const targetSha = (await sha256File(target)).sha256;
+      if (targetSha === sha256) return { target, reused: true };
+    } catch {
+      // 读不了就当不同内容处理，走加序号的分支
     }
   }
   // 一个目录里挤了 50 个同名文件属于极端情况，退回同名那一个（不让它退出去没得放）
@@ -153,8 +154,8 @@ export async function takeIntoMediaDir(params: {
   sourcePath: string;
   mediaDir: string;
   workTitle: string;
-  /** 导入时已经算好的采样指纹，用来判断"库里那份是不是同一个文件" */
-  fingerprint: string | null;
+  /** 导入时已经算好的整文件 sha256，用来判断"库里那份是不是同一个文件" */
+  sha256: string;
   sizeBytes: number;
 }): Promise<IngestResult> {
   const original = params.sourcePath;
@@ -176,7 +177,7 @@ export async function takeIntoMediaDir(params: {
     const dirPath = join(root, safeSegment(params.workTitle));
     await mkdir(dirPath, { recursive: true });
 
-    const { target, reused } = await pickTarget(dirPath, basename(original), params.fingerprint);
+    const { target, reused } = await pickTarget(dirPath, basename(original), params.sha256, params.sizeBytes);
     if (!reused) {
       await copyFile(original, target);
       // 拷完核一遍大小：断在半路的半成品比没有更糟，播放器会一直转圈

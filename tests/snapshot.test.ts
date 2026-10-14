@@ -12,7 +12,7 @@ import {
   type SnapshotRow,
 } from "../src/services/sync/snapshot";
 import type { PluginSettings } from "../src/settings/types";
-import type { AssetRow, ProgressRow, SliceRow } from "../src/types/entities";
+import type { AssetRow, ProgressRow, RecordLineRow, SentenceRow } from "../src/types/entities";
 
 const NOW = "2026-10-06T12:00:00.000Z";
 const NOW2 = "2026-10-06T13:00:00.000Z";
@@ -46,32 +46,34 @@ function settings(over: Partial<PluginSettings> = {}): PluginSettings {
 async function seed(): Promise<VaultDb> {
   const db = await VaultDb.open("snapshot-test");
   const base = { rev: 3, rowDigest: "d" };
-  await db.bulkPut(STORE.works, [{
-    ...base, cid: "work:a", title: "MyGO", titleJa: "", year: 2023, coverUrl: "https://a/c.jpg",
-    note: "", clientUpdatedAt: NOW, deletedAt: null,
-  }]);
-  await db.bulkPut(STORE.episodes, [{
-    ...base, cid: "ep:a1", workCid: "work:a", season: 1, number: "1", title: "",
+  await db.bulkPut(STORE.records, [{
+    ...base, cid: "r:a", videoSha256: "vsha", jaSubSha256: "jsha", zhSubSha256: null,
+    title: "MyGO", titleJa: "", romaji: "", year: 2023, coverUrl: "https://a/c.jpg",
+    note: "", season: 1, number: "1", episodeTitle: "", durationMs: null,
     clientUpdatedAt: NOW, deletedAt: null,
   }]);
   await db.bulkPut(STORE.assets, [{
-    ...base, cid: "asset:a1", workCid: "work:a", episodeCid: "ep:a1", kind: "video",
-    filename: "demo.mkv", sizeBytes: 1, durationMs: 1000, fingerprint: "fp1", fpVersion: 1,
+    ...base, cid: "asset:a1", kind: "video", sha256: "vsha",
+    filename: "demo.mkv", sizeBytes: 1, language: "ja", subtitleFormat: "",
     localPath: "/Users/you/secret/demo.mkv", offsetMs: 250, available: true,
     clientUpdatedAt: NOW, deletedAt: null,
   }]);
-  await db.bulkPut(STORE.slices, [{
-    ...base, cid: "S:1", episodeCid: "ep:a1", assetCid: "asset:a1", index: 0,
+  // 台词层（本机 only）：原文与时间轴；句子层（三句哈希）：解析与覆盖层
+  await db.bulkPut(STORE.lines, [{
+    recordCid: "r:a", index: 0, sentenceCid: "S:1",
     startMs: 0, endMs: 100, ja: "明日また", zh: "明天见", speaker: "",
-    textHash: "th1", parserVersion: 1, analysis: {
+  } as RecordLineRow]);
+  await db.bulkPut(STORE.sentences, [{
+    ...base, cid: "S:1", ja: "明日また", textHash: "th1",
+    analysis: {
       engine: "plugin-ai-v1", text: "明日また", romaji: "", tokens: [{ surface: "明日", lemma: "明日", reading: "あした", romaji: "ashita", aiReading: "あした", pos: "noun" }],
       grammar: null, missingDefinitions: [], definitionsComplete: true, done: true, translation: "明天见",
     },
     readingFixes: { "0": { surface: "明日", reading: "みょうにち" } },
     textFixes: { ja: "明日またね" },
     correctionsUpdatedAt: NOW2,
-    clientUpdatedAt: NOW, deletedAt: null,
-  }]);
+    clientUpdatedAt: NOW,
+  } as SentenceRow]);
   await db.bulkPut(STORE.progress, [{
     ...base, cid: "P:S:1", sliceCid: "S:1", copyAttempts: 1, copyDoneAt: NOW, copyEpoch: 0,
     readAloudAt: NOW, readAloudSeconds: 3, readEpoch: 0,
@@ -96,19 +98,18 @@ describe("buildSnapshotPayload（白名单之外全上云）", () => {
     expect(row?.data.rev).toBeUndefined();
     expect(row?.data.rowDigest).toBeUndefined();
     expect(row?.data.provenance).toEqual({
-      work_cid: "work:a", work_title: "MyGO", work_cover_url: "https://a/c.jpg",
+      record_cid: "r:a", record_title: "MyGO",
       episode_number: "1", slice_index: 0,
     });
     await db.close();
   });
 
-  it("assets 剔掉 localPath（本机路径永不上云），offsetMs/fingerprint 照传", async () => {
+  it("assets 剔掉 localPath（本机路径永不上云），offsetMs 照传", async () => {
     const db = await seed();
     const { collections } = await buildSnapshotPayload(db, settings());
     const row = collections.assets?.find((r) => r.cid === "asset:a1");
     expect(row?.data.localPath).toBeUndefined();
     expect(row?.data.offsetMs).toBe(250);
-    expect(row?.data.fingerprint).toBe("fp1");
     await db.close();
   });
 
@@ -175,12 +176,11 @@ describe("applySnapshotPull（LWW 合并 + 白名单覆盖）", () => {
 
   it("analysis 只补空：本地没解析过才收，text 用本地原句重建", async () => {
     const db = await seed();
-    // 新增一句没有 analysis 的切片
-    await db.put(STORE.slices, {
-      rev: 0, rowDigest: "", cid: "S:2", episodeCid: "ep:a1", assetCid: "asset:a1", index: 1,
-      startMs: 100, endMs: 200, ja: "こんにちは", zh: "你好", speaker: "", textHash: "th2",
-      parserVersion: 1, analysis: null, clientUpdatedAt: NOW, deletedAt: null,
-    } as SliceRow);
+    // 新增一句没有 analysis 的句子行
+    await db.put(STORE.sentences, {
+      rev: 0, rowDigest: "", cid: "S:2", ja: "こんにちは", textHash: "th2",
+      analysis: null, clientUpdatedAt: NOW,
+    } as SentenceRow);
     await applySnapshotPull(db, settings(), {
       analysis: [{
         cid: "S:2",
@@ -188,7 +188,7 @@ describe("applySnapshotPull（LWW 合并 + 白名单覆盖）", () => {
         client_updated_at: NOW,
       }],
     });
-    const row = await db.get<SliceRow>(STORE.slices, "S:2");
+    const row = await db.get<SentenceRow>(STORE.sentences, "S:2");
     expect(row?.analysis?.engine).toBe("plugin-ai-v1");
     expect(row?.analysis?.text).toBe("こんにちは");
 
@@ -196,7 +196,7 @@ describe("applySnapshotPull（LWW 合并 + 白名单覆盖）", () => {
     await applySnapshotPull(db, settings(), {
       analysis: [{ cid: "S:1", data: { engine: "plugin-ai-v1", text: "", romaji: "", tokens: [], grammar: null, missingDefinitions: [], definitionsComplete: false, done: false }, client_updated_at: NOW2 }],
     });
-    const keep = await db.get<SliceRow>(STORE.slices, "S:1");
+    const keep = await db.get<SentenceRow>(STORE.sentences, "S:1");
     expect(keep?.analysis?.done).toBe(true);
     await db.close();
   });
@@ -230,11 +230,10 @@ describe("applySnapshotPull（LWW 合并 + 白名单覆盖）", () => {
 
   it("corrections 拉回套回切片行（复用纠正合并器）", async () => {
     const db = await VaultDb.open("snapshot-pull-fixes");
-    await db.put(STORE.slices, {
-      rev: 0, rowDigest: "", cid: "S:5", episodeCid: "e", assetCid: "a", index: 0,
-      startMs: 0, endMs: 1, ja: "元の文", zh: "原句", speaker: "", textHash: "th5",
-      parserVersion: 1, analysis: null, clientUpdatedAt: NOW, deletedAt: null,
-    } as SliceRow);
+    await db.put(STORE.sentences, {
+      rev: 0, rowDigest: "", cid: "S:5", ja: "元の文", textHash: "th5",
+      analysis: null, clientUpdatedAt: NOW,
+    } as SentenceRow);
     const applied = await applySnapshotPull(db, settings(), {
       corrections: [{
         cid: "S:5",
@@ -243,7 +242,7 @@ describe("applySnapshotPull（LWW 合并 + 白名单覆盖）", () => {
       }],
     });
     expect(applied.applied).toBe(1);
-    const row = await db.get<SliceRow>(STORE.slices, "S:5");
+    const row = await db.get<SentenceRow>(STORE.sentences, "S:5");
     expect(row?.textFixes?.ja).toBe("直した文");
     await db.close();
   });
@@ -258,12 +257,13 @@ describe("上云白名单（不该同步的不上云）", () => {
     expect(row?.data.available).toBeUndefined();
     // 精确等于白名单 ∩ 源行里实际存在的字段：多一个键都算漏了
     expect(row?.data).toEqual({
-      cid: "asset:a1", episodeCid: "ep:a1", kind: "video", filename: "demo.mkv",
-      sizeBytes: 1, fingerprint: "fp1", fpVersion: 1, offsetMs: 250,
+      cid: "asset:a1", kind: "video", sha256: "vsha", filename: "demo.mkv",
+      sizeBytes: 1, language: "ja", subtitleFormat: "", offsetMs: 250,
       clientUpdatedAt: NOW, deletedAt: null,
     });
-    // 源行里还带着 workCid（未在白名单登记）→ 也不该上云
-    expect(row?.data.workCid).toBeUndefined();
+    // 源行里还带着 available / localPath（未在白名单登记）→ 也不该上云
+    expect(row?.data.available).toBeUndefined();
+    expect(row?.data.localPath).toBeUndefined();
     await db.close();
   });
 });
@@ -375,7 +375,7 @@ describe("每日校验（本地 vs 云端哈希清单）", () => {
     partial: Partial<Record<SnapshotCollection, SnapshotRow[]>>,
   ): Record<SnapshotCollection, SnapshotRow[]> {
     return {
-      progress: [], words: [], study_days: [], works: [], episodes: [], assets: [],
+      progress: [], words: [], study_days: [], records: [], assets: [],
       sessions: [], corrections: [], analysis: [], settings: [],
       ...partial,
     };

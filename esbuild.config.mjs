@@ -55,12 +55,12 @@ const context = await esbuild.context({
   // 不引入「旁边散一个内容哈希 png、发布/安装要跟着拷」的问题。
   // .svg 走 text：存储页那三枚去向图标要拿源码现插进 DOM（让 fill="currentColor"
   // 跟着主题走），dataurl 进去就只剩 `<img>` 一条路、颜色就锁死了。
-  // .mp4/.srt = 内置演示素材：dataurl/text 静态打进 main.js（见 services/demoAssets.ts）
-  // —— 社区商店/BRAT 只装 Release 三件套，plugin/demo/ 目录不跟过去，不打包
-  // 公开渠道用户就永远没有演示素材。词典 17MB 太大走按需下载，demo 1.1MB 值得进包。
+  // ⚠️ 演示素材（demo.mp4 / demo.srt）**不再内联**：几 MB 的视频变成 base64 会把
+  //    main.js 撑到近 6MB。它改走服务端按需下载（services/demoPack.ts +
+  //    scripts/demo-manifest.mjs），所以这里不再有 .mp4/.srt 的 loader。
   // ⚠️ 这一段与 scripts/release.mjs 必须逐项对齐 —— 发版脚本漏了哪个 loader，
   //    就会在 build 时才炸（2026-10-09 就是漏了 .png 静默停发）。
-  loader: { ".png": "dataurl", ".svg": "text", ".mp4": "dataurl", ".srt": "text" },
+  loader: { ".png": "dataurl", ".svg": "text" },
   external,
   format: "cjs",
   target: "es2020",

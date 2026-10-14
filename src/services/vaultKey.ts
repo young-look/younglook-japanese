@@ -22,8 +22,8 @@
 export interface VaultDbProbe {
   /** 库名去掉 `younglook-` 前缀之后的 id */
   key: string;
-  /** 台词条数 —— 判"这个库有没有东西"的主指标 */
-  slices: number;
+  /** 台词行数 —— 判"这个库有没有东西"的主指标 */
+  sentences: number;
   /** 学习进度条数 —— 条数相同时的次指标 */
   progress: number;
   /** 库自己记的 vault 绝对路径；老库没有这条，为 null */
@@ -63,7 +63,7 @@ export function pickLibrary(
 ): PickLibraryResult {
   const usable = probes.filter(
     (probe) =>
-      probe.slices > 0 &&
+      probe.sentences > 0 &&
       probe.key !== excludeKey &&
       (!probe.vaultPath || sameVaultPath(probe.vaultPath, vaultPath)),
   );
@@ -72,7 +72,7 @@ export function pickLibrary(
   // 有归属标记就用标记的那批（更可信）；一个标记都没有时，才退而用全部候选
   const tagged = usable.filter((probe) => probe.vaultPath);
   const pool = tagged.length > 0 ? tagged : usable;
-  const best = [...pool].sort((a, b) => b.slices - a.slices || b.progress - a.progress)[0];
+  const best = [...pool].sort((a, b) => b.sentences - a.sentences || b.progress - a.progress)[0];
   return { key: best.key, orphans: usable.length - 1 };
 }
 

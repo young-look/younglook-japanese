@@ -21,10 +21,10 @@ import { pickLibrary, sameVaultPath, type VaultDbProbe } from "./vaultKey";
  * 与其胡乱合并，不如留给以后的"按进度重算"（它是派生数据，不是原始记录）。
  */
 const MERGE_STORES: readonly StoreName[] = [
-  STORE.works,
-  STORE.episodes,
+  STORE.records,
   STORE.assets,
-  STORE.slices,
+  STORE.sentences,
+  STORE.lines,
   STORE.progress,
   STORE.sessions,
   STORE.words,
@@ -70,7 +70,7 @@ export async function recoverLocalLibrary(opts: {
   let slices = 0;
   try {
     for (const probe of opts.probes) {
-      if (probe.key === picked.key || probe.slices === 0) continue;
+      if (probe.key === picked.key || probe.sentences === 0) continue;
       // 归属标记写着别的 vault —— 绝不并（多库共用同一个 IndexedDB origin）
       if (probe.vaultPath && !sameVaultPath(probe.vaultPath, opts.vaultPath)) {
         skippedKeys.push(probe.key);
@@ -98,7 +98,7 @@ async function mergeLibrary(target: VaultDb, sourceKey: string): Promise<number>
       await target.transaction([store], "readwrite", async (tx) => {
         for (const row of rows) await tx.put(store, row);
       });
-      if (store === STORE.slices) sliceCount = rows.length;
+      if (store === STORE.sentences) sliceCount = rows.length;
     }
 
   } finally {

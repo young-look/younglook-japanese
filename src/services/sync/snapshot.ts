@@ -3,11 +3,11 @@
  *
  * ## 口径（一句话）
  *
- * **同步 = 整个 IndexedDB，剔除 4 个不上云的表**，外加 data.json 里的 5 个偏好键。
+ * **同步 = 整个 IndexedDB，剔除不上云的表**，外加 data.json 里的 5 个偏好键。
  *
- * 不上云的 4 张表（`LOCAL_ONLY_STORES`）：
- *   `slices` 台词原文（隐私红线；它的三个子集 corrections / analysis /
- *   provenance 照常上云）、`recordings` 录音、`aiUsage` 本地用量、
+ * 不上云的表（`LOCAL_ONLY_STORES`）：
+ *   `sentences`/`lines` 台词原文（隐私红线；句子的三个子集 corrections /
+ *   analysis / provenance 照常上云）、`recordings` 录音、`aiUsage` 本地用量、
  *   `meta` 本地管道数据。
  * 字段级剥离（表内还有不该走的东西）：`assets.localPath` 本机路径、
  * `assets.available` 本机可用性、`analysis.text` 台词原文、data.json 里的
@@ -34,14 +34,14 @@ import { STORE, type VaultDb } from "../../storage/db";
 import type { PluginSettings } from "../../settings/types";
 import type {
   AssetRow,
-  EpisodeRow,
   ProgressRow,
+  RecordLineRow,
+  RecordRow,
   SentenceAnalysis,
+  SentenceRow,
   SessionRow,
-  SliceRow,
   StudyDayRow,
   WordRow,
-  WorkRow,
 } from "../../types/entities";
 import { applyPulledCorrections } from "../sliceCorrection";
 
@@ -64,32 +64,31 @@ export type SnapshotCollection =
   | "progress"
   | "words"
   | "study_days"
-  | "works"
-  | "episodes"
+  | "records"
   | "assets"
   | "sessions"
   | "corrections"
   | "analysis"
   | "settings";
-// ⚠️ `notes` 集合已于 2026-10-09 退役：笔记改走 `/api/v1/notes/`（共享、
-// 按账号走），快照不再携带任何笔记 —— 服务端白名单同步删了这个名字。
+// ⚠️ `notes` 集合已于 2026-10-09 退役；`works`/`episodes` 集合于 2026-10-14
+// 身份模型重构退役，合并为 `records`（键 = 文件哈希对，服务端白名单同步改名）。
 
 export interface SnapshotPayload {
   collections: Partial<Record<SnapshotCollection, SnapshotRow[]>>;
 }
 
 /**
- * **不上云的本地表**（口径里唯一的清单，别往里加第五个）。
+ * **不上云的本地表**（口径里唯一的清单，别往里加第六个）。
  *
- * `slices` 是台词原文，隐私红线；它的三个子集（corrections / analysis /
- * progress 里的 provenance）照常上云 —— 所以它不是"完全不读"，
+ * `sentences`/`lines` 是台词原文（隐私红线）；句子的三个子集 corrections /
+ * analysis / progress 里的 provenance 照常上云 —— 所以它们不是"完全不读"，
  * 是不以整表形式上云。
- * `meta` 同理不是"完全不读"： corrections / analysis 从 slices 派生后照常上云，
+ * `meta` 同理不是"完全不读"： corrections / analysis 从句子行派生后照常上云，
  * 其余键（路径记录、版式标记等本机管道数据）留本地。
  * `myNotes`（未登录的本机笔记）不在快照集合清单里，效果等同 LOCAL_ONLY ——
  * 登录用户的笔记根本不落本地，未登录的没有身份不该上云。
  */
-export const LOCAL_ONLY_STORES = ["slices", "recordings", "aiUsage", "meta"] as const;
+export const LOCAL_ONLY_STORES = ["sentences", "lines", "recordings", "aiUsage", "meta"] as const;
 
 /** 客户端簿记字段：不参与「用户数据」本体，上云前剥掉（服务端拉回时补默认值）。 */
 const BOOKKEEPING = ["rev", "rowDigest"] as const;
@@ -108,9 +107,17 @@ const EPOCH_TS = new Date(0).toISOString();
  * 就是同步白名单，不许手抄第二份。
  */
 export const ASSET_KEYS = [
-  "cid", "kind", "episodeCid", "filename", "sizeBytes", "durationSeconds",
-  "language", "subtitleFormat", "subtitleGroup", "fingerprint", "fpVersion",
-  "offsetMs", "clientUpdatedAt", "deletedAt",
+  "cid", "kind", "sha256", "filename", "sizeBytes",
+  "language", "subtitleFormat", "offsetMs", "clientUpdatedAt", "deletedAt",
+] as const;
+
+/**
+ * 学习记录白名单（与服务端 `FIELD_WHITELIST['records']` 一致）。
+ * 展示字段只上 `title`（历史页出处用）；`note`/`noteName` 是本机簿记，不上云。
+ */
+export const RECORD_KEYS = [
+  "cid", "videoSha256", "jaSubSha256", "zhSubSha256",
+  "title", "season", "number", "durationMs", "clientUpdatedAt", "deletedAt",
 ] as const;
 
 /** 偏好同步白名单：设置里只有这些键会上云/被拉回覆盖。凭据与指向永远不在列。 */
@@ -200,43 +207,46 @@ function newestFirst(rows: RawRow[]): RawRow[] {
 /**
  * 读本地库，构造每个集合的**全量**行（按时间倒序）。
  *
- * progress 行完成三步时内嵌 `provenance`（snake_case，与老 stats 通道同字段名）——
- * 服务端等级投影靠它，换机后本地没有切片行时历史页也靠它显示出处。
+ * progress 行完成三步时内嵌 `provenance`（snake_case）——
+ * 服务端等级投影靠它，换机后本地没有句子行时历史页也靠它显示出处。
+ * 出处 join：progress → lines（本机哪条记录包含这句）→ records。
  */
 async function buildAllRows(
   db: VaultDb,
   settings: PluginSettings,
 ): Promise<Record<SnapshotCollection, RawRow[]>> {
-  const [progress, words, days, works, episodes, assets, sessions, slices, meta] =
+  const [progress, words, days, records, assets, sessions, sentences, lines, meta] =
     await Promise.all([
       db.getAll<ProgressRow>(STORE.progress),
       db.getAll<WordRow>(STORE.words),
       db.getAll<StudyDayRow>(STORE.studyDays),
-      db.getAll<WorkRow>(STORE.works),
-      db.getAll<EpisodeRow>(STORE.episodes),
+      db.getAll<RecordRow>(STORE.records),
       db.getAll<AssetRow>(STORE.assets),
       db.getAll<SessionRow>(STORE.sessions),
-      db.getAll<SliceRow>(STORE.slices),
+      db.getAll<SentenceRow>(STORE.sentences),
+      db.getAll<RecordLineRow>(STORE.lines),
       db.getAll<{ key: string; value: string }>(STORE.meta),
     ]);
 
-  const episodeById = new Map(episodes.map((row) => [row.cid, row]));
-  const workById = new Map(works.map((row) => [row.cid, row]));
+  const liveRecords = records.filter((row) => !row.deletedAt);
+  const linesBySentence = new Map<string, RecordLineRow>();
+  for (const line of lines) {
+    // 一句可以出现在多条记录里，出处取先遇到的那条（排序稳定即可）
+    if (!linesBySentence.has(line.sentenceCid)) linesBySentence.set(line.sentenceCid, line);
+  }
+  const recordById = new Map(liveRecords.map((row) => [row.cid, row]));
 
-  /** progress → episodes → works 的出处 join；断一环就不带（等级投影随之跳过）。 */
+  /** progress → lines → records 的出处 join；断一环就不带（等级投影随之跳过）。 */
   function provenance(row: ProgressRow): Plain | null {
-    const slice = slices.find((s) => s.cid === row.sliceCid);
-    if (!slice || slice.deletedAt) return null;
-    const episode = episodeById.get(slice.episodeCid);
-    if (!episode || episode.deletedAt) return null;
-    const work = workById.get(episode.workCid);
-    if (!work || work.deletedAt) return null;
+    const line = linesBySentence.get(row.sliceCid);
+    if (!line) return null;
+    const record = recordById.get(line.recordCid);
+    if (!record) return null;
     return {
-      work_cid: work.cid,
-      work_title: work.title || work.titleJa || "",
-      work_cover_url: work.coverUrl || "",
-      episode_number: episode.number,
-      slice_index: slice.index,
+      record_cid: record.cid,
+      record_title: record.title || record.titleJa || "",
+      episode_number: record.number,
+      slice_index: line.index,
     };
   }
 
@@ -249,8 +259,8 @@ async function buildAllRows(
     return { cid: row.cid, data, client_updated_at: row.clientUpdatedAt };
   });
 
-  const correctionsRows: RawRow[] = slices
-    .filter((row) => !row.deletedAt && row.correctionsUpdatedAt)
+  const correctionsRows: RawRow[] = sentences
+    .filter((row) => row.correctionsUpdatedAt)
     .map((row) => ({
       cid: row.cid,
       data: {
@@ -264,8 +274,8 @@ async function buildAllRows(
 
   // AI 解析结果：剔除整句 text（那等于把台词原文带上云）；token 词面在上，
   // 换机后不用重新解析、不再扣一次费（2026-10-06 拍板，覆盖「AI 读音不同步」旧口径）。
-  const analysisRows: RawRow[] = slices
-    .filter((row) => !row.deletedAt && row.analysis)
+  const analysisRows: RawRow[] = sentences
+    .filter((row) => row.analysis)
     .map((row) => ({
       cid: row.cid,
       data: stripKeys(row.analysis as unknown as Plain, ["text"]),
@@ -295,17 +305,10 @@ async function buildAllRows(
         client_updated_at: row.clientUpdatedAt,
       })),
     ),
-    works: newestFirst(
-      works.map((row) => ({
+    records: newestFirst(
+      records.map((row) => ({
         cid: row.cid,
-        data: stripKeys(row as unknown as Plain, BOOKKEEPING),
-        client_updated_at: row.clientUpdatedAt,
-      })),
-    ),
-    episodes: newestFirst(
-      episodes.map((row) => ({
-        cid: row.cid,
-        data: stripKeys(row as unknown as Plain, BOOKKEEPING),
+        data: pickKeys(row as unknown as Plain, RECORD_KEYS),
         client_updated_at: row.clientUpdatedAt,
       })),
     ),
@@ -503,11 +506,11 @@ export interface ApplySnapshotResult {
 }
 
 /**
- * 孤儿补丁的 `meta` 键前缀（2026-10-09 换机关联恢复配套）。
+ * 孤儿补丁的 `meta` 键前缀。
  *
- * 换机后本地没有切片时，云端的纠正/解析原本是**直接丢弃**的（指望素材重导后 cid
- * 相同、下一趟 pull 补上）。但用户重导的往往是**另一版字幕**（cid 不同），永远补不上
- * —— 于是把补丁暂存下来，等 `crossDeviceRebind` 把学习记录接到新切片时一起套上去。
+ * 换机后本地没有句子行时，云端的纠正/解析原本是**直接丢弃**的（指望素材重导后
+ * 句子哈希相同、下一趟 pull 补上）。但用户重导的往往是**另一版字幕**（哈希不同），
+ * 永远补不上 —— 于是把补丁暂存下来；同哈希重导时句子行回来，下一趟 pull 直接挂上。
  */
 export const ORPHAN_PATCH_PREFIX = "orphanPatch:";
 
@@ -562,11 +565,10 @@ export async function applySnapshotPull(
 ): Promise<ApplySnapshotResult> {
   let applied = 0;
 
-  // progress 保留 provenance：本地没有切片行时，历史页靠它显示出处（孤儿行兜底）
+  // progress 保留 provenance：本地没有句子行时，历史页靠它显示出处（孤儿行兜底）
   applied += await mergeCidRows(db, STORE.progress, collections.progress ?? []);
   applied += await mergeCidRows(db, STORE.words, collections.words ?? []);
-  applied += await mergeCidRows(db, STORE.works, collections.works ?? []);
-  applied += await mergeCidRows(db, STORE.episodes, collections.episodes ?? []);
+  applied += await mergeCidRows(db, STORE.records, collections.records ?? []);
   applied += await mergeCidRows(db, STORE.assets, collections.assets ?? []);
   applied += await mergeCidRows(db, STORE.sessions, collections.sessions ?? []);
 
@@ -607,11 +609,11 @@ export async function applySnapshotPull(
   );
 
   // AI 解析：只补空（本地没解析过才收）—— 本地重解析过的永远是最新事实。
-  // 本地没有该切片时同样暂存为孤儿补丁（换机重导另一版字幕后等接回）。
+  // 本地没有该句子行时同样暂存为孤儿补丁（换机重导另一版字幕后等接回）。
   for (const pulled of collections.analysis ?? []) {
     if (!sane(pulled)) continue;
-    const local = await db.get<SliceRow>(STORE.slices, pulled.cid);
-    if (!local || local.deletedAt) {
+    const local = await db.get<SentenceRow>(STORE.sentences, pulled.cid);
+    if (!local) {
       orphanPatches.push({
         sliceCid: pulled.cid,
         patch: { analysis: pulled.data, at: pulled.client_updated_at },
@@ -621,7 +623,7 @@ export async function applySnapshotPull(
     if (local.analysis) continue;
     const analysis = { ...pulled.data, text: local.ja } as unknown as SentenceAnalysis;
     if (!analysis.engine) continue;
-    await db.put(STORE.slices, { ...local, analysis });
+    await db.put(STORE.sentences, { ...local, analysis });
     applied += 1;
   }
 

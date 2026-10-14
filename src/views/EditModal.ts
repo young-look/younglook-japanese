@@ -2,10 +2,8 @@ import { Notice, type App } from "obsidian";
 import { normalizeEpisodeNumber } from "../core/ids";
 import { log } from "../core/logger";
 import { episodeLabel } from "../markdown/templates";
-import { findEditClash, saveEpisodeEdit } from "../services/episodeEdit";
-import type { EpisodeListItem } from "../services/study";
-import { STORE } from "../storage/db";
-import type { EpisodeRow } from "../types/entities";
+import { findEditClash, saveRecordEdit } from "../services/episodeEdit";
+import type { RecordListItem } from "../services/study";
 import type YoungLookPlugin from "../main";
 import { DialogModal } from "../ui/dialog";
 import { KIND_OPTIONS, type WorkKind } from "./ImportModal";
@@ -21,9 +19,9 @@ import { KIND_OPTIONS, type WorkKind } from "./ImportModal";
  *  · 切换作品类型只重铺下面那组 meta 行，不碰名字栏；
  *  · 校验（撞名要查库，是异步的）结果只更新底栏那行状态，不打断打字。
  *
- * 视频名称是作品级的：同一部作品的所有集共用（下面有一行小字说这件事）。
- * 保存走 services/episodeEdit 的 `saveEpisodeEdit` —— 落库之外它还负责把
- * 笔记文件跟着新名字搬过去。
+ * 视频名称是**每条记录自己的**展示字段（2026-10-14 身份模型重构后不再整部作品
+ * 共用）。保存走 services/episodeEdit 的 `saveRecordEdit` —— 改的全是展示字段，
+ * recordCid 不重派生，进度/笔记零影响。
  */
 export class EditModal extends DialogModal {
   private title = "";
@@ -43,29 +41,27 @@ export class EditModal extends DialogModal {
   private invalid = "";
 
   private footEl: HTMLElement | null = null;
-  private sharedHintEl: HTMLElement | null = null;
   private metaEl: HTMLElement | null = null;
   private segEl: HTMLElement | null = null;
 
   constructor(
     app: App,
     private readonly plugin: YoungLookPlugin,
-    private readonly entry: EpisodeListItem,
+    private readonly entry: RecordListItem,
     private readonly options: { onSaved?: () => void | Promise<void> } = {},
   ) {
     super(app);
-    const { work, episode } = entry;
-    this.title = work.title || work.titleJa || "";
-    this.year = work.year != null ? String(work.year) : "";
-    this.season = episode.season != null ? String(episode.season) : "";
-    this.number = episode.number;
-    this.episodeTitle = episode.title;
-    this.workKind = episode.number.trim() ? "series" : "single";
+    const record = entry.record;
+    this.title = record.title || record.titleJa || "";
+    this.year = record.year != null ? String(record.year) : "";
+    this.season = record.season != null ? String(record.season) : "";
+    this.number = record.number;
+    this.episodeTitle = record.episodeTitle;
+    this.workKind = record.number.trim() ? "series" : "single";
   }
 
   onOpen(): void {
     this.render();
-    void this.loadSharedHint();
     void this.checkClash();
   }
 
@@ -77,10 +73,10 @@ export class EditModal extends DialogModal {
 
   /** 与移除确认框、列表行同一套拼法 */
   private targetText(): string {
-    const { episode, work } = this.entry;
-    const label = episodeLabel(episode.season, episode.number);
-    const head = [work.title || work.titleJa, label].filter(Boolean).join(" · ");
-    return `${head}${episode.title ? ` ${episode.title}` : ""}`;
+    const record = this.entry.record;
+    const label = episodeLabel(record.season, record.number);
+    const head = [record.title || record.titleJa, label].filter(Boolean).join(" · ");
+    return `${head}${record.episodeTitle ? ` ${record.episodeTitle}` : ""}`;
   }
 
   private render(): void {
@@ -109,7 +105,7 @@ export class EditModal extends DialogModal {
       this.renderFoot();
     });
     const nameFoot = nameBox.createEl("div", { cls: "yl-name-foot" });
-    this.sharedHintEl = nameFoot.createEl("span", { cls: "yl-tag" });
+    nameFoot.createEl("span", { cls: "yl-tag" });
 
     this.renderKindField(body);
     this.metaEl = body.createEl("div", { cls: "yl-meta" });
@@ -205,21 +201,6 @@ export class EditModal extends DialogModal {
     });
   }
 
-  /**
-   * 名字栏下面的小字：作品名是整部作品共用的。
-   * 只有一集时不必解释，不显示。
-   */
-  private async loadSharedHint(): Promise<void> {
-    const siblings = (
-      await this.plugin.db.getAllByIndex<EpisodeRow>(STORE.episodes, "by_work", this.entry.work.cid)
-    ).filter((row) => !row.deletedAt);
-    if (!this.sharedHintEl) return;
-    if (siblings.length > 1) {
-      this.sharedHintEl.setText(`这个名字整部作品共用（共 ${siblings.length} 集）`);
-      this.sharedHintEl.addClass("is-on");
-    }
-  }
-
   private renderFoot(): void {
     const el = this.footEl;
     if (!el) return;
@@ -283,11 +264,11 @@ export class EditModal extends DialogModal {
     if (this.invalid) return false;
     if (this.missingMeta().length > 0) return false;
     return (
-      this.title.trim() !== (this.entry.work.title || this.entry.work.titleJa || "") ||
-      parseOptionalInt(this.year) !== this.entry.work.year ||
-      this.nextSeason() !== this.entry.episode.season ||
-      this.nextNumber() !== this.entry.episode.number ||
-      this.nextEpisodeTitle() !== this.entry.episode.title
+      this.title.trim() !== (this.entry.record.title || this.entry.record.titleJa || "") ||
+      parseOptionalInt(this.year) !== this.entry.record.year ||
+      this.nextSeason() !== this.entry.record.season ||
+      this.nextNumber() !== this.entry.record.number ||
+      this.nextEpisodeTitle() !== this.entry.record.episodeTitle
     );
   }
 
@@ -321,7 +302,7 @@ export class EditModal extends DialogModal {
     }
     const clash = await findEditClash(
       this.plugin.db,
-      { episodeCid: this.entry.episode.cid, workCid: this.entry.work.cid },
+      { recordCid: this.entry.record.cid },
       {
         workTitle: title,
         season: this.nextSeason(),
@@ -337,9 +318,9 @@ export class EditModal extends DialogModal {
     if (this.busy || !this.canSave()) return;
     this.busy = true;
     try {
-      const outcome = await saveEpisodeEdit(
+      const outcome = await saveRecordEdit(
         this.plugin.db,
-        { work: this.entry.work, episode: this.entry.episode },
+        this.entry.record,
         {
           workTitle: this.title.trim(),
           year: parseOptionalInt(this.year),

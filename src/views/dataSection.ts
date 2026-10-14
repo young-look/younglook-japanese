@@ -307,7 +307,7 @@ export class DataPane {
       id: "media",
       icon: "file-video",
       name: "视频、字幕与录音",
-      desc: "你导入的视频和字幕收在素材库里（放在 Obsidian 库外面），台词原文和跟读录音是字幕的衍生品也归在这儿；整类都不上云（自带的演示素材不算在内）",
+      desc: "你导入的视频和字幕收在素材库里（放在 Obsidian 库外面），台词原文和跟读录音是字幕的衍生品也归在这儿；整类都不上云",
       trait: "local",
       bytes: inv.media.bytes,
       count: `${inv.media.count} 个文件`,
@@ -384,7 +384,7 @@ export class DataPane {
 
       const section = host.createDiv({ cls: "yl-dt-group" });
       // 搜索时强制展开：合着的话用户看不见自己搜到的那一个
-      const isOpen = this.openGroups.has(group.workCid) || kw.length > 0;
+      const isOpen = this.openGroups.has(group.key) || kw.length > 0;
       section.classList.toggle("is-open", isOpen);
 
       const ghead = section.createDiv({ cls: "yl-dt-ghead" });
@@ -392,7 +392,7 @@ export class DataPane {
       ghead.createSpan({ cls: "yl-dt-gname", text: group.title });
       ghead.createSpan({
         cls: "yl-dt-gmeta",
-        text: `${group.episodes} 集 · ${group.files.length} 个文件 · ${humanSize(group.bytes)}`,
+        text: `${group.records} 条记录 · ${group.files.length} 个文件 · ${humanSize(group.bytes)}`,
       });
       ghead.createDiv({ cls: "yl-pc-grow" });
       if (group.attention > 0) {
@@ -421,8 +421,8 @@ export class DataPane {
         if ((ev.target as HTMLElement | null)?.closest("button")) return;
         const next = !section.classList.contains("is-open");
         section.classList.toggle("is-open", next);
-        if (next) this.openGroups.add(group.workCid);
-        else this.openGroups.delete(group.workCid);
+        if (next) this.openGroups.add(group.key);
+        else this.openGroups.delete(group.key);
       });
 
       const list = section.createDiv({ cls: "yl-dt-files" });
@@ -459,12 +459,12 @@ export class DataPane {
       this.plugin.app,
       this.plugin,
       {
-        workCid: group.workCid,
         title: group.title,
-        episodeCount: group.episodes,
-        fileCount: group.inLibraryCount,
+        recordCount: group.records,
+        inLibraryPaths: group.files.filter((f) => f.insideMedia).map((f) => f.localPath),
         bytes: group.inLibraryBytes,
         outsideCount: group.files.length - group.inLibraryCount,
+        recordCids: group.recordCids,
       },
       { onDone: () => void this.refresh() },
     ).open();
