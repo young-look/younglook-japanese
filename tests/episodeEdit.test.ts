@@ -204,4 +204,26 @@ describe("移除只软删记录行，学习进度一律不动（钉住既有口�
     expect(progress?.completedAt).toBe(NOW);
     expect((await db.get<RecordRow>(STORE.records, "r:1"))?.deletedAt).not.toBeNull();
   });
+
+  it("removeRecord 不碰 lines —— 历史页据此照常显示原句", async () => {
+    await seed(db, makeRecord("r:1", "MyGO", null, "1"));
+    await db.put(STORE.lines, {
+      recordCid: "r:1",
+      index: 0,
+      sentenceCid: "slice:1",
+      ja: "春日影を弾いた",
+      zh: "弹了春日影",
+      speaker: "",
+      startMs: 0,
+      endMs: 1000,
+    });
+
+    await removeRecord(db, "r:1");
+
+    // 历史页遍历的是**全部**记录（含软删的），靠的就是台词行还在 ——
+    // 谁要是让 removeRecord 顺手清了 lines，移除一集就会把历史一起抹掉
+    const lines = await db.getAll<{ recordCid: string }>(STORE.lines);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].recordCid).toBe("r:1");
+  });
 });

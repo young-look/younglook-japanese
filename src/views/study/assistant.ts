@@ -38,7 +38,14 @@
  */
 
 import { setIcon } from "obsidian";
-import { AiUnavailableError, askAboutSentenceStream, isNoBalanceError } from "../../services/ai/client";
+import {
+  AI_FIRST_OUTPUT_MS,
+  AiUnavailableError,
+  askAboutSentenceStream,
+  isNoBalanceError,
+  noOutputMessage,
+  watchFirstOutput,
+} from "../../services/ai/client";
 import type { AiGate } from "../../services/ai/gate";
 import type { PluginSettings } from "../../settings/types";
 import type { ChatTurn, StudySentence } from "../../types/entities";
@@ -387,6 +394,11 @@ export function buildAssistant(opts: {
     let streamed = "";
 
     askAbort = new AbortController();
+    // 首输出预算（2026-10-15）：从问出去算起，`AI_FIRST_OUTPUT_MS` 里一个字都没吐
+    //（思考块也算输出 —— 每片 delta 都会 `touch` 一次）就按上游没响应收场，
+    // 不让用户对着"让 AI 想想这一句…"无限等。看门狗有自己的 controller，
+    // 所以超时不会被 `askAbort.signal.aborted` 误判成"用户自己掐的"。
+    const watchdog = watchFirstOutput(askAbort.signal, AI_FIRST_OUTPUT_MS);
     try {
       const { answer, billing } = await askAboutSentenceStream(
         {
@@ -402,13 +414,14 @@ export function buildAssistant(opts: {
         currentSettings(),
         (text) => {
           streamed = text;
+          watchdog.touch();
           if (slice !== target) return; // 已经换句：照常收流（钱已花），界面不再动
           bubble.removeClass("yl-assistant-thinking");
           bubble.empty();
           renderMiniMarkdown(bubble, text);
           threadEl.scrollTop = threadEl.scrollHeight;
         },
-        askAbort.signal,
+        watchdog.signal,
       );
       pushTurnTo(target, targetHistory, {
         role: "assistant",
@@ -420,6 +433,13 @@ export function buildAssistant(opts: {
     } catch (error) {
       // 自己掐的（换句 / 关面板）：界面已经是新句子的了，什么都别再动
       if (askAbort?.signal.aborted || slice !== target) return;
+      // 首输出预算耗尽（看门狗掐断）时按轨道说事：内置模型 = 我们的上游挂了
+      //（见 noOutputMessage）；其余照原口径
+      const message = watchdog.timedOut()
+        ? noOutputMessage(currentSettings())
+        : error instanceof AiUnavailableError
+          ? error.message
+          : "";
       if (streamed) {
         // 已经吐出来一部分：留在对话里（那是模型的真实产出，抹掉等于白等），
         // 只如实说明没答完。不收账单（没走完不扣费是服务端的口径）。
@@ -429,7 +449,7 @@ export function buildAssistant(opts: {
         if (isNoBalanceError(error)) {
           opts.onNoBalance?.();
         } else {
-          showHint(error instanceof AiUnavailableError ? error.message : "这次没答完，可以再问一次。");
+          showHint(message || "这次没答完，可以再问一次。");
         }
       } else {
         // 一个字都没到：撤掉刚才那条问题（与旧行为一致），按失败提示
@@ -439,12 +459,12 @@ export function buildAssistant(opts: {
           // 没余额不再就地摆提示（2026-10-04 用户拍板）：统一弹「余额用完」窗
           opts.onNoBalance?.();
         } else {
-          const message = error instanceof AiUnavailableError ? error.message : "问失败了，稍后再试。";
           if (!(error instanceof AiUnavailableError)) log.warn("助手追问失败", error);
-          showHint(message);
+          showHint(message || "问失败了，稍后再试。");
         }
       }
     } finally {
+      watchdog.stop();
       askAbort = null;
       pending = false;
       refreshSend();

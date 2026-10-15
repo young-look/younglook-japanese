@@ -1,11 +1,5 @@
 import { ItemView, Notice, setIcon, TFile, type WorkspaceLeaf } from "obsidian";
 import type YoungLookPlugin from "../main";
-import {
-  confirmEmailChange,
-  requestEmailChange,
-  updateAvatar,
-  updateNickname,
-} from "../services/auth/authApi";
 import { chat } from "../services/ai/client";
 import { byokUiState } from "../services/ai/gate";
 import {
@@ -20,25 +14,32 @@ import { levelFromExp } from "../services/level";
 import { modelPlaceholder } from "../settings/providers";
 import { shareCardPayloadFrom } from "../services/shareCard";
 import { dayCounts, heatmapSeries, STREAK_GRACE, streakOf } from "../services/personalStats";
+import { effectiveJa, effectiveZh, loadStudySentences } from "../services/study";
 import {
-  effectiveJa,
-  effectiveZh,
-  loadRecordList,
-  loadStudySentences,
-  type RecordListItem,
-} from "../services/study";
-import {
+  collectVocabFromAnalyses,
   collectVocabFromSlices,
   type SliceLearnInfo,
   type VocabEntry,
 } from "../services/vocabLibrary";
+import { ORPHAN_PATCH_PREFIX, type OrphanPatch } from "../services/sync/snapshot";
 import { assetShaCid } from "../core/ids";
 import { blockAnchor } from "../markdown/templates";
 import { fileExists } from "../storage/files";
 import { STORE } from "../storage/db";
-import type { AssetRow, ProgressRow, RecordRow, StudySentence } from "../types/entities";
+import type {
+  AssetRow,
+  ProgressRow,
+  RecordRow,
+  SentenceAnalysis,
+  /** 句子表的一行。本文件已有历史页的 `SentenceRow`（渲染用的一行），撞名 → 别名 */
+  SentenceRow as SentenceDbRow,
+  StudySentence,
+} from "../types/entities";
 import { loadMyNotes, peekMyNotes } from "../services/notes/mine";
 import { ShareCardModal } from "./ShareCardModal";
+import { FeedbackModal } from "./FeedbackModal";
+import { ProfileEditCard } from "./ProfileEditCard";
+import { submitFeedback } from "../services/feedbackApi";
 import { log } from "../core/logger";
 import { createButton, setButtonIcon } from "../ui/button";
 import { signedYuanMilli as signedYuan, yuanMilli as yuan } from "../ui/money";
@@ -46,7 +47,7 @@ import { setViewTitle } from "../ui/viewTitle";
 import {
   ICON_FLAKE,
   ICON_FLAME,
-  ICON_SENT,
+  ICON_TOTAL,
   ICON_VOCAB,
   LEVEL_ICONS,
 } from "../ui/statIcons";
@@ -258,10 +259,6 @@ export class PersonalCenterView extends ItemView {
   private hoverTip: HTMLDivElement | null = null;
   /** 供应商下拉开着时"点外面 / 按 Esc 收起"的清理函数；视图关掉时兜底调一次 */
   private closeProviderMenu: (() => void) | null = null;
-  /** 「我的笔记」= 有 ≥1 条已完成句子的集数（一个视频一份笔记），见 loadV3Stats */
-  private notesCount = 0;
-  /** 已完成、但本地没有对应切片行的进度数（换机拉回后、素材重导前的孤儿）。0 = 没有孤儿 */
-  private orphanSentences = 0;
   private wallet: WalletPayload | null = null;
   /** 本机 AI 用量（IndexedDB `ai_usage`，倒序）。**自定义模型专用，一次也不上行** */
   private byokUsage: ByokUsageRow[] | null = null;
@@ -536,47 +533,95 @@ export class PersonalCenterView extends ItemView {
   /**
    * 学习页那四个小结里，凡是要读整库的数字都在这里一次算完（词库页共用结果）。
    *
-   * 循环与老版 `loadVocab()` 完全同源 —— 逐集取切片、挑出"已完成的句子"、抽词入库；
-   * 顺手累计 `notesCount`：一集只要有 ≥1 条已完成句子，就算 1 篇笔记（一个视频一份笔记）。
-   * 不做 vault 文件扫描：「我的笔记」是**学出来的**，本地库比文件系统更准。
-   */
-  /**
-   * 学习页那四个小结里，凡是要读整库的数字都在这里一次算完（词库页共用结果）。
+   * 循环与老版 `loadVocab()` 完全同源 —— 逐集取切片、挑出"已完成的句子"、抽词入库。
+   * 不做 vault 文件扫描：词库是**学出来的**，本地库比文件系统更准。
    *
-   * 循环与老版 `loadVocab()` 完全同源 —— 逐集取切片、挑出"已完成的句子"、抽词入库；
-   * 顺手累计 `notesCount`：一集只要有 ≥1 条已完成句子，就算 1 篇笔记（一个视频一份笔记）。
-   * 不做 vault 文件扫描：「我的笔记」是**学出来的**，本地库比文件系统更准。
+   * ⚠️ **总词汇量不认"本机有没有素材"**（2026-10-14 用户拍板）：本机没导入的素材里
+   * 学过的句子（孤儿句）**照样计入** —— AI 解析随同步回来了（本地句子行，或同步暂存的
+   * 孤儿补丁），出处用 progress 行内嵌的 provenance。少了这一步，词库会随"这台机器导
+   * 没导素材"忽大忽小；那是统计口径的错，不是用户数据变了。同理，总句子数与等级只按
+   * 进度行算，本来就与素材无关，三者因此始终自洽。
    */
   private async loadV3Stats(): Promise<void> {
     // 同一句的进度行可能不止一条（重学），完成时刻取最早那次；仿写跟着这条走
     const done = new Map<string, SliceLearnInfo>();
+    const doneRow = new Map<string, ProgressRow>();
     for (const row of this.progressRows) {
       if (!row.completedAt) continue;
       const prev = done.get(row.sliceCid);
       if (!prev || row.completedAt < prev.at) {
         done.set(row.sliceCid, { at: row.completedAt, imitation: (row.imitationText ?? "").trim() });
+        doneRow.set(row.sliceCid, row);
       }
     }
     const into = new Map<string, VocabEntry>();
-    let notes = 0;
-    const items = await loadRecordList(this.plugin.db);
+    // ⚠️ 遍历**全部**记录（含软删的）：移除一集只软删记录行，台词行还全在，
+    // 学过的词不该因为"首页那一条被移除了"就从词库消失
+    const records = await this.plugin.db.getAll<RecordRow>(STORE.records);
     const localSliceCids = new Set<string>();
-    for (const item of items) {
-      const slices = await loadStudySentences(this.plugin.db, item.record.cid);
+    for (const record of records) {
+      const slices = await loadStudySentences(this.plugin.db, record.cid);
       for (const s of slices) localSliceCids.add(s.cid);
-      if (slices.some((s) => done.has(s.cid))) notes += 1;
-      const label = recordLabelOf(item.record);
-      collectVocabFromSlices(slices, done, label, into);
+      collectVocabFromSlices(slices, done, recordLabelOf(record), into);
     }
-    // 换机拉回了进度、但素材还没重导：这些句子在本地没有切片行，
-    // 词面/笔记数暂时是 0。等级照常按进度行算（exp 不靠切片），但要让用户看见
-    // "还有 N 句没挂回来"，否则会以为数据丢了。
-    this.orphanSentences = [...done.keys()].filter((cid) => !localSliceCids.has(cid)).length;
+    await this.collectOrphanVocab(done, doneRow, localSliceCids, into);
     // 默认最近学习时间倒序（词库页可以切按学习次数，见 renderVocab）
     this.vocab = [...into.values()].sort(
       (a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt) || a.surface.localeCompare(b.surface, "ja"),
     );
-    this.notesCount = notes;
+  }
+
+  /**
+   * 孤儿句（本机没有切片行的完成句）的词并进词表 —— 让总词汇量与"本机导没导素材"无关。
+   *
+   * 解析结果两个来源，先本地后云端暂存：
+   *  ① `sentences` 行 —— 移除一集只软删**记录行**，句子行还留着，解析照读；
+   *  ② 同步暂存的孤儿补丁 —— 换机拉回时 `analysis` 集合下来的解析（snapshot.ts）。
+   * 出处标签与历史页孤儿行同一套写法：本机还有那条记录就用它的名字，没有就用
+   * progress 行内嵌的 provenance（云端带回来的作品名 / 集号）。
+   */
+  private async collectOrphanVocab(
+    done: ReadonlyMap<string, SliceLearnInfo>,
+    doneRow: ReadonlyMap<string, ProgressRow>,
+    localSliceCids: ReadonlySet<string>,
+    into: Map<string, VocabEntry>,
+  ): Promise<void> {
+    const orphanCids = [...done.keys()].filter((cid) => !localSliceCids.has(cid));
+    if (orphanCids.length === 0) return;
+    // 孤儿补丁一趟取回：meta 键以 orphanPatch: 开头，按前缀做一次范围查询，
+    // 不逐句 get（换机拉回来的孤儿可能成百上千）
+    const patches = await this.plugin.db.getAll<{ key: string; value: OrphanPatch }>(
+      STORE.meta,
+      IDBKeyRange.bound(ORPHAN_PATCH_PREFIX, `${ORPHAN_PATCH_PREFIX}\uFFFF`),
+    );
+    const patchByCid = new Map(
+      patches.map((row) => [row.key.slice(ORPHAN_PATCH_PREFIX.length), row.value] as const),
+    );
+    const records = await this.plugin.db.getAll<RecordRow>(STORE.records);
+    const liveByCid = new Map(records.filter((r) => !r.deletedAt).map((r) => [r.cid, r] as const));
+    const analyses = new Map<string, SentenceAnalysis>();
+    const labels = new Map<string, string>();
+    for (const sliceCid of orphanCids) {
+      const row = doneRow.get(sliceCid);
+      if (!row) continue;
+      const local = await this.plugin.db.get<SentenceDbRow>(STORE.sentences, sliceCid);
+      const analysis =
+        local?.analysis ??
+        (patchByCid.get(sliceCid)?.analysis as unknown as SentenceAnalysis | undefined) ??
+        null;
+      if (!analysis?.tokens?.length) continue;
+      const prov = (row as unknown as { provenance?: SyncProvenance }).provenance;
+      const record = prov?.record_cid ? liveByCid.get(prov.record_cid) : undefined;
+      const number = typeof prov?.episode_number === "number" ? prov.episode_number : 0;
+      analyses.set(sliceCid, analysis);
+      labels.set(
+        sliceCid,
+        record
+          ? recordLabelOf(record)
+          : `${(prov?.record_title || "已学过的句子").trim()}${number ? ` E${number}` : ""}`,
+      );
+    }
+    collectVocabFromAnalyses(analyses, done, (cid) => labels.get(cid) ?? "已学过的句子", into);
   }
 
   // ── 资料（我的主页，V3 版式）─────────────────────────────────────────
@@ -644,13 +689,36 @@ export class PersonalCenterView extends ItemView {
     });
 
     // 编辑面板：身份头正下方就地展开（2026-10-04。原来追加在页面最底部，
-    // 点了按钮视觉上毫无反馈）。里面沿用「显示值 + 修改」两行 —— 换邮箱要过
-    // 新邮箱的验证码，是多步流程，套不进常驻输入框 + 一个「保存」键的表单。
-    // 未登录的「连接账号」不走这块面板（2026-10-05 改成弹窗，见下）。
+    // 点了按钮视觉上毫无反馈）。未登录的「连接账号」不走这块面板
+    // （2026-10-05 改成弹窗，见下）。
+    //
+    // 2026-10-15：三行（头像 / 昵称 / 邮箱）的编辑状态由 `ProfileEditCard` 统一托管 ——
+    // 以前它们各自带着自己的保存键、改完任一项都会整页重绘（看着像"改完卡片自己跑了"），
+    // 现在卡片右下角只有一对「取消 / 保存」，而关闭这张卡只有三个入口。
     const editWrap = hero.createDiv({ cls: "yl-v3-editwrap" });
     const editCard = editWrap.createDiv({ cls: "yl-v3-editclip" }).createDiv({ cls: "yl-pc-card" });
-    let editBuilt = false;
+    let card: ProfileEditCard | null = null;
     let editOpen = false;
+    /** 收 / 放折叠壳 + 跟着换按钮图标（这两件事必须一起做，缺一就是形状对不上） */
+    const setCardOpen = (open: boolean): void => {
+      editOpen = open;
+      editWrap.toggleClass("on", open);
+      setButtonIcon(editBtn, open ? "chevron-up" : "pencil");
+      // setIcon 替换图标时可能追加到文字后面，补一次 prepend 保住「图标在字前」
+      const glyph = editBtn.querySelector("svg");
+      if (glyph) editBtn.prepend(glyph);
+    };
+    /** 关掉这张卡：丢草稿 → 收起。`rerender` = 保存成功后要整页重绘带出新状态。 */
+    const closeCard = (rerender: boolean): void => {
+      if (card) {
+        card.dispose();
+        card = null;
+      } else {
+        editCard.empty();
+      }
+      setCardOpen(false);
+      if (rerender) this.renderProfile();
+    };
     editBtn.addEventListener("click", () => {
       if (!this.isLoggedIn()) {
         // 两边同时开（用户拍板）：网页（登录 / 注册 + 授权码）开新标签页，
@@ -661,18 +729,22 @@ export class PersonalCenterView extends ItemView {
         }).open();
         return;
       }
-      editOpen = !editOpen;
-      if (editOpen && !editBuilt) {
-        editBuilt = true;
-        this.buildAvatarRow(editCard);
-        this.buildNickRow(editCard, profile?.nickname || "—");
-        this.buildEmailRow(editCard, profile?.email || "—");
+      if (editOpen) {
+        // 展开状态下这个钮已经变成向上的箭头 —— 它就是三个关闭入口之一，
+        // 语义等同于「取消」（丢草稿）。
+        closeCard(false);
+        return;
       }
-      editWrap.toggleClass("on", editOpen);
-      setButtonIcon(editBtn, editOpen ? "chevron-up" : "pencil");
-      // setIcon 替换图标时可能追加到文字后面，补一次 prepend 保住「图标在字前」
-      const glyph = editBtn.querySelector("svg");
-      if (glyph) editBtn.prepend(glyph);
+      // 每次展开都是一张新卡：草稿不跨开关保留（保留的话上一次没保存的改动
+      // 会阴魂不散地出现在几天后的某次编辑里）。
+      editCard.empty();
+      card = new ProfileEditCard(editCard, {
+        plugin: this.plugin,
+        heroAvatar: avatar,
+        close: (rerender: boolean) => closeCard(rerender),
+      });
+      card.render();
+      setCardOpen(true);
     });
 
     // ② 四个小结：2026-10-04 用户叉掉不要了 —— 核心指标改由「你的学习」节的
@@ -709,21 +781,50 @@ export class PersonalCenterView extends ItemView {
 
     // ⑤ 底部说明
     const foot = stack.createDiv({ cls: "yl-v3-foot" });
-    foot.createDiv({ text: "不登录也能用全部本地功能；登录只是为了云同步和内置模型。" });
-    foot.createDiv({ text: "你的笔记、词库始终存在自己的 Obsidian 库里。" });
+    foot.createDiv({ text: "不登录也能用大部分本地功能；登录则可以支持云同步和内置模型。" });
+    foot.createDiv({ text: "你的视频和字幕文件始终在本地。" });
 
-    // ⑥ 退出登录：页底单独一行（原来混在编辑表单里 —— 账号级动作不和资料字段装一起）
+    // ⑥ 退出登录 + 问题反馈：页底单独一行（原来混在编辑表单里 —— 账号级动作
+    //    不和资料字段装一起）。两颗都是**登录才有的动作**，所以一起出现、一起消失。
     if (this.isLoggedIn()) {
       const logoutRow = stack.createDiv({ cls: "yl-v3-logout-row" });
+      // 「问题反馈」在左、「退出登录」在右 —— 反馈是"我还想继续用、只是想说点什么"，
+      // 退出是"不玩了"，顺序照这个轻重排，别把退出口放在顺手的第一个位置。
+      const feedback = createButton(logoutRow, { shape: "text", text: "问题反馈" });
+      feedback.addEventListener("click", () => this.openFeedback());
       const logout = createButton(logoutRow, { shape: "text", text: "退出登录" });
       logout.addEventListener("click", () => void this.plugin.logoutAccount());
     }
   }
 
   /**
+   * 开反馈弹窗。
+   *
+   * 提交这一步要**现拿令牌**（`ensureAccessToken`）而不是直接用 settings 里那个：
+   * access token 会过期，拿着过期的去撞 401，用户写完的一大段就没了 ——
+   * 换令牌是 `main.ts` 的事，这里只负责拿不到时给人话。
+   */
+  private openFeedback(): void {
+    const version = this.plugin.manifest.version;
+    new FeedbackModal(this.app, {
+      clientVersion: version,
+      onSubmit: async (payload) => {
+        const token = await this.plugin.ensureAccessToken();
+        if (!token) throw new Error("登录状态失效了，重新连接账号后再提交。");
+        await submitFeedback(this.plugin.settings, token, {
+          kind: payload.kind,
+          content: payload.content,
+          files: payload.files,
+          clientVersion: version,
+        });
+      },
+    }).open();
+  }
+
+  /**
    * 「你的学习」：四张核心指标卡 + 热力图（2026-10-04 用户拍板 v2 渐变徽章版，
-   * 设计稿 temp/demo/space_cards/v2.html）。顺序固定：连续学习 → 等级 → 总句子数
-   * → 总词汇量；旧的「等级 + 连续」两张并排卡由这四张顶替。
+   * 设计稿 temp/demo/space_cards/v2.html）。顺序固定：连续学习 → 累计学习
+   * → 等级 → 总词汇量；旧的「等级 + 连续」两张并排卡由这四张顶替。
    *
    * 数据全是 loadCore / loadV3Stats 备好的本机读数，没有新的加载路径。
    */
@@ -763,7 +864,16 @@ export class PersonalCenterView extends ItemView {
               : "学完一句，点亮火焰",
     });
 
-    // ② 等级：徽章外套一圈升级进度环（progress 0~1 → 圆弧）
+    // ② 累计学习：有学习记录的天数（与热力图同口径），2026-10-15 由「总句子数」改名换数并移到「连续学习」右侧
+    const daysCard = grid.createDiv({ cls: "yl-pc-stat" });
+    daysCard.createDiv({ cls: "yl-pc-tile t-sent" }).innerHTML = ICON_TOTAL;
+    daysCard.createDiv({ cls: "yl-pc-stat-label", text: "累计学习" });
+    const daysNum = daysCard.createDiv({ cls: "yl-pc-stat-num yl-pc-num" });
+    daysNum.createSpan({ text: activeDays.toLocaleString() });
+    daysNum.createSpan({ cls: "yl-pc-stat-unit", text: "天" });
+    daysCard.createDiv({ cls: "yl-pc-stat-cap", text: "累计天数在涨，学习进步不止" });
+
+    // ③ 等级：徽章外套一圈升级进度环（progress 0~1 → 圆弧）
     const lvCard = grid.createDiv({ cls: "yl-pc-stat" });
     const RING_R = 37;
     const ringC = 2 * Math.PI * RING_R;
@@ -785,15 +895,6 @@ export class PersonalCenterView extends ItemView {
       text: level.nextName ? `距「${level.nextName}」还差 ${level.toNext} 句` : "已到最高等级「新大陆」",
     });
 
-    // ③ 总句子数：完成三步即计一句（与等级经验同口径）
-    const sentCard = grid.createDiv({ cls: "yl-pc-stat" });
-    sentCard.createDiv({ cls: "yl-pc-tile t-sent" }).innerHTML = ICON_SENT;
-    sentCard.createDiv({ cls: "yl-pc-stat-label", text: "总句子数" });
-    const sentNum = sentCard.createDiv({ cls: "yl-pc-stat-num yl-pc-num" });
-    sentNum.createSpan({ text: exp.toLocaleString() });
-    sentNum.createSpan({ cls: "yl-pc-stat-unit", text: "句" });
-    sentCard.createDiv({ cls: "yl-pc-stat-cap", text: "完成三步即计一句" });
-
     // ④ 总词汇量：学过的句子里出现过的所有单词（词库整库去重总数）
     const vocabCard = grid.createDiv({ cls: "yl-pc-stat" });
     vocabCard.createDiv({ cls: "yl-pc-tile t-voc" }).innerHTML = ICON_VOCAB;
@@ -803,162 +904,7 @@ export class PersonalCenterView extends ItemView {
     vocabNum.createSpan({ cls: "yl-pc-stat-unit", text: "词" });
     vocabCard.createDiv({ cls: "yl-pc-stat-cap", text: "学过句中的所有单词" });
 
-    if (this.orphanSentences > 0) {
-      stack.createDiv({
-        cls: "yl-pc-sub",
-        text: `还有 ${this.orphanSentences} 句已学过，词面和笔记会在重新导入对应素材后自动挂回（换一版字幕也行）。`,
-      });
-    }
-
     this.buildHeatmap(stack, activeDays, exp);
-  }
-
-  /**
-   * 头像一行：当前头像小圆预览 + 「更换头像」—— 点了弹系统选图框，选完即传。
-   * 不走「点修改展开输入框」那套（头像没有可输入的值），选图就是全部操作。
-   * 上传成功后服务端返回新地址，直接写回快照再整页重渲染（身份头跟着换新头像）。
-   */
-  private buildAvatarRow(parent: HTMLElement): void {
-    const row = parent.createDiv({ cls: "yl-pc-wrow" });
-    row.createDiv({ cls: "yl-pc-wlabel", text: "头像" });
-    const body = row.createDiv({ cls: "yl-pc-wvalue" });
-    const preview = body.createDiv({ cls: "yl-v3-avatar yl-v3-avatar-sm" });
-    preview.createSpan({
-      text: (this.plugin.settings.accountProfile?.nickname || "洋").slice(0, 1),
-    });
-    const avatarUrl = this.plugin.accountAvatarUrl();
-    if (avatarUrl) {
-      const img = preview.createEl("img", { attr: { src: avatarUrl, alt: "" } });
-      img.addEventListener("error", () => img.remove());
-    }
-    body.createDiv({
-      cls: "yl-pc-faint yl-pc-xs",
-      text: "JPG / PNG / WEBP · 5MB 内 · 居中裁方",
-    });
-    const pick = createButton(row, { text: "更换头像" });
-    const file = row.createEl("input", { attr: { type: "file", accept: "image/*" } });
-    file.hide();
-    pick.addEventListener("click", () => file.click());
-    file.addEventListener("change", async () => {
-      const chosen = file.files?.[0];
-      if (!chosen) return;
-      pick.disabled = true;
-      pick.setText("上传中…");
-      try {
-        const path = await updateAvatar(this.plugin.settings, chosen);
-        if (this.plugin.settings.accountProfile) {
-          this.plugin.settings.accountProfile.avatarUrl = path;
-          await this.plugin.saveSettings();
-        }
-        new Notice("头像已更新");
-        this.renderProfile();
-      } catch (error) {
-        new Notice(error instanceof Error ? error.message : "头像没换成");
-        pick.disabled = false;
-        pick.setText("更换头像");
-      }
-    });
-  }
-
-  /** 昵称一行：平时只显示值，点「修改」就地展开输入框 + 保存 / 取消。 */
-  private buildNickRow(parent: HTMLElement, value: string): void {
-    const row = parent.createDiv({ cls: "yl-pc-wrow" });
-    row.createDiv({ cls: "yl-pc-wlabel", text: "昵称" });
-    const body = row.createDiv({ cls: "yl-pc-wvalue" });
-    body.createDiv({ text: value });
-    const edit = createButton(row, { text: "修改" });
-
-    edit.addEventListener("click", () => {
-      row.empty();
-      row.addClass("is-editing");
-      row.createDiv({ cls: "yl-pc-wlabel", text: "昵称" });
-      const input = row.createEl("input", {
-        cls: "yl-pc-input",
-        attr: { type: "text", value, maxlength: "20" },
-      });
-      const save = createButton(row, { role: "primary", text: "保存" });
-      const cancel = createButton(row, { text: "取消" });
-      save.addEventListener("click", async () => {
-        save.disabled = true;
-        try {
-          await updateNickname(this.plugin.settings, input.value);
-          if (this.plugin.settings.accountProfile) {
-            this.plugin.settings.accountProfile.nickname = input.value.trim();
-            await this.plugin.saveSettings();
-          }
-          new Notice("昵称已更新");
-          this.renderProfile();
-        } catch (error) {
-          new Notice(error instanceof Error ? error.message : "昵称没改成");
-          save.disabled = false;
-        }
-      });
-      cancel.addEventListener("click", () => this.renderProfile());
-      window.setTimeout(() => input.focus(), 0);
-    });
-  }
-
-  /**
-   * 邮箱一行：换邮箱要过**新邮箱**的验证码 —— 不然手滑打错一个字母，下次就登录不上，
-   * 连找回密码邮件都发不到自己手里。所以是两步：发送验证码 → 填码确认。
-   */
-  private buildEmailRow(parent: HTMLElement, value: string): void {
-    const row = parent.createDiv({ cls: "yl-pc-wrow" });
-    row.createDiv({ cls: "yl-pc-wlabel", text: "邮箱" });
-    const body = row.createDiv({ cls: "yl-pc-wvalue" });
-    body.createDiv({ text: value });
-    body.createDiv({ cls: "yl-pc-faint yl-pc-xs", text: "登录用 · 改邮箱要过新邮箱的验证码" });
-    const edit = createButton(row, { text: "修改" });
-
-    edit.addEventListener("click", () => {
-      row.empty();
-      row.addClass("is-editing");
-      row.createDiv({ cls: "yl-pc-wlabel", text: "邮箱" });
-      const input = row.createEl("input", {
-        cls: "yl-pc-input",
-        attr: { type: "email", placeholder: "新邮箱", value: value === "—" ? "" : value },
-      });
-      const send = createButton(row, { text: "发送验证码" });
-      const code = row.createEl("input", {
-        cls: "yl-pc-input",
-        attr: { type: "text", placeholder: "6 位验证码", maxlength: "6" },
-      });
-      code.hide();
-      send.addEventListener("click", async () => {
-        const next = input.value.trim();
-        send.disabled = true;
-        send.setText("发送中…");
-        try {
-          await requestEmailChange(this.plugin.settings, next);
-          new Notice("验证码已发送到新邮箱（10 分钟内有效）");
-          input.disabled = true;
-          send.setText("已发送");
-          code.show();
-          const confirm = createButton(row, { role: "primary", text: "确认修改" });
-          confirm.addEventListener("click", async () => {
-            confirm.disabled = true;
-            try {
-              const email = await confirmEmailChange(this.plugin.settings, next, code.value);
-              if (this.plugin.settings.accountProfile) {
-                this.plugin.settings.accountProfile.email = email;
-                await this.plugin.saveSettings();
-              }
-              new Notice("邮箱已更新");
-              this.renderProfile();
-            } catch (error) {
-              new Notice(error instanceof Error ? error.message : "邮箱没改成");
-              confirm.disabled = false;
-            }
-          });
-          window.setTimeout(() => code.focus(), 0);
-        } catch (error) {
-          new Notice(error instanceof Error ? error.message : "验证码没发出去");
-          send.disabled = false;
-          send.setText("发送验证码");
-        }
-      });
-      window.setTimeout(() => input.focus(), 0);
-    });
   }
 
   // ── 设置（原「钱包」页签）：双轨（自定义模型 / 内置模型）+ 消费记录 ─────
@@ -1726,10 +1672,15 @@ export class PersonalCenterView extends ItemView {
   /**
    * 整理历史：进度行的完成时刻对上现行切片，按集分组。
    *
+   * ⚠️ **历史是用户的数据资产，不认"素材在不在"**（2026-10-14 用户拍板，
+   * 见 docs/rules/principle.md）：分组遍历的是**全部**记录（含软删的），
+   * 因为移除一集只软删记录行、台词行（`lines`）一条没删 —— 那一集学过的句子
+   * 照常以**真原句**出现，不因为首页那一条被移除就从历史里消失。
+   *
    * 切片是内容派生 cid：同一份字幕重导 cid 不变，进度照常对得上；字幕真换了
    * 内容，旧完成记录对不上现行切片，那一句就不出现（那一集重学即可，不值得
    * 为它留一条跳不过去的死账）—— 这是对**本机有切片行**的句子。
-   * 换机拉回来的完成记录（孤儿，本地没有切片行）恰恰是历史页要保住的：
+   * 换机拉回来的完成记录（孤儿，本机连台词行都没有）同样要保住：
    * 见 mergeOrphanRows。
    */
   private async loadSentences(): Promise<void> {
@@ -1751,10 +1702,12 @@ export class PersonalCenterView extends ItemView {
     // 笔记一趟整库取回（一句一行、键 = sliceCid；空 text 是删除墓碑）：
     // 历史页几十行逐句 get 太碎，一次 getAll 建好映射
     const noteTexts = await this.loadNoteTexts();
-    const items = await loadRecordList(this.plugin.db);
-    for (const item of items) {
+    // ⚠️ 遍历**全部**记录（含软删的）：见 loadSentences 头注释的口径
+    const records = await this.plugin.db.getAll<RecordRow>(STORE.records);
+    const placed = new Set<string>();
+    for (const record of records) {
       const rows: SentenceRow[] = [];
-      for (const slice of await loadStudySentences(this.plugin.db, item.record.cid)) {
+      for (const slice of await loadStudySentences(this.plugin.db, record.cid)) {
         const at = doneAt.get(slice.cid);
         if (!at) continue;
         rows.push({
@@ -1762,17 +1715,18 @@ export class PersonalCenterView extends ItemView {
           completedAt: at,
           note: noteTexts.get(slice.cid.slice(2)) ?? "",
         });
+        placed.add(slice.cid);
       }
       if (rows.length === 0) continue;
       // 视频在不在拿现行文件实测：AssetRow.available 是上次核对时的旧账，
       // 外接盘拔了它还说是 —— 灰不灰得以文件说话
       const video = await this.plugin.db.get<AssetRow>(
         STORE.assets,
-        assetShaCid(item.record.videoSha256),
+        assetShaCid(record.videoSha256),
       );
       const group: SentenceGroup = {
-        recordCid: item.record.cid,
-        label: recordLabelOf(item.record),
+        recordCid: record.cid,
+        label: recordLabelOf(record),
         videoOk: video ? await fileExists(video.localPath) : false,
         rows,
         lastAt: rows.reduce((max, r) => (r.completedAt > max ? r.completedAt : max), rows[0].completedAt),
@@ -1780,7 +1734,7 @@ export class PersonalCenterView extends ItemView {
       groups.push(group);
       groupByEpisode.set(group.recordCid, group);
     }
-    await this.mergeOrphanRows(doneAt, doneRow, noteTexts, items, groups, groupByEpisode);
+    await this.mergeOrphanRows(doneAt, doneRow, noteTexts, records, placed, groups, groupByEpisode);
     groups.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
     for (const group of groups) group.rows.sort((a, b) => this.rowIndexOf(a) - this.rowIndexOf(b));
     this.sentenceGroups = groups;
@@ -1790,25 +1744,21 @@ export class PersonalCenterView extends ItemView {
     doneAt: Map<string, string>,
     doneRow: Map<string, ProgressRow>,
     noteTexts: Map<string, string>,
-    items: RecordListItem[],
+    records: RecordRow[],
+    placed: ReadonlySet<string>,
     groups: SentenceGroup[],
     groupByRecord: Map<string, SentenceGroup>,
   ): Promise<void> {
-    // "本机没有这条记录"分两种：从来没导过（可合成展示）、导过又删了（不复活）
-    const allRecords = await this.plugin.db.getAll<RecordRow>(STORE.records);
-    const deletedRecordCids = new Set(allRecords.filter((r) => r.deletedAt).map((r) => r.cid));
-    const liveRecordByCid = new Map(
-      allRecords.filter((r) => !r.deletedAt).map((r) => [r.cid, r] as const),
-    );
-    const itemByRecordCid = new Map(items.map((i) => [i.record.cid, i] as const));
+    const recordByCid = new Map(records.map((r) => [r.cid, r] as const));
 
     for (const [sliceCid, at] of doneAt) {
       const row = doneRow.get(sliceCid);
       if (!row) continue;
+      // 本机已经有真切片行的句子不再造孤儿行 —— 否则换机后重导素材，
+      // 同一句会既出现在真组里、又多出一条灰色的顶替行
+      if (placed.has(sliceCid)) continue;
       const prov = (row as unknown as { provenance?: SyncProvenance }).provenance;
       if (!prov || typeof prov.record_cid !== "string") continue;
-      const recordCid = prov.record_cid;
-      if (deletedRecordCids.has(recordCid)) continue;
 
       const orphan: OrphanInfo = {
         cid: sliceCid,
@@ -1827,17 +1777,17 @@ export class PersonalCenterView extends ItemView {
         orphan,
       };
 
-      // 这条记录本机还有：并进它的组（组还没开就现开一个 —— 行全是孤儿，跳不了）
-      const record = liveRecordByCid.get(recordCid);
+      // 这条记录本机还有（哪怕是软删的）：并进它的组（组还没开就现开一个 ——
+      // 行全是孤儿，跳不了）。标签一律优先用本机记录名，云端 provenance 只兜底
+      const record = recordByCid.get(prov.record_cid);
       let group = record ? groupByRecord.get(record.cid) : undefined;
       if (!group) {
-        const item = record ? itemByRecordCid.get(record.cid) : undefined;
         const number = typeof prov.episode_number === "number" ? prov.episode_number : 0;
-        const label = item
-          ? recordLabelOf(item.record)
+        const label = record
+          ? recordLabelOf(record)
           : `${(prov.record_title || "已学过的句子").trim()}${number ? ` E${number}` : ""}`;
         group = {
-          recordCid: record ? record.cid : `orphan:${recordCid}`,
+          recordCid: record ? record.cid : `orphan:${prov.record_cid}`,
           label,
           videoOk: false,
           rows: [],

@@ -6,29 +6,41 @@ import { installObsidianDomHelpers } from "./obsidianDom";
 installObsidianDomHelpers();
 
 /**
- * 跟读卡「录完的收尾」契约（2026-10-10 用户拍板）。
+ * 跟读卡「录完的收尾」契约（2026-10-10 用户拍板 · 2026-10-15 三次修正后定稿）。
  *
- * ── 老流程（2026-10-03 口径，本次推翻）──────────────────────────────────
+ * ── 老流程（2026-10-03 口径，已推翻）────────────────────────────────────
  *   `await trimRecording(raw)` → 才 `audio.src = 剪好的` → 才上屏。
- *   两个病：
- *     ① 录完要干等一个「处理中…」，不能立刻回听；
- *     ② "录完立刻回听"那一下，正好和重编码（`OfflineAudioContext` 解码 +
- *        Opus 重编码，都是重 CPU）**撞在一起** —— 回听会在**中段断一下**。
+ *   两个病：① 录完要干等「处理中…」；② 回听那下和重编码（重 CPU）撞车 → 中段断。
  *
- * ── 新流程 ─────────────────────────────────────────────────────────────
- *   **原始录音先上屏**（录完立刻能听、也不跟裁剪抢 CPU），裁剪挪到后台；
- *   剪好的那份用来**换播放源（用户还没开听时）+ 送核对 + 入库**。原文件仍然不留。
+ * ── 现行流程 ───────────────────────────────────────────────────────────
+ *   **原始录音先上屏**（录完立刻能听，保底），重封装挪到后台；
+ *   干净 webm 用来**换播放源 + 送核对 + 入库**。原文件仍然不留。
  *
- * 这里钉六条 —— 每一条断了都是用户当场能听见/能丢数据的：
- *   1. 录完立刻能听：第一个 blob URL 就是原始件，且**不等**裁剪回来；
- *   2. 裁剪回来时按「用户有没有开听」分流：
- *      · 还没开听 → 播放源换成剪好的那份（第一遍就听到干净版本，不必先听一截留白）；
- *      · 已经在听（点过播放 / 拖过进度）→ **一个字节都不动** —— 换 `audio.src`
- *        会把正在播（或已拖好位置）的那一份打断并复位；
- *   3. 「检查」送出去的是**剪好的**那份（时长也用它），不是原始件；
- *   4. 剪不出来（没得剪 / 环境不支持 / 出岔子）→ 退回原始件，录音不丢、也不换源；
- *   5. 换句 / 重置 / 重录之后，**迟到的裁剪结果不许落库** —— 否则会把用户
- *      刚删掉的录音又救回来（同理也不许换源）。
+ * 🔥 病根与换源时机（2026-10-15 第三次定位，彻底坐实）：
+ *   **病根 = MediaRecorder 直接产出的 webm 是「单簇 + 单一索引点」**，播放器首播要
+ *   自己找索引 → 开头顿一下；而 webm-muxer 重封装出来的是「多簇 + 多索引 + 写死时长」，
+ *   首播顺（用户亲证：老录音——就是重封装过的——第一次播不卡）。所以"先播原始件"
+ *   这个方向本身是错的：它让第一遍听的恰恰是会卡的那份。
+ *   正确做法：重封装只要 ~100ms，远快于人手点播放（≥200ms）—— 重封装件一回来，
+ *   **只要还没开听就立刻换成干净 webm**，第一遍就顺；只有抢在它回来之前已经开听了
+ *   （几乎不可能，保底）才等这一遍 `ended` 再换，绝不打断在播的那份。
+ *
+ * 这里钉七条 —— 每一条断了都是用户当场能听见/能丢数据的：
+ *   1. 录完立刻能听：第一个 blob URL 就是原始件，且**不等**重封装回来；
+ *   2. 重封装回来**按是否开听分流**：
+ *      · 还没开听 → **立刻**换播放源成干净 webm（第一遍就听多簇多索引的那份）；
+ *      · 已经在听（点过播放 / 拖过进度）→ **一个字节都不动**，记成待换，等这一遍
+ *        `ended` 才挂上 —— 换 src 会把正在播（或已拖好位置）的那份打断并复位；
+ *   3. 「检查」送出去的是**干净 webm**（时长也用它），不是原始件；
+ *   4. 封不出来（环境不支持 / 解码 / 编码失败）→ 退回原始件，录音不丢、也不换源；
+ *   5. 换句 / 重置 / 重录之后，**迟到的重封装结果不许落库、也不许留下来** —— 否则会把
+ *      用户刚删掉的录音又救回来、或者把上一句的声音挂到新的一句上；
+ *   6. 收尾没有「处理中…」过场：录完立刻回到可再录的态；
+ *   7. ⚠️ **静音预热已整体撤除**（曾作为"第一遍播就卡"的修法，实机成了「录完回听完全没声」
+ *      的元凶 —— 蓝牙耳机从 HFP 切回 A2DP 的窗口里，预热让输出持续活跃把路由卡死）。
+ *      钉子改成：**任何代码路径都不许改写播放器音量**（无声事故面 = "借走音量"）；
+ *      录音**一律用系统当前默认的输入设备**（2026-10-15 用户口径：各用各的 —— 插件不替
+ *      用户挑设备、不在输入/输出之间做交叉选择，用户在系统里选什么插件就用什么）。
  */
 
 const trimCtl = vi.hoisted(() => ({
@@ -96,6 +108,37 @@ class FakeRecorder {
   }
 }
 
+/**
+ * 把麦克风换成指定那一支。
+ *
+ * @returns `stopped()` —— 这条流的音轨被 stop 过没有。验"取消录音必须放开麦克风"
+ *   靠它：macOS 上麦克风不释放，菜单栏上的小橙点会一直亮着。
+ */
+function setMicDevice(label: string, sampleRate?: number): { stopped: () => boolean } {
+  let stopped = false;
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn(async () => ({
+        getTracks: () => [
+          {
+            label,
+            getSettings: () => ({ sampleRate }),
+            stop: () => {
+              stopped = true;
+            },
+          },
+        ],
+      })),
+    },
+  });
+  return { stopped: () => stopped };
+}
+
+/** 蓝牙耳机的典型长相：名字带 AirPods，且 HFP 通话模式把采样率压到 16kHz。 */
+const useBluetoothMic = (): { stopped: () => boolean } =>
+  setMicDevice("Michael 的 AirPods Pro", 16000);
+
 const flush = async (): Promise<void> => {
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
@@ -161,12 +204,9 @@ beforeEach(() => {
 
   FakeRecorder.instances = [];
   (window as unknown as Record<string, unknown>).MediaRecorder = FakeRecorder;
-  Object.defineProperty(navigator, "mediaDevices", {
-    configurable: true,
-    value: {
-      getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: () => undefined }] })),
-    },
-  });
+  // 默认给一支本机内置麦（48kHz、名字里没有蓝牙特征）—— 现有用例走的都是
+  // "没命中蓝牙"那条路；要命中就用 useBluetoothMic() 换掉。
+  setMicDevice("MacBook Pro 麦克风", 48000);
 });
 
 afterEach(() => {
@@ -184,11 +224,11 @@ interface Harness {
   loadRecording: ReturnType<typeof vi.fn>;
 }
 
-function build(): Harness {
+function build(extra?: Partial<Parameters<typeof buildReadAloud>[0]>): Harness {
   const onVerify = vi.fn(async () => ({ status: "ok", message: "", verified: true }) as const);
   const onReset = vi.fn(async () => ({}) as ProgressRow);
   const loadRecording = vi.fn(async () => null);
-  const handle = buildReadAloud({
+  const opts = {
     onVerify: onVerify as unknown as Parameters<typeof buildReadAloud>[0]["onVerify"],
     onManualConfirm: vi.fn(async () => undefined),
     canUseAi: () => true,
@@ -199,7 +239,9 @@ function build(): Harness {
     saveRecording: saveRecording as unknown as Parameters<
       typeof buildReadAloud
     >[0]["saveRecording"],
-  });
+  };
+  // extra 留给"蓝牙麦克风那句问询"这类按用例才有的回调
+  const handle = buildReadAloud(extra ? { ...opts, ...extra } : opts);
   handle.load(sliceAt("slice-1"), undefined);
   return { handle, onVerify, onReset, loadRecording };
 }
@@ -258,25 +300,24 @@ describe("跟读卡：录完的收尾（原始件先上屏 · 裁剪走后台）
     await flush();
   });
 
-  it("用户还没开听：裁剪回来就把播放源换成剪好的那份 —— 第一遍听到的就是干净的", async () => {
+  it("重封装回来（还没开听）→ **立刻**换上干净 webm：第一遍就听多簇多索引的那份", async () => {
     const trimmedBlob = new Blob([TRIMMED_BYTES], { type: "audio/webm" });
     trimCtl.result = { blob: trimmedBlob, seconds: 3.2, removed: 1.5 };
     const { handle, onVerify } = build();
 
     await recordAndStop(handle);
-    await flush();
+    await flush(); // 重封装已经落定（真机上只要 0.1 秒，比人手快得多）
 
-    // ① 播放源换成剪好的那份：一共两条 blob URL，第二条指向 13 字节那份
+    // ① 播放源**立刻换成干净 webm** —— 第一遍就不听单簇单索引的原始件（病根）
     expect(created).toHaveLength(2);
     expect(created[0].size).toBe(RAW_BYTES.length);
     expect(created[1]).toBe(trimmedBlob);
     expect(playerSrc()).toBe("blob:2");
-    // 旧的那条 URL 立刻放掉 —— 不该等 releaseAudio 才回收
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
-    // 播放条上的时长也跟着换成剪出来的（jsdom 读不到 audio.duration，走 current.seconds）
+    // 时长跟着换成干净 webm 的（jsdom 读不到 audio.duration，走 current.seconds）
     expect(handle.root.querySelector(".yl-read-clock")?.textContent).toContain("3.2");
 
-    // ② 入库：存的是**剪好的**那份（原文件不留 · 2026-10-03 口径不变）
+    // ② 入库：存的仍是**干净 webm**（原文件不留 · 2026-10-03 口径不变）
     expect(saveRecording).toHaveBeenCalledTimes(1);
     const [savedCid, savedBlob, savedMime, savedSeconds] = saveRecording.mock.calls[0] as [
       string,
@@ -289,7 +330,7 @@ describe("跟读卡：录完的收尾（原始件先上屏 · 裁剪走后台）
     expect(savedMime).toBe("audio/webm");
     expect(savedSeconds).toBe(3.2);
 
-    // ③ 「检查」送出去的也是剪好的那份，时长用剪出来的（0.2 秒的留白不进判定）
+    // ③ 「检查」送出去的也是干净 webm，时长用解码出来的（0.2 秒的留白不进判定）
     buttonByText(handle.root, "检查").click();
     await flush();
     expect(onVerify).toHaveBeenCalledTimes(1);
@@ -299,28 +340,56 @@ describe("跟读卡：录完的收尾（原始件先上屏 · 裁剪走后台）
     expect(payload.seconds).toBe(3.2);
   });
 
-  it("用户已经在听：裁剪回来**一个字节都不动播放源**，只换核对 / 存档那份", async () => {
+  it("已经在听了，重封装才回来：不打断，等这一遍播完（ended）才换上", async () => {
     const hold = deferred();
-    trimCtl.gate = hold.promise; // 先把裁剪挂住，好让用户抢在它回来之前开听
+    trimCtl.gate = hold.promise; // 先把重封装挂住
+    const trimmedBlob = new Blob([TRIMMED_BYTES], { type: "audio/webm" });
+    trimCtl.result = { blob: trimmedBlob, seconds: 3.2, removed: 1.5 };
+    const { handle } = build();
+
+    await recordAndStop(handle);
+    // 用户已经点播放（在重封装回来之前）—— 这时 listeningStarted = true
+    (bar(handle).querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    hold.resolve(); // 重封装这时才回来
+    await flush();
+    // 已经在听了：不立刻换，只是记成"待换"，播放源仍是原始件
+    expect(created).toHaveLength(1);
+    expect(playerSrc()).toBe("blob:1");
+
+    // 这一遍播完（ended）→ 才换上干净 webm，旧的立刻放掉
+    audioEls[0].dispatchEvent(new Event("ended"));
+    await flush();
+    expect(created).toHaveLength(2);
+    expect(created[1]).toBe(trimmedBlob);
+    expect(playerSrc()).toBe("blob:2");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:1");
+    expect(handle.root.querySelector(".yl-read-clock")?.textContent).toContain("3.2");
+  });
+
+  it("正在播的时候重封装才回来：一个字节都不动（换源会打断并复位）", async () => {
+    const hold = deferred();
+    trimCtl.gate = hold.promise; // 先把重封装挂住，好让用户抢在它回来之前开听
     const trimmedBlob = new Blob([TRIMMED_BYTES], { type: "audio/webm" });
     trimCtl.result = { blob: trimmedBlob, seconds: 3.2, removed: 1.5 };
     const { handle, onVerify } = build();
 
     await recordAndStop(handle);
-    // 用户点播放（裁剪还没回来）
+    // 用户点播放（重封装还没回来）
     (bar(handle).querySelector("button") as HTMLButtonElement).click();
     await flush();
 
-    hold.resolve(); // 裁剪这时才回来
+    hold.resolve(); // 重封装这时才回来
     await flush();
 
     // ① 播放源没被动过：只有一次 createObjectURL，还是原始件那条 URL。
-    //    ⚠️ 剪好之后改 `audio.src` 会把正在播的那一份打断并复位，正是要修的毛病的近亲。
+    //    ⚠️ 已经在听时改 `audio.src` 会把正在播的那一份打断并复位，正是要修的毛病的近亲。
     expect(created).toHaveLength(1);
     expect(playerSrc()).toBe("blob:1");
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
 
-    // ② 存档 / 核对照旧换成剪好的那份
+    // ② 存档 / 核对照旧换成干净 webm
     expect(saveRecording).toHaveBeenCalledTimes(1);
     expect((saveRecording.mock.calls[0] as [string, Blob])[1]).toBe(trimmedBlob);
 
@@ -330,7 +399,7 @@ describe("跟读卡：录完的收尾（原始件先上屏 · 裁剪走后台）
     expect(payload.blob).toBe(trimmedBlob);
   });
 
-  it("用户拖过进度条（还没播）：也算已经开始回听，同样不换源", async () => {
+  it("拖过进度条之后重封装才回来：位置不被复位，等播完才换", async () => {
     const hold = deferred();
     trimCtl.gate = hold.promise;
     trimCtl.result = {
@@ -349,7 +418,7 @@ describe("跟读卡：录完的收尾（原始件先上屏 · 裁剪走后台）
     hold.resolve();
     await flush();
 
-    // 换源会把用户刚拖好的位置复位 —— 所以拖动过就等于"已经开听了"
+    // 换源会把用户刚拖好的位置复位 —— 所以拖过之后重封装回来同样不许碰播放源
     expect(created).toHaveLength(1);
     expect(playerSrc()).toBe("blob:1");
   });
@@ -410,5 +479,157 @@ describe("跟读卡：录完的收尾（原始件先上屏 · 裁剪走后台）
     expect(record.disabled).toBe(false);
     expect(handle.root.textContent).not.toContain("处理中");
     expect(handle.root.textContent).not.toContain("正在剪掉");
+  });
+
+  // ── ⚠️ 静音预热已整体撤除（2026-10-15 深夜）─────────────────────────────
+  //
+  // 它曾是"第一遍播就卡"的候选修法，实测成了「录完回听**完全没声**」的元凶：
+  // 蓝牙耳机（AirPods）录音结束要从 HFP 切回 A2DP，预热让音频输出在这个切换窗口里
+  // 持续活跃，把输出路由卡死。录完到点播放之间的**自然静默**正是系统切设备需要的。
+  // 留一条钉子：播放器的音量属于用户，**任何代码路径都不许改写它** ——
+  // "完全没声"这种事故面，就是从"借走音量"开始的。
+
+  it("回听条音量恒为 1：任何代码路径都不许改写（无声事故的回归钉子）", async () => {
+    const { handle } = build();
+    await recordAndStop(handle);
+    expect(audioEls[0].volume).toBe(1);
+
+    // 换句 / 重置 / 播放之后再查一遍 —— 不许有任何路径把音量留在 0
+    handle.load(sliceAt("slice-2"), undefined);
+    await flush();
+    expect(audioEls[0].volume).toBe(1);
+
+    FakeRecorder.instances = []; // recordAndStop 内部断言"恰好一台录音机"，重录前清掉上一台的计数
+    await recordAndStop(handle);
+    (bar(handle).querySelector("button") as HTMLButtonElement).click();
+    await flush();
+    expect(audioEls[0].volume).toBe(1);
+    expect(audioEls[0].loop).toBe(false);
+  });
+
+  // ── 🔒 录音设备：**各用各的**（2026-10-15 用户最终口径）──────────────────
+  //
+  // 插件**不替用户挑麦克风**：一律 `getUserMedia({ audio: micConstraints() })`，不指定
+  // `deviceId`、不枚举设备、不在输入与输出之间做交叉选择。用户在系统声音设置里选了什么
+  // （AirPods 麦就 AirPods 麦、Mac 内置麦就内置麦），插件就照用什么。
+  // 曾落地过「录音避开蓝牙麦」（pickBuiltInMicDeviceId + avoidBluetoothInput 两层），
+  // **被用户明确否决并整套删除** —— 不许再加回来。
+
+  it("录音用系统默认输入设备：`getUserMedia` 一个 deviceId 都不传", async () => {
+    const { handle } = build();
+    await recordAndStop(handle);
+
+    const gum = navigator.mediaDevices.getUserMedia as unknown as { mock: { calls: unknown[][] } };
+    expect(gum.mock.calls.length).toBeGreaterThan(0);
+    for (const call of gum.mock.calls) {
+      const constraints = call[0] as { audio?: Record<string, unknown> };
+      // ① 不许带 deviceId —— 带了就是又在替用户挑设备
+      expect((constraints.audio ?? {}).deviceId).toBeUndefined();
+      // ② 三个"音频处理"仍然必须关掉（AGC 会按时间改写音量，回听着像越来越小）
+      expect((constraints.audio ?? {}).autoGainControl).toBe(false);
+      expect((constraints.audio ?? {}).echoCancellation).toBe(false);
+      expect((constraints.audio ?? {}).noiseSuppression).toBe(false);
+    }
+  });
+});
+
+/**
+ * 蓝牙麦克风：**只告知一次，不替用户换设备**（2026-10-16 用户口径）。
+ *
+ * 蓝牙耳机一开麦就被系统压进 HFP 通话模式（采样率掉到 8/16kHz），录出来会闷 ——
+ * 这是蓝牙协议的限制，插件改不了。用户要的只是"告诉我一声"，然后**他自己决定**：
+ *   · 继续用蓝牙录 → 照录不误；
+ *   · 不录了 → 放开麦克风，他自己去系统设置里换。
+ * ⚠️ 所以这里**没有任何一处**会去指定别的 `deviceId`（那条的路已被明确否决）。
+ */
+describe("跟读卡：蓝牙麦克风只问一句（2026-10-16 用户口径）", () => {
+  /** 命中时的那句问询（`() => true` = 上层弹窗了，先不给答复） */
+  const asking = () => vi.fn(() => true);
+  /** 问询包：取到它才能在用例里扮演"用户在窗里点了哪个钮" */
+  const askedWith = (hint: ReturnType<typeof asking>) =>
+    (hint.mock.calls as unknown as unknown[][])[0][0] as {
+      deviceName: string;
+      sampleRate: number;
+      onContinue(): void;
+      onCancel(): void;
+    };
+
+  it("用的是蓝牙麦 → 先问一句：拿到麦克风就把来龙去脉交出去，暂不开录", async () => {
+    useBluetoothMic();
+    const onBluetoothMicHint = asking();
+    const { handle } = build({ onBluetoothMicHint });
+
+    buttonByText(handle.root, "开始录音").click();
+    await flush();
+
+    // ① 问了，而且把证据都带出来了
+    expect(onBluetoothMicHint).toHaveBeenCalledTimes(1);
+    expect(askedWith(onBluetoothMicHint).deviceName).toBe("Michael 的 AirPods Pro");
+    expect(askedWith(onBluetoothMicHint).sampleRate).toBe(16000);
+    // ② 用户还没表态，录音机一台都没建 —— 不许抢跑
+    expect(FakeRecorder.instances).toHaveLength(0);
+  });
+
+  it("用户说「就用它录」→ 照常开录（一个设备都不替他换）", async () => {
+    useBluetoothMic();
+    const onBluetoothMicHint = asking();
+    const { handle } = build({ onBluetoothMicHint });
+
+    buttonByText(handle.root, "开始录音").click();
+    await flush();
+    askedWith(onBluetoothMicHint).onContinue();
+    await flush();
+
+    expect(FakeRecorder.instances).toHaveLength(1);
+    // 从头到尾只有一次 getUserMedia，用的还是系统默认那支蓝牙麦 —— 没有任何"换一下试试"
+    const gum = navigator.mediaDevices.getUserMedia as unknown as { mock: { calls: unknown[][] } };
+    expect(gum.mock.calls).toHaveLength(1);
+    expect((gum.mock.calls[0][0] as { audio: Record<string, unknown> }).audio.deviceId).toBeUndefined();
+  });
+
+  it("用户说「先不录」→ 取消这次，**立刻把麦克风放开**、卡片回到能再录的态", async () => {
+    const mic = useBluetoothMic();
+    const onBluetoothMicHint = asking();
+    const { handle } = build({ onBluetoothMicHint });
+
+    buttonByText(handle.root, "开始录音").click();
+    await flush();
+    askedWith(onBluetoothMicHint).onCancel();
+    await flush();
+
+    // ① 音轨停掉了 —— 不停的话 macOS 菜单栏那个小橙点会一直亮着，看着像还在偷录
+    expect(mic.stopped()).toBe(true);
+    // ② 没有录音机、没有上屏的音频
+    expect(FakeRecorder.instances).toHaveLength(0);
+    expect(created).toHaveLength(0);
+    // ③ 录音钮回到「开始录音」，点了还能再录
+    expect(buttonByText(handle.root, "开始录音").disabled).toBe(false);
+  });
+
+  it("等用户表态的那会儿换了句：回调迟到也不能把录音挂到新句子上", async () => {
+    useBluetoothMic();
+    const onBluetoothMicHint = asking();
+    const { handle } = build({ onBluetoothMicHint });
+
+    buttonByText(handle.root, "开始录音").click();
+    await flush();
+    // 用户在窗还开着的时候翻了下一句 —— abort() 会把那条麦克风流停掉
+    handle.load(sliceAt("slice-2"), undefined);
+    await flush();
+
+    // 迟到的「就用它录」必须被吞掉：`stream` 已经没了，硬录会在 new MediaRecorder(null) 上炸
+    expect(() => askedWith(onBluetoothMicHint).onContinue()).not.toThrow();
+    await flush();
+    expect(FakeRecorder.instances).toHaveLength(0);
+  });
+
+  it("用的是本机麦克风采音正常 → 一句都不问", async () => {
+    const onBluetoothMicHint = asking();
+    const { handle } = build({ onBluetoothMicHint });
+
+    await recordAndStop(handle);
+
+    expect(onBluetoothMicHint).not.toHaveBeenCalled();
+    expect(FakeRecorder.instances).toHaveLength(1);
   });
 });

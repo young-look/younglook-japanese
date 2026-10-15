@@ -117,3 +117,5 @@ young-look/younglook-japanese
 ## License
 
 [MIT](LICENSE) © young-look
+
+项目官网网站: [younglook.cc](younglook.cc)

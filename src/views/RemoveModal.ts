@@ -16,9 +16,9 @@ import { DialogModal } from "../ui/dialog";
 /**
  * 移除确认框（2026-10-02 用户定：取代列表行上的两段式内联确认）。
  *
- * 口径：**默认只移除本条记录** —— 那是软删，列表里消失、学习记录和文件都留着，
- * 重新导入同一集就全回来（与旧的「移除」行为完全一致）。两个**默认不勾**的复选框
- * 才是真删的选项：删素材库里的视频/字幕副本。
+ * 口径：**默认只移除这条素材** —— 那是软删（只软删记录行），列表里消失、学习记录和
+ * 文件都留着，重新导入同一份视频和字幕就全回来（与旧的「移除」行为完全一致）。两个
+ * **默认不勾**的复选框才是真删的选项：删素材库里的视频/字幕副本。
  * 弹窗里必须把「学习记录不会被删除」说在明面上 —— 这是用户最怕误伤的东西。
  *
  * 复选框按现状出现：素材没收进库（落在用户原位置的兜底情况）就没有「删文件」
@@ -98,12 +98,12 @@ export class RemoveModal extends DialogModal {
   private render(): void {
     const { body, foot } = this.buildShell({
       icon: "trash-2",
-      title: "移除这一集",
+      title: "移除这条素材",
       subtitle: this.targetText(),
     });
 
     body.createEl("p", {
-      text: "移除后这一集会从列表消失；学习记录保留，重新导入同一集即可恢复。",
+      text: "移除后这条素材会从列表消失；学习记录保留，重新导入同一份视频和字幕即可恢复。",
       cls: "yl-lead",
     });
 
@@ -131,7 +131,7 @@ export class RemoveModal extends DialogModal {
     if (this.facts.mediaPaths.length > 0) {
       this.buildOption(parent, {
         name: "一并删除视频和字幕文件",
-        desc: `${this.facts.mediaPaths.length} 个文件 · 约 ${humanSize(this.facts.mediaSize)}，从素材库删除；你自己原来的文件不受影响`,
+        desc: `${this.facts.mediaPaths.length} 个素材文件 · 约 ${humanSize(this.facts.mediaSize)}，从素材库删除；你自己原来的文件不受影响`,
         checked: this.deleteFiles,
         onChange: (value) => (this.deleteFiles = value),
       });
@@ -206,7 +206,7 @@ export class RemoveModal extends DialogModal {
       this.close();
       await this.options.onRemoved?.();
     } catch (error) {
-      log.warn("移除这一集失败", error);
+      log.warn("移除素材失败", error);
       new Notice("移除失败，稍后再试。");
       this.busy = false;
       if (this.confirmButton) this.confirmButton.disabled = false;

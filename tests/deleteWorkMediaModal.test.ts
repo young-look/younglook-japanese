@@ -70,9 +70,10 @@ describe("删除作品素材的确认窗", () => {
   it("把后果说在明面上：学习进度不删、库外文件不动、可恢复", () => {
     const text = build().contentEl.textContent ?? "";
     expect(text).toContain("学习进度不会被删除");
-    expect(text).toContain("重新导入同一集就能恢复");
+    expect(text).toContain("重新导入同一份视频和字幕就能恢复");
     expect(text).toContain("留在你原来的位置，不会被删");
-    expect(text).toContain("共 2 条记录 · 2 个文件");
+    // 两个粒度都带量词收口（2026-10-15「素材」术语口径）：条 = 组合，个素材文件 = 文件
+    expect(text).toContain("共 2 条素材 · 2 个素材文件");
   });
 
   it("没有库外文件时不必提「留在原来的位置」", () => {

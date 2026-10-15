@@ -227,12 +227,26 @@ export function trimSupported(): boolean {
 }
 
 /**
- * 把一段录音的首尾空白剪掉，返回**新的 webm 文件**。
+ * 把一段录音**统一封装成干净的 webm**，顺带剪掉首尾空白。
  *
- * 全流程实测约 40ms / 6 秒录音（真 Chromium + 真 MediaRecorder），
- * 用户点完"停下"到能听基本无感。
+ * 🔥 2026-10-15 起，这个函数的口径从「裁剪」升级成「**统一封装 + 顺带裁剪**」——
+ * 根因是 2026-10-10 已定位到的那条（见 .workbuddy/memory/2026-10-10.md）：
+ *   · MediaRecorder 直接产出的 webm 是**单簇（一个 Cluster 装完整段）+ 单一 Cues 索引点**；
+ *   · 而 webm-muxer 重封装出来的是**多簇（每秒一个）+ 多个索引点 + 头部写死时长**。
+ *   · 播放器首播「单簇单索引」的文件要**自己找索引**，就卡那一下；「多簇多索引」的
+ *     文件首播是顺的 —— 这正是「每次第一次录完立即播放会卡、老录音（重封装过的）不卡」
+ *     的病根。卡的位置在**开头**（用户 2026-10-15 答「开头顿一下就顺」）。
  *
- * 任何一步出错都返回 `blob: null`，绝不抛 —— 录音流程不该因为裁剪失败而断。
+ * 所以现在**只要解码成功，就一定走一遍重封装**，产出多簇多索引的干净 webm ——
+ * 哪怕没有留白可剪（`lead = tail = 0`）。回听、存档、送核对用的都是这份干净 webm，
+ * 「第一次播就卡」从根上消失。
+ *
+ * ⚠️ 只有三种情况才退回原始件（真做不到，且极少发生）：环境不支持 WebCodecs、
+ * 解码失败、编码失败。这三种 `blob: null` 仍不是错误，调用方继续用原 blob。
+ *
+ * 全流程实测约 40~100ms / 几秒录音（真 Chromium + 真 MediaRecorder），
+ * 人手从「停止」到「播放」最快也要 200ms+ —— 重封装抢在人点播放之前就完成了，
+ * 用户感知上仍是「录完立刻能听」。
  */
 export async function trimRecording(blob: Blob): Promise<TrimResult> {
   if (!trimSupported()) return NO_TRIM;
@@ -252,11 +266,31 @@ export async function trimRecording(blob: Blob): Promise<TrimResult> {
 
   // 边界只看主声道就够 —— 人说话两个声道内容基本一样，看一个不会漏掉起音。
   const bounds = findSilenceBounds(buffer.getChannelData(0), rate);
-  if (!bounds) return { blob: null, seconds, removed: 0 };
+
+  // 没得剪 / 判不出（整段平、噪声大到没安静、两端空白不够长）→ 不是"用原始件"，
+  // 而是**照常全量重封装**（`from = 0, to = buffer.length`）—— 为的是把单簇单索引
+  // 的 MediaRecorder 原始 webm 换成多簇多索引的干净 webm，首播不再卡。
+  if (!bounds) {
+    try {
+      const repacked = await encodeWebm(buffer, 0, buffer.length);
+      return { blob: repacked, seconds, removed: 0 };
+    } catch {
+      return { blob: null, seconds, removed: 0 };
+    }
+  }
 
   const from = Math.max(0, Math.round(bounds.lead * rate));
   const to = Math.min(buffer.length, buffer.length - Math.round(bounds.tail * rate));
-  if (to - from < rate * MIN_KEPT_SECONDS) return { blob: null, seconds, removed: 0 };
+  // 剪完剩下的有声段太短 = 判定多半把大段内容当成了空白，整段放弃**裁剪**，
+  // 但仍照常全量重封装（统一容器形态），不退回原始件。
+  if (to - from < rate * MIN_KEPT_SECONDS) {
+    try {
+      const repacked = await encodeWebm(buffer, 0, buffer.length);
+      return { blob: repacked, seconds, removed: 0 };
+    } catch {
+      return { blob: null, seconds, removed: 0 };
+    }
+  }
 
   try {
     const trimmed = await encodeWebm(buffer, from, to);

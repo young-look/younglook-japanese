@@ -67,10 +67,12 @@ describe("cid 共享测试向量", () => {
   });
 
   it("切片 cid：归一化口径 —— 标点/全半角/假名写法不影响身份（跨端共享向量）", async () => {
+    // @fence-start: plugin.shared-vector
     // 期望值由服务端同口径（core/learning/services/ja_text.py）算出，
     // test_analysis_cache.py::ThreeSentenceDigestNormalizationTests 断言同一 hex。
     // 两边必须逐字节一致 —— 挂了说明归一化口径漂移，别改期望值去迁就。
     const SHARED = "S:b95c193b23c9280b1ec3c10a2d043cc889067afed17805b42a455ecfa6988a47";
+    // @fence-end: plugin.shared-vector
     const prev = "何を言ってるの";
     const cur = "睦、連れて行ってくれた";
     const next = "大丈夫";

@@ -274,6 +274,8 @@ async function buildAllRows(
 
   // AI 解析结果：剔除整句 text（那等于把台词原文带上云）；token 词面在上，
   // 换机后不用重新解析、不再扣一次费（2026-10-06 拍板，覆盖「AI 读音不同步」旧口径）。
+  // ⚠️ 这里**不过滤 `done`**：半份（只有解读那一块，2026-10-15）照样上行 ——
+  // "解析不许因为另一块没到就丢"这条对换机同样成立；拉回来那份读侧认得（见下方 pull）。
   const analysisRows: RawRow[] = sentences
     .filter((row) => row.analysis)
     .map((row) => ({
@@ -620,7 +622,11 @@ export async function applySnapshotPull(
       });
       continue;
     }
-    if (local.analysis) continue;
+    // 本地**已经解析完整**的就不收（本地重解析过的永远是最新事实）。
+    // ⚠️ 2026-10-15：**半份不算"解析过"** —— 解读那块到手就先单独落了库
+    //     （`done:false`，见 StudyView.persistExplanationOnly），拿它当"有"，
+    //     云端那份完整记录就永远进不来，用户在这台机器上只剩半句。
+    if (local.analysis?.done) continue;
     const analysis = { ...pulled.data, text: local.ja } as unknown as SentenceAnalysis;
     if (!analysis.engine) continue;
     await db.put(STORE.sentences, { ...local, analysis });

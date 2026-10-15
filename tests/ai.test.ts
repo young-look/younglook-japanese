@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ANALYZE_SYSTEM,
   ANALYZE_WORDS_SYSTEM,
@@ -16,9 +16,12 @@ import {
   explainWords,
   extractStreamFields,
   extractVerdictFields,
+  isUpstreamError,
+  noOutputMessage,
   parseJsonLoose,
   renderExplanation,
   verifyImitation,
+  watchFirstOutput,
 } from "../src/services/ai/client";
 import type { PluginSettings } from "../src/settings/types";
 
@@ -57,6 +60,7 @@ function settings(overrides: Partial<PluginSettings> = {}): PluginSettings {
     lastView: "",
     lastUpdateCheckAt: 0,
     dictPromptSeen: false,
+    micQualityPromptSeen: false,
   prefsUpdatedAt: "",
     lastVerifyDay: "",
     ...overrides,
@@ -742,6 +746,44 @@ describe("解读的流式", () => {
     expect(jsonBody.enable_thinking).toBeUndefined();
     expect(jsonBody.thinking).toBeUndefined();
   });
+
+  it("只刷词表：逐词释义那条请求也要带 refresh（服务端按块跳缓存，解读那份不受影响）", async () => {
+    // 2026-10-15「两块可选重解析」新增的一条路。与服务端 `analysis_cache.lookup(ja, part, …)`
+    // 对齐：part=words 时跳过的只有词表那一行 —— 所以这里**只刷词表**不会连解读一起重算。
+    // 漏传 = 用户勾「逐词释义」点确认，拿回来的还是旧词表，按一次没反应。
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        code: 0,
+        message: "success",
+        data: { words: [{ surface: "ビデオ", reading: "びでお", meaning: "录像" }], part: "words", billing: null },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await explainWords(
+      { ja: "ビデオを見る", zh: "", words: ["ビデオ"] },
+      settings({ aiMode: "hosted", authToken: "t" }),
+      { refresh: true },
+    );
+    const body = readBody(fetchMock);
+    expect(body.refresh).toBe(true);
+    expect(body.part).toBe("words");
+  });
+
+  it("首次解析的逐词释义不带 refresh：请求体里没这个键", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        code: 0,
+        message: "success",
+        data: { words: [], part: "words", billing: null },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await explainWords(
+      { ja: "ビデオを見る", zh: "", words: ["ビデオ"] },
+      settings({ aiMode: "hosted", authToken: "t" }),
+    );
+    expect("refresh" in readBody(fetchMock)).toBe(false);
+  });
 });
 
 /**
@@ -822,5 +864,188 @@ describe("句子追问", () => {
     });
     expect(messages[2].content).toBe(`【学生的问题】${"あ".repeat(300)}`);
     expect(messages[3].content).toBe("あ".repeat(300));
+  });
+});
+
+/**
+ * 首输出预算（2026-10-15 用户拍板）。
+ *
+ * 规矩只有一条：**无论发生什么情况，20 秒内没有思考（思考模式）或没有输出
+ * （非思考模式），就必须有报错** —— 用户不能对着"解析中…"无限等。这里盯着
+ * 看门狗这只手，StudyView 那一侧的接线由 studyAiGate.test.ts 盯。
+ *
+ * 用例都等"真到点"（await abort 事件 / 远超窗口的等待），不靠 `sleep(精确毫秒)`
+ * 去赌机器负载。
+ */
+describe("首输出看门狗", () => {
+  /** 等一段"足够长"的真实时间（比窗口宽得多，避免在慢机器上抖）。 */
+  const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  beforeEach(() => {
+    // 插件跑在 Obsidian（有 window），单测跑在 node（没有）。看门狗只用得上计时器，
+    // 给它一个最小 window 就够 —— 生产代码里写 `window.` 是仓库一贯的写法，不为此改。
+    vi.stubGlobal("window", { setTimeout, clearTimeout });
+  });
+
+  it("窗口内一个字都没来：掐断请求，且认出这是预算耗尽（不是用户自己掐的）", async () => {
+    const outer = new AbortController();
+    const watchdog = watchFirstOutput(outer.signal, 30);
+    const aborted = new Promise<void>((resolve) => {
+      watchdog.signal.addEventListener("abort", () => resolve());
+    });
+    expect(watchdog.timedOut()).toBe(false); // 刚发出去：还在窗口内
+    await aborted; // 只有真到点才会走到这儿
+    expect(watchdog.timedOut()).toBe(true);
+    // 外部 signal 一根汗毛没动 —— 调用方靠这个把"超时"与"翻页/关面板"分开
+    expect(outer.signal.aborted).toBe(false);
+    watchdog.stop();
+  });
+
+  it("有输出就重新计时：模型一直在写，就一直等（不按「开始写」那一刻算总账）", async () => {
+    const watchdog = watchFirstOutput(undefined, 200);
+    let fired = false;
+    void new Promise<void>((resolve) => {
+      watchdog.signal.addEventListener("abort", () => resolve());
+    }).then(() => {
+      fired = true;
+    });
+    // 每 20ms 来一段输出：连着 5 次，早就超过 200ms 的窗口了，却一次都不该响
+    for (let i = 0; i < 5; i++) {
+      await settle(20);
+      watchdog.touch();
+    }
+    expect(fired).toBe(false);
+    expect(watchdog.timedOut()).toBe(false);
+    // 停手（模型不再吐字）：这之后才允许到点
+    await settle(400);
+    expect(fired).toBe(true);
+    expect(watchdog.timedOut()).toBe(true);
+    watchdog.stop();
+  });
+
+  it("用户自己掐（翻页 / 关面板）：跟着外部 signal 一起断，但不算超时", () => {
+    const outer = new AbortController();
+    const watchdog = watchFirstOutput(outer.signal, 10_000);
+    outer.abort();
+    expect(watchdog.signal.aborted).toBe(true);
+    // 关键：沉默收场（调用方按"自己掐的"处置），别给已经翻走的人摆超时提示
+    expect(watchdog.timedOut()).toBe(false);
+    watchdog.stop();
+  });
+
+  it("stop 之后计时器不再响（请求已经收尾了）", async () => {
+    const watchdog = watchFirstOutput(undefined, 20);
+    watchdog.stop();
+    await settle(80);
+    expect(watchdog.timedOut()).toBe(false);
+    expect(watchdog.signal.aborted).toBe(false);
+  });
+});
+
+/**
+ * 上游（AI 供应商）自己报的错：带 `upstream` 码 → 调用方**不再重试**。
+ *
+ * 502/503 那种是供应商那一趟没成，同一条链路再撞一次只是一样的结果：白花一笔
+ * 钱、还多等一轮。用户要的"立即报错、别等 20 秒"就是这条。
+ */
+describe("上游错误码", () => {
+  const input = { ja: "祥ちゃん 泣いてた", zh: "小祥哭了", words: [] };
+
+  it("5xx（502/503）带 upstream 码", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 503, text: async () => "Service Unavailable" })),
+    );
+    for (const call of [explainSentence, explainWords]) {
+      const error = await call(input, settings()).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(AiUnavailableError);
+      expect((error as AiUnavailableError).code).toBe("upstream");
+      expect(isUpstreamError(error)).toBe(true);
+    }
+  });
+
+  it("4xx 不带 upstream 码：该重试的重试、该分流的照旧", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 400, text: async () => "bad request" })),
+    );
+    const error = await explainSentence(input, settings()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AiUnavailableError);
+    expect((error as AiUnavailableError).code).toBeUndefined();
+    expect(isUpstreamError(error)).toBe(false);
+  });
+
+  it("isUpstreamError 只认 upstream：没余额是另一条路（弹充值窗，不是重试）", () => {
+    expect(isUpstreamError(new AiUnavailableError("x", "upstream"))).toBe(true);
+    expect(isUpstreamError(new AiUnavailableError("x", "need-balance"))).toBe(false);
+    expect(isUpstreamError(new Error("x"))).toBe(false);
+  });
+
+  it("SSE 的 error 帧：upstream 带码（不许重试），busy 这类不带码（允许在剩下预算里重试）", async () => {
+    // 🔥 不能"只要不是 insufficient 就一律当上游" —— 那样 busy（并发锁）这类
+    //    抖一下的错也被判成不许重试，正好违反"其他原因允许重试"。
+    const frame = (reason: string): string =>
+      `data: ${JSON.stringify({ type: "error", reason, message: "这次不行" })}\n\n`;
+    /** 只实现代码真用到的那一处：一个能读出这一帧的 body。 */
+    const oneFrame = (chunk: string) => {
+      const bytes = new TextEncoder().encode(chunk);
+      let sent = false;
+      return {
+        ok: true,
+        status: 200,
+        body: {
+          getReader: () => ({
+            read: async () =>
+              sent ? { done: true, value: undefined } : ((sent = true), { done: false, value: bytes }),
+          }),
+        },
+      };
+    };
+    const run = async (reason: string): Promise<unknown> => {
+      vi.stubGlobal("fetch", vi.fn(async () => oneFrame(frame(reason))));
+      return explainSentenceStream(
+        { ja: "祥ちゃん 泣いてた", zh: "小祥哭了", words: [] },
+        settings({ aiMode: "hosted", authToken: "t" }),
+        () => {},
+      ).catch((error: unknown) => error);
+    };
+
+    const upstream = await run("upstream");
+    expect((upstream as AiUnavailableError).code).toBe("upstream");
+    expect(isUpstreamError(upstream)).toBe(true);
+
+    const busy = await run("busy");
+    expect(busy).toBeInstanceOf(AiUnavailableError);
+    expect((busy as AiUnavailableError).code).toBeUndefined();
+    expect(isUpstreamError(busy)).toBe(false);
+  });
+});
+
+/**
+ * 「没人说话」的文案（2026-10-15 实机报的）。
+ *
+ * 内置模型下上游是我们的供应商，20 秒没吐字就**是它挂了** —— 要直说"上游服务
+ * 暂时不可用"，写成"太慢"用户会以为再等等就快了，接着干等下去。
+ * 自定义模型那条路上游是用户自己配的端点，照"太慢"说才准确。
+ */
+describe("没输出的文案按轨道分叉", () => {
+  const HOSTED_TEXT = "内置模型上游服务暂时不可用。";
+  const BYOK_TEXT = "模型这次响应太慢，稍后再试。";
+
+  it("内置模型（用户选了谁就是谁，见 resolveAiRoute）", () => {
+    expect(noOutputMessage(settings({ aiMode: "hosted" }))).toBe(HOSTED_TEXT);
+  });
+
+  it("自定义模型：说他自己的端点没响应", () => {
+    const byok = settings({
+      aiMode: "byok",
+      byokSaved: { baseUrl: "https://api.example.com/v1", apiKey: "k", model: "m" },
+    });
+    expect(noOutputMessage(byok)).toBe(BYOK_TEXT);
+  });
+
+  it("选了自定义模型但没配好（route = off）：也不能甩锅给内置模型的上游", () => {
+    // 门控本来就会拦下这种配置，这条钉的是"兜底文案别串轨"
+    expect(noOutputMessage(settings({ aiMode: "byok" }))).toBe(BYOK_TEXT);
   });
 });

@@ -29,7 +29,7 @@ import { Notice, setIcon } from "obsidian";
 import type { ProgressRow, StudySentence } from "../../types/entities";
 import { normalizeForCopy, type CopyResult } from "../../services/copyCheck";
 import { cleanSuggestion } from "../../services/verdictSuggestion";
-import { micConstraints } from "../../services/micCapture";
+import { inspectMicInput, micConstraints } from "../../services/micCapture";
 import { trimRecording } from "../../services/audioTrim";
 import { effectiveJa } from "../../services/study";
 import type { AiGate } from "../../services/ai/gate";
@@ -184,6 +184,26 @@ export function buildReadAloud(
     /** 取这句上次录的音；本地没有（换设备/老数据）返回 null */
     loadRecording(sliceCid: string): Promise<{ blob: Blob; mimeType: string; seconds: number } | null>;
     saveRecording(sliceCid: string, blob: Blob, mimeType: string, seconds: number): Promise<void>;
+    /**
+     * 检测到**当前这支麦克风是蓝牙输入**时问一句（2026-10-16 用户口径）。
+     *
+     * 🔒 **只告知，不许挑设备**：插件不换 `deviceId`、不试图改用户的输入源 ——
+     * 用户在系统里选了什么就录什么，要不要换由他自己决定（曾做过"录音自动避开
+     * 蓝牙麦"，被明确否决）。弹窗归上层：只有它拿得到 App 和设置。
+     *
+     * @returns `true` = 已经把选择权交给用户，这次录音**先停住**等答复
+     *          （去路只有 `onContinue` / `onCancel` 两条）；`false` / 没提供 = 照常录。
+     */
+    onBluetoothMicHint?(payload: {
+      /** 设备名（`track.label`）；拿不到是空串 */
+      deviceName: string;
+      /** 实际采样率（Hz）；拿不到是 0 */
+      sampleRate: number;
+      /** 用户选「就用它录」—— 照常开始这次录音 */
+      onContinue(): void;
+      /** 用户选「先不录」、或直接把窗关了 —— 取消这次，放开麦克风 */
+      onCancel(): void;
+    }): boolean;
   },
 ): ReadAloudHandle {
   const root = createDiv("yl-practice yl-read");
@@ -214,14 +234,23 @@ export function buildReadAloud(
   /**
    * 用户**有没有开始回听**这一份录音（点过播放键，或拖过进度条）。
    *
-   * 🔥 它是"后台裁剪回来时能不能换播放源"的**唯一闸门**（2026-10-10 用户口径）：
-   *   · 还没开始听 → 裁剪回来就把 `audio.src` 换成剪好的那份，用户听到的天然是
-   *     干净版本（不必先听一遍首尾留白）；
+   * 🔥 它是"重封装件回来时能不能立刻换播放源"的**唯一闸门**：
+   *   · 还没开始听 → 重封装件一回来就**立刻**把 `audio.src` 换成它 —— 第一遍听到的
+   *     就是干净 webm（多簇多索引），首播不卡（病根见 `services/audioTrim.ts`）；
    *   · 已经在听了 → **一个字节都不动** —— 换 src 会把正在播（或已拖好位置）的
-   *     那一份打断并复位，正是这次要修的那个毛病的近亲。
+   *     那一份打断并复位；等这一遍 `ended` 再换（见 `pendingSource`）。
    * 换句 / 重置 / 重录都经 `releaseAudio()`，在那里复位。
    */
   let listeningStarted = false;
+  /**
+   * 重封装件回来时用户**已经在听**了，就记成"等着换上去"的那一份（`null` = 没有待换）。
+   *
+   * 只在"已经开始回听"时才会走到这里（`listeningStarted === true`）—— 那时不能立刻
+   * 换源（会打断在播的那份），等**这一遍播完（`ended`）**再由 `applyPendingSource()`
+   * 挂上去。还没开听的重封装件是**立刻**换的，不走这里。
+   * 换句 / 重置 / 重录经 `releaseAudio()` 把它清掉。
+   */
+  let pendingSource: { blob: Blob; mimeType: string; seconds: number } | null = null;
   /** 异步取历史录音期间可能已经换句了 —— 回来先对一下 cid 再上屏 */
   let loadedSliceCid = "";
   /**
@@ -229,17 +258,18 @@ export function buildReadAloud(
    * 核对完**不清**（2026-10-07 口径：检查可反复点，没查成再点一次就是重试）；
    * 重录会整份换掉，「重置」才清掉。
    *
-   * ⚠️ 它跟的是**播放器现在挂着的那一份**：裁剪在用户回听前回来时会被换成剪好的那份
-   * （那时它和 `trimmed` 是同一个对象），用户已经开始听了则保持原始件不动。
+   * ⚠️ 它跟的是**播放器现在挂着的那一份**：重封装件回来（还没开听）或播完换源时，
+   * 它跟着换成那一份（那时它和 `trimmed` 是同一个对象）。
    */
   let current: { blob: Blob; mimeType: string; seconds: number } | null = null;
   /**
-   * **送核对 / 存档**的那一份 —— 剪掉首尾空白的版本。
+   * **送核对 / 存档**的那一份 —— 统一封装（+ 剪首尾空白）后的干净 webm。
    *
-   * 🔥 为什么它和 `current` 是两件事（2026-10-10 用户拍板）：
-   * **播放用原始录音**（录完立刻能听，也不跟后台裁剪抢 CPU），
-   * **核对和存档用剪好的**（服务端拿到的是干净的那段、体积也小）。
-   * `null` = 裁剪还没回来 / 剪不出来 → 送核对时退回原始件（判不出来不是判错）。
+   * 🔥 为什么它和 `current` 可能短暂是两件事：
+   * 播放源在重封装件回来时是**立刻换**的（第一遍就听干净 webm，首播不卡），
+   * 所以在正常时序里它很快就是同一个对象；只有环境不支持 / 解码编码失败时才退回
+   * 原始件（`blob: null`），那时送核对退到 `current`。
+   * `null` = 重封装还没回来 → 送核对时先 `await trimTask` 再取（见 runCheck）。
    */
   let trimmed: { blob: Blob; mimeType: string; seconds: number } | null = null;
   /** 后台裁剪那一趟活；「检查」会等它落定再送核对。换句/重置/重录会作废（见 finalizeToken）。 */
@@ -351,6 +381,7 @@ export function buildReadAloud(
     controls.toggleClass("is-off", !ready);
     playButton.disabled = !ready;
     seekSlider.disabled = !ready;
+    const playing = !audio.paused;
     // 没录音就把时长也归零 —— 不然「重置」之后条上还挂着上一份的 0:02.5，看着像没清掉
     const duration = ready ? audioDuration() : 0;
     const position = ready ? audio.currentTime : 0;
@@ -364,12 +395,12 @@ export function buildReadAloud(
     clockLabel.setText(
       `${formatClipClock(position * 1000)} / ${formatClipClock(duration * 1000)}`,
     );
-    setButtonIcon(playButton, audio.paused ? "play" : "pause", audio.paused ? "播放" : "暂停");
+    setButtonIcon(playButton, playing ? "pause" : "play", playing ? "暂停" : "播放");
   }
 
   playButton.addEventListener("click", () => {
     if (!hasRecording) return;
-    // 用户开始回听了：这之后后台裁剪回来**也不许再换播放源**（见 listeningStarted）
+    // 用户开始回听了：这之后重封装件回来**也不许再立刻换播放源**（见 listeningStarted）
     listeningStarted = true;
     if (audio.paused) {
       // 已经播到尾巴了再点 = 从头再来 —— 不然按下去毫无反应，看着像坏了
@@ -387,7 +418,7 @@ export function buildReadAloud(
   seekSlider.addEventListener("input", () => {
     const duration = audioDuration();
     if (!hasRecording || duration <= 0) return;
-    // 拖动 = 已经在这份录音上定过位了：同样不许换源（换 `audio.src` 会把位置复位）
+    // 拖动 = 已经在这份录音上定过位了：同样不许立刻换源（换 `audio.src` 会把位置复位）
     listeningStarted = true;
     audio.currentTime = (Number(seekSlider.value) / 1000) * duration;
     refreshPlayer();
@@ -397,10 +428,10 @@ export function buildReadAloud(
   for (const event of ["play", "pause", "ended", "timeupdate", "loadedmetadata"] as const) {
     audio.addEventListener(event, refreshPlayer);
   }
-  // 兜底：真有声音出来就认作"已经在回听"（万一将来多出别的调 play() 的入口）
-  audio.addEventListener("play", () => {
-    listeningStarted = true;
-  });
+  // 🔥 重封装件在**这一遍放完之后**才换上（口径与理由见 `pendingSource`）。
+  //    没开听时是立刻换的（见 startFinalize），走到这里 = 用户已经在听的那份，
+  //    播完再换，绝不打断在播的那份。
+  audio.addEventListener("ended", applyPendingSource);
 
   function setPhase(next: Phase): void {
     phase = next;
@@ -502,8 +533,28 @@ export function buildReadAloud(
     recorder = null;
   }
 
+  /**
+   * 把"等着换上去"的重封装件挂上播放条 —— **只在用户已经在听、且这一遍播完（`ended`）时调**。
+   *
+   * 换 `audio.src` 会把正在播（或已拖好位置）的那一份打断并复位，所以这里绝不能
+   * 在播放中途被调到；而"播完了"这个时刻换源是最没有代价的：下一遍本来就从 0 开始。
+   * 还没开听的重封装件是**立刻**换的（见 startFinalize），不走这里。
+   */
+  function applyPendingSource(): void {
+    const next = pendingSource;
+    if (!next || !hasRecording) return;
+    pendingSource = null;
+    const previousUrl = audioUrl;
+    audioUrl = URL.createObjectURL(next.blob);
+    audio.src = audioUrl;
+    // 旧的 blob URL 主动放掉 —— `releaseAudio()` 只会 revoke `audioUrl` 当时指向的那个
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+    current = next;
+    refreshPlayer();
+  }
+
   function releaseAudio(): void {
-    // 上一份录音的后台裁剪就此作废（换句 / 重置 / 重录 / 销毁都经过这里）。
+    // 上一份录音的后台重封装就此作废（换句 / 重置 / 重录 / 销毁都经过这里）。
     // ⚠️ 这一句必须在最前面：作废要"立刻"，晚一行就可能让上一份的存档抢在
     //    「重置」把录音删掉之后落库，把人删掉的录音又救回来。
     finalizeToken += 1;
@@ -511,6 +562,8 @@ export function buildReadAloud(
     trimmed = null;
     // 下一份录音是全新的播放器会话：把"已开始回听"的闸门重新打开
     listeningStarted = false;
+    // 还没换上的重封装件也一起丢掉 —— 它属于上一份录音，换到新的一句上就是放错内容
+    pendingSource = null;
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
       audioUrl = "";
@@ -528,26 +581,31 @@ export function buildReadAloud(
   /**
    * 录完的收尾，两件事**分先后**：
    *
-   *   ① **立刻**把**原始录音**摆上播放条 —— 录完就能听，不等任何加工；
-   *   ② 在**后台**剪掉首尾空白，剪好的那份只用来**送核对 + 存档**。
+   *   ① **立刻**把**原始录音**摆上播放条 —— 录完就能听，不等任何加工（保底）；
+   *   ② 在**后台**把录音统一封装成干净 webm（多簇多索引 + 写死时长，顺带剪首尾空白）。
    *
-   * 🔥 为什么播放不等人（2026-10-10 用户拍板，推翻 2026-10-03 的「剪完才上屏」）：
-   * 老流程是 `await trimRecording()` 之后才 `audio.src = …`。于是"录完立刻回听"这
-   * 一下正好和重编码（`OfflineAudioContext` 解码 + Opus 重编码，都是重 CPU）撞在
-   * 一起 —— 回听会在**中段断一下**，而且用户还得先干等一个「处理中…」。
-   * 现在回听用浏览器自己录的那一份，裁剪挪到后台，两件事互不打扰。
+   * 🔥 为什么"先上原始件、再后台换干净件"（2026-10-15 第三次定位，彻底坐实病根）：
+   * 病根不是"播的是哪一份文件"、也不是"冷启动抖动落在留白上"，而是
+   * **MediaRecorder 直接产出的 webm 是"单簇 + 单一索引点"**（2026-10-10 已查到、这次
+   * 坐实），播放器首播这种文件要**自己找索引** → 开头顿一下；重封装件是多簇多索引，
+   * 首播是顺的（用户亲证：老录音——就是重封装过的——第一次播不卡）。
+   * 所以"第一遍播原始件"这个方向**本身就是错的**：它让用户第一遍听的恰恰是会卡的那份。
    *
-   * ⚠️ **原始件仍然不留**（2026-10-03 口径不变）：进库的、送核对的都是剪好的那份，
+   * 正确做法：重封装只要 ~100ms，远快于人手点播放（≥200ms）—— 重封装件一回来、
+   * **只要用户还没开听就立刻换成干净 webm**，第一遍就是顺的；只有用户抢在它回来之前
+   * 已经开听了（几乎不可能，但保底）才等这一遍 `ended` 再换，绝不打断在播的那份。
+   *
+   * ⚠️ **原始件仍然不留**（2026-10-03 口径不变）：进库的、送核对的都是干净 webm，
    * 原始件只活在这次会话的内存里（`releaseAudio()` 一 revoke 就没了）。
-   * ⚠️ 裁剪回来时**只有用户还没开始回听**才换播放源（换成剪好的那份 —— 第一遍就是
-   * 干净版本）；一旦点过播放 / 拖过进度就**一个字节都不动** —— 改 `audio.src` 会把
-   * 正在播或已经拖好位置的那一份打断并复位，正是这次要修的那个毛病的近亲。
+   * ⚠️ **不要在这里加"静音预热播放"**（2026-10-15 深夜撤除）：录完麦克风停轨后蓝牙耳机
+   *   要从 HFP 切回 A2DP，预热让输出在这个窗口里持续活跃 → 路由卡死 → **回听完全没声**。
+   *   录完到点播放之间的自然静默正是系统切设备需要的。
    *
-   * @param forSliceCid 裁剪是异步的，回来时对一下是不是还这一句；换句 / 重置 / 重录 /
+   * @param forSliceCid 重封装是异步的，回来时对一下是不是还这一句；换句 / 重置 / 重录 /
    *   销毁都会经 `releaseAudio()` 把 `finalizeToken` 推进一格，这份结果就整份作废。
    */
   function startFinalize(raw: Blob, mime: string, recorded: number, forSliceCid: string): void {
-    // ① 立刻上屏：原始录音直接播
+    // ① 立刻上屏：原始录音直接播（保底 —— 万一重封装失败/慢，用户还是能立刻听到点什么）
     audioUrl = URL.createObjectURL(raw);
     audio.src = audioUrl;
     hasRecording = true;
@@ -555,14 +613,14 @@ export function buildReadAloud(
     trimmed = null;
     setPhase("review");
 
-    // ② 后台裁剪：剪好的那份用来换播放源（若用户还没开听）、送核对、存档
+    // ② 后台统一封装：干净 webm 用来**立刻换播放源（还没开听时）+ 送核对 + 存档**
     const token = finalizeToken;
     trimTask = (async () => {
       try {
         const trim = await trimRecording(raw).catch(() => null);
         if (token !== finalizeToken) return; // 已经换句 / 重置 / 重录了 —— 这份作废
-        // 剪不出来（没得剪 / 判不出 / 环境不支持 / 出岔子）就退回原始件 ——
-        // 绝不因为剪失败把录音弄丢，也绝不因为剪失败让「检查」点不了。
+        // 统一封装失败（环境不支持 WebCodecs / 解码 / 编码失败）才退回原始件 ——
+        // 绝不因为封装失败把录音弄丢，也绝不因为封装失败让「检查」点不了。
         const blob = trim?.blob ?? raw;
         const mimeType = blob.type || mime;
         // 时长优先用解码出来的那个（没剪成时它也是解码值，比计时器准）；
@@ -570,24 +628,26 @@ export function buildReadAloud(
         const seconds = Number((trim && trim.seconds > 0 ? trim.seconds : recorded).toFixed(1));
         trimmed = { blob, mimeType, seconds };
 
-        // 🔥 用户还没开始回听 → 顺手把**播放源**也换成剪好的这份（2026-10-10 用户口径）。
-        //    裁剪既然赶在点播放之前回来了，第一遍就该让人听到干净版本，不必先听一截留白。
-        // ⚠️ 已经在听了（点过播放 / 拖过进度）就**一个字节都不动** —— 换 `audio.src`
-        //    会把正在播（或已拖好位置）的那一份打断并复位，正是要修的那个毛病的近亲。
-        // ⚠️ 只有**真剪出东西**才换：剪不出来时 `blob === raw`，换源只是白白重载同一个
-        //    文件（播放条还会闪一下），没有半点收益。
-        if (trim?.blob && !listeningStarted) {
-          const previousUrl = audioUrl;
-          audioUrl = URL.createObjectURL(blob);
-          audio.src = audioUrl;
-          // 旧的 blob URL 主动放掉 —— `releaseAudio()` 只会 revoke `audioUrl` 当时指向的那个
-          if (previousUrl) URL.revokeObjectURL(previousUrl);
-          current = { blob, mimeType, seconds };
-          refreshPlayer();
+        // 🔥 只有**真产出干净 webm**才换源（`trim.blob` 有货）：换源换的是统一封装件，
+        //    为的是第一遍就听多簇多索引的干净 webm，首播不卡（病根见 audioTrim.ts）。
+        if (trim?.blob) {
+          if (listeningStarted) {
+            // 用户抢在重封装回来之前已经开听了（几乎不可能，保底）：不打断在播的那份，
+            // 记成"待换"，等这一遍 `ended` 再挂上去（见 applyPendingSource）。
+            pendingSource = { blob, mimeType, seconds };
+          } else {
+            // 正常时序：还没开听 → **立刻**把播放源换成干净 webm，第一遍就顺。
+            const previousUrl = audioUrl;
+            audioUrl = URL.createObjectURL(blob);
+            audio.src = audioUrl;
+            if (previousUrl) URL.revokeObjectURL(previousUrl);
+            current = { blob, mimeType, seconds };
+            refreshPlayer();
+          }
         }
 
         // 留一份到本地库：下次打开这句还能听、还能补检查（录音只存本机，不同步）。
-        // ⚠️ 存的是**剪好的那份**（不是 `current` 里正在播的原始件）—— 库里只留一份。
+        // ⚠️ 存的是**干净 webm**（不是 `current` 里可能还在播的原始件）—— 库里只留一份。
         void opts.saveRecording(forSliceCid, blob, mimeType, seconds).catch(() => {
           // 存不上不挡流程：这次会话里照样能听（核对用的是内存里这份，不受影响）
         });
@@ -606,21 +666,22 @@ export function buildReadAloud(
    * 核对中锁住录音钮和重置钮：重录会把正在核的那一份冲掉。
    * 结果回来时可能已经换句 / 卡片销毁了（核对是出网的，慢），那种情况一律不碰 DOM。
    *
-   * 🔥 送出去的是**剪掉首尾空白的那份**（2026-10-10 用户口径）：留白不参与判定，
-   * 白白多传几秒还给服务端添负担。后台裁剪还没落定就**先等一下**（几十~几百毫秒，
-   * 按钮已经切成「检查中…」，不是无声等待）；实在剪不出来才退回原始件。
+   * 🔥 送出去的是**统一封装后的干净 webm**（2026-10-10 用户口径：留白不参与判定，
+   * 白白多传几秒还给服务端添负担；2026-10-15 起即使没得剪也重封装，多簇多索引）。
+   * 后台重封装还没落定就**先等一下**（几十~几百毫秒，按钮已经切成「检查中…」，
+   * 不是无声等待）；实在封不出来才退回原始件。
    */
   async function runCheck(forSliceCid: string): Promise<void> {
     const attemptNow = trimmed ?? current;
     if (!attemptNow) return;
     verifying = true;
     setPhase(phase);
-    // 后台裁剪还在跑就等它 —— 「检查」要的是剪好的那份
+    // 后台重封装还在跑就等它 —— 「检查」要的是干净 webm 那份
     if (trimTask) {
       try {
         await trimTask;
       } catch {
-        // 裁剪不作数（作废 / 出岔子）：下面用 trimmed ?? current 兜底
+        // 重封装不作数（作废 / 出岔子）：下面用 trimmed ?? current 兜底
       }
     }
     if (disposed || loadedSliceCid !== forSliceCid) {
@@ -709,6 +770,12 @@ export function buildReadAloud(
     try {
       // ⚠️ 不能只写 `{ audio: true }`：默认开着自动增益，录出来的音量会被浏览器
       // 按时间改写，回听着像"越来越小"（实测数据见 services/micCapture.ts）。
+      //
+      // 🔒 **不指定 `deviceId`，一律用系统当前默认的输入设备**（2026-10-15 用户口径）：
+      // 各用各的 —— 系统输出是 AirPods 就用 AirPods 放，系统输入是 AirPods 麦就用 AirPods 麦录，
+      // 是 Mac 内置麦就用内置麦。插件**不替用户挑设备、也不在用户输入/输出之间做交叉选择**：
+      // 用户自己在系统声音设置里选了什么，插件就照用什么；想换设备在系统里换，插件跟着走。
+      // （曾试过"录音避开蓝牙麦"，被明确否决。）
       stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
     } catch {
       // 授权失败也算"无麦"：此后「标记完成」恒可点（直接记完成），录音钮锁死
@@ -717,6 +784,44 @@ export function buildReadAloud(
       return;
     }
 
+    // 🔒 拿到麦克风那一下顺手看看**是不是蓝牙输入**（`services/micCapture`）：
+    // 蓝牙链路一开麦就被压到通话模式，录出来会闷 —— 让上层问一句。
+    // ⚠️ 这里**只告知**：插件绝不替用户挑设备、也不换 `deviceId`（见上面那条口径 ——
+    //    （"录音自动避开蓝牙麦"那条已被明确否决）。用户说继续就原样录。
+    // ⚠️ 必须在 getUserMedia **之后**才查得到设备名与采样率：没授权时浏览器一个都不给。
+    const micInfo = inspectMicInput(stream);
+    if (
+      micInfo.isBluetooth &&
+      opts.onBluetoothMicHint?.({
+        deviceName: micInfo.deviceName,
+        sampleRate: micInfo.sampleRate,
+        onContinue: () => beginRecording(),
+        onCancel: () => {
+          // 用户不要这次录音：立刻把麦克风放开（否则指示灯会一直亮着）
+          cleanup();
+          setPhase("idle");
+        },
+      })
+    ) {
+      // 上层把选择权交给用户了 —— 这次先停在这儿，两条去路都在上面。
+      // 期间卡片停在 requesting 那一档（录音钮置灰、文案仍是短的那句，别加长），点不动。
+      return;
+    }
+    beginRecording();
+  }
+
+  /**
+   * 真正开场 —— 麦克风到手、且确认这一趟要录（中间可能隔着蓝牙提示那句问询）。
+   *
+   * ⚠️ 开头那道 `!stream` 不是防御性冗余：等用户表态的那段时间里，**换句会走到
+   * `abort()`**，它会 `cleanup()` 把流停掉；如果用户在那之后才点「就用它录」，
+   * 这里拿到的就已经是 `null` 了 —— 不挡一下会在 `new MediaRecorder(null)` 上炸。
+   */
+  function beginRecording(): void {
+    if (!stream) {
+      setPhase("idle");
+      return;
+    }
     chunks = [];
     finalized = false;
     pickedMime = pickMimeType();

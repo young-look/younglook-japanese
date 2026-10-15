@@ -198,6 +198,28 @@ describe("applySnapshotPull（LWW 合并 + 白名单覆盖）", () => {
     });
     const keep = await db.get<SentenceRow>(STORE.sentences, "S:1");
     expect(keep?.analysis?.done).toBe(true);
+
+    // 🔥 本地**半份**（只有解读那一块，`done:false`）不算"解析过"：云端那份完整的要收
+    //    —— 拿半份当"有"，云端那份就永远进不来，用户在这台机器上只剩半句（2026-10-15）
+    await db.put(STORE.sentences, {
+      rev: 0, rowDigest: "", cid: "S:3", ja: "おはよう", textHash: "th3",
+      analysis: {
+        engine: "plugin-ai-v1", text: "おはよう", romaji: "", tokens: [],
+        explanation: { words: "本机上次留住的那半句", grammar: "" },
+        missingDefinitions: [], definitionsComplete: false, done: false, translation: "",
+      },
+      clientUpdatedAt: NOW,
+    } as SentenceRow);
+    await applySnapshotPull(db, settings(), {
+      analysis: [{
+        cid: "S:3",
+        data: { engine: "plugin-ai-v1", romaji: "ohayou", tokens: [{ surface: "おはよう", def: "早上好" }], explanation: { words: "云端的完整解读", grammar: "" }, missingDefinitions: [], definitionsComplete: true, done: true },
+        client_updated_at: NOW2,
+      }],
+    });
+    const completed = await db.get<SentenceRow>(STORE.sentences, "S:3");
+    expect(completed?.analysis?.done).toBe(true);
+    expect(completed?.analysis?.explanation?.words).toBe("云端的完整解读");
     await db.close();
   });
 

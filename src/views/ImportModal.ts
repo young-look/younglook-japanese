@@ -325,7 +325,7 @@ export class ImportModal extends DialogModal {
     const input = box.createEl("input", {
       type: "text",
       cls: "yl-name-input",
-      attr: { placeholder: "例如：葬送的芙莉莲 第 4 集" },
+      attr: { placeholder: "例如：葬送的芙莉莲" },
     });
     input.value = this.title;
     input.addEventListener("input", () => {

@@ -208,10 +208,18 @@ function errorFor(status: number, message: string | undefined, settings: PluginS
     return new AiUnavailableError(NO_BALANCE_MESSAGE, "need-balance");
   }
   if (status === 429) {
-    return new AiUnavailableError("用得有点快，缓一下再来。");
+    // 429 有四种来源（每分钟/每天/消费上限三种限流 + 上次还在处理的并发锁），
+    // 服务端各自有准确文案；只在服务端没给文案时才用兜底这句。
+    return new AiUnavailableError(message?.trim() || "用得有点快，缓一下再来。");
   }
   const reason = message?.trim();
-  return new AiUnavailableError(reason || `服务器这边出了点问题（HTTP ${status}），稍后再试。`);
+  // 5xx = 上游/服务端这一趟没成（我们这边把上游的 502/503 原样转出来）。带上
+  // `upstream` 码，调用方据此**不再重试** —— 同一条链路再撞一次只是一样的结果，
+  // 白花一次钱还多等一轮（2026-10-15 用户拍板）。
+  return new AiUnavailableError(
+    reason || `服务器这边出了点问题（HTTP ${status}），稍后再试。`,
+    status >= 500 ? "upstream" : undefined,
+  );
 }
 
 async function call(

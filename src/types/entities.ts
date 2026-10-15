@@ -120,8 +120,14 @@ export const EMPTY_EXPLANATION_SECTIONS: ExplanationSections = {
  * 缓存（`learning.AnalysisCache`）负责跨用户省。
  *
  * ⚠️ 2026-10-07 起这一份是**两次请求拼出来的**：解读（explanation）
- * 与逐词释义（tokens[].def / .aiReading / .origin）分开要。两块都回来
- * 才落库 —— 只回来一半的话翻回这句时会显示成"解析过了"，但词点不开。
+ * 与逐词释义（tokens[].def / .aiReading / .origin）分开要。
+ *
+ * 🔥 2026-10-15 起**两块各自单独存**（用户拍板）：解读一到手就先落一份
+ * `done:false` 的半份（见 `StudyView.persistExplanationOnly`），词表到了再被
+ * 整份覆盖。理由是"不能因为原句卡片没有出来，重启一下整句解析就不见了"。
+ * 所以读的时候别再把 `done` 当成"这条记录能不能看"：
+ *   · 能不能铺解读 → `hasExplanationContent(analysis)`（services/study.ts）
+ *   · 解析完整没完整（句子卡点不点亮、词点不点得开）→ 仍然只看 `done`
  */
 export interface SentenceAnalysis {
   /** 产出方式标记（含版本）。对不上就当作没解析过，重新来一次 */
@@ -134,6 +140,12 @@ export interface SentenceAnalysis {
   explanation?: ExplanationSections;
   missingDefinitions: string[];
   definitionsComplete: boolean;
+  /**
+   * **解析完整**：解读与词表两块都到手了。句子卡据此点亮（青蓝 + 词可点）。
+   *
+   * ⚠️ `false` **不等于"这条记录没东西"** —— 半份记录（只有解读那一块）也是
+   * `done:false`，但左栏照常铺得出来。判"能不能看"用 `hasExplanationContent`。
+   */
   done: boolean;
   /** 整句中文翻译（AI 给的那份）。没跑过 AI 就是空 */
   translation?: string;

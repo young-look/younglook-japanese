@@ -13,7 +13,7 @@ import { STORE, VaultDb, listVaultDatabaseKeys, probeVaultDatabase } from "./sto
 import { reclaimableKeys, type VaultDbProbe } from "./services/vaultKey";
 import { recoverLocalLibrary } from "./services/recover";
 import { ImportModal } from "./views/ImportModal";
-import { VIEW_TYPE_STUDY, StudyView } from "./views/StudyView";
+import { VIEW_TYPE_STUDY, StudyView, type CardOrigin } from "./views/StudyView";
 import { VIEW_TYPE_PERSONAL, PersonalCenterView } from "./views/PersonalCenterView";
 import { LEGACY_VIEW_TYPES } from "./views/legacy";
 import { guessFromFilename, VIDEO_EXTENSIONS } from "./services/guess";
@@ -81,10 +81,11 @@ export default class YoungLookPlugin extends Plugin {
   /** 个人中心的来路：退出时按它回到原位（列表页 / 学习页第 N 句）。 */
   private personalOrigin: PersonalOrigin = { from: "list" };
   /**
-   * 一次性：这次打开要落在哪个页签（AI 门控弹窗「去配置」→ "wallet"）。
+   * 一次性：这次打开要落在哪个页签（AI 门控弹窗「去配置」→ "wallet"、
+   * 学习卡片「返回」回历史页 → "sentences"）。
    * PersonalCenterView.render() 读一次就清，不残留到下一次打开。
    */
-  personalInitialTab: "profile" | "wallet" | "vocab" | null = null;
+  personalInitialTab: "profile" | "wallet" | "vocab" | "sentences" | null = null;
 
   async onload(): Promise<void> {
     // 视图类型必须在任何 await 之前同步注册（官方要求）：启动时布局恢复可能
@@ -122,17 +123,8 @@ export default class YoungLookPlugin extends Plugin {
     this.db = await VaultDb.open(this.settings.activeSpaceId);
     await this.tagVaultPath();
 
-    // 演示素材（示例那一集）不再在启动时铺：它改走服务端按需下载，用户在首页那条
-    // 「示例」上点「开始学」时才下载并导入（见 services/demoPack.ts）。启动零网络依赖。
-
-    // 🔧 TEMP（2026-10-14 晚，确认后撤）：用户改了演示字幕要重下，demoSeeded 标记
-    // 挡着首页占位行。启动时清一次恢复下载入口。只动 meta 这一条，学习数据不受影响。
-    try {
-      await this.db.delete(STORE.meta, "demoSeeded");
-      log.info("TEMP: demoSeeded 已清除，首页占位行恢复");
-    } catch (error) {
-      log.warn("TEMP: 清 demoSeeded 失败（不影响使用）", error);
-    }
+    // 演示素材（首页那条「示例素材」）不再在启动时铺：它改走服务端按需下载，用户在
+    // 那一行上点「开始学」时才下载并导入（见 services/demoPack.ts）。启动零网络依赖。
 
     // 🔧 dev 专属重置入口：./yolo reset-client 经 obsidian://younglook-reset 触发。
     // 只在开发构建注册 —— 线上一律没有这个 handler，社区里一条链接不可能清用户数据。
@@ -779,13 +771,14 @@ export default class YoungLookPlugin extends Plugin {
   /**
    * 打开个人中心。
    *
-   * 所有入口（账号头像 / AI 门控弹窗）都走这里。
+   * 所有入口（账号头像 / AI 门控弹窗 / 学习卡片「返回」回历史页）都走这里。
    *
-   * @param opts.tab 一次性指定落点页签（AI 门控弹窗「去配置」→ "wallet"），渲染时消费掉。
+   * @param opts.tab 一次性指定落点页签（AI 门控弹窗「去配置」→ "wallet"、
+   *   学习卡片「返回」→ "sentences"），渲染时消费掉。
    */
   openPersonalCenter(
     origin: PersonalOrigin,
-    opts: { tab?: "profile" | "wallet" | "vocab" } = {},
+    opts: { tab?: "profile" | "wallet" | "vocab" | "sentences" } = {},
   ): void {
     this.personalOrigin = origin;
     this.personalInitialTab = opts.tab ?? null;
@@ -810,11 +803,12 @@ export default class YoungLookPlugin extends Plugin {
       .getLeavesOfType(VIEW_TYPE_STUDY)
       .find((l) => l.getRoot() === this.app.workspace.rootSplit);
     const view = leaf?.view as unknown as {
-      restoreTo?(episodeCid: string, index: number): Promise<void>;
+      restoreTo?(episodeCid: string, index: number, origin?: CardOrigin): Promise<void>;
       showList?(): Promise<void>;
     } | undefined;
     if (!view) return;
     if (origin.from === "study" && origin.recordCid) {
+      // 不传 origin = 保持卡片原来路（个人中心只是中途路过，不改变「返回」该退到哪）
       await view.restoreTo?.(origin.recordCid, origin.index);
     } else {
       await view.showList?.();
@@ -828,6 +822,9 @@ export default class YoungLookPlugin extends Plugin {
    *
    * 目标句不看来路 —— 由那一行自己指定（episodeCid + 1-based 句子序号，
    * 见 StudySentence.index）。视频不在了这类不可跳的情况由历史页那边藏钮拦下。
+   *
+   * 来路钉成 `"history"`：这一跳**跳过了选集页**，上一个页面是历史页 —— 卡片上
+   * 的「返回」据此把用户送回历史页，而不是回选集页（见 CardOrigin）。
    */
   async jumpToSentence(episodeCid: string, index: number): Promise<void> {
     if (this.settings.lastView !== VIEW_TYPE_STUDY) {
@@ -838,9 +835,30 @@ export default class YoungLookPlugin extends Plugin {
     await leaf.setViewState({ type: VIEW_TYPE_STUDY, active: true });
     this.app.workspace.revealLeaf(leaf);
     const view = leaf.view as unknown as {
-      restoreTo?(episodeCid: string, index: number): Promise<void>;
+      restoreTo?(episodeCid: string, index: number, origin?: CardOrigin): Promise<void>;
     } | undefined;
-    await view?.restoreTo?.(episodeCid, index);
+    await view?.restoreTo?.(episodeCid, index, "history");
+  }
+
+  /**
+   * 学习卡片「返回」回历史页（来路是「打开」的那种卡片，见 `jumpToSentence`）。
+   *
+   * 上一个页面就是历史页 —— 把个人中心亮出来并落到「历史」页签：
+   * · 个人中心**还开着**（「打开」就是从它身上点的，一般都在）→ 聚焦它、切到「历史」
+   *   页签，**不动它的来路** —— 它自己那颗「返回」照旧回原位（比如它是从学习卡片
+   *   开出来的，就该回到那张卡片的那一句，不该被这一趟串门改掉）。
+   * · 被用户手动关了 → 用同一套入口重开一个，落「历史」页签、来路记成学习页列表。
+   *
+   * 学习页那半边（关掉这次「打开」新开的那张卡片 tab）由 StudyView 自己做 ——
+   * 只有它知道自己挂在哪个 leaf 上，这里不去猜。
+   */
+  revealHistoryPage(): void {
+    this.personalInitialTab = "sentences";
+    if (this.app.workspace.getLeavesOfType(VIEW_TYPE_PERSONAL).length > 0) {
+      void this.activateLeaf(VIEW_TYPE_PERSONAL, true);
+      return;
+    }
+    this.openPersonalCenter({ from: "list" }, { tab: "sentences" });
   }
 
   /**
@@ -951,7 +969,7 @@ export default class YoungLookPlugin extends Plugin {
     modal.contentEl.createEl("p", { text: "将清空本插件的全部本地数据，恢复到刚安装好的状态：" });
     const list = modal.contentEl.createEl("ul");
     for (const item of [
-      "本地学习库（学习记录、进度、词库、录音、本地笔记）",
+      "本地学习库（素材清单、进度、词库、录音、本地笔记）",
       "插件设置（登录状态、空间、服务器地址 → 恢复出厂默认）",
       "应用数据目录（素材库副本、demo 暂存、词典）",
     ]) {
@@ -1581,6 +1599,11 @@ interface MePayload {
   avatar?: string;
   email?: string;
   ai_balance_millis?: number;
+  // 昵称三件套（2026-10-15）：/me/ 带上它们，个人中心才知道输入框该不该禁用
+  nickname_pending?: string;
+  nickname_moderation_status?: string;
+  /** 服务端算好的下次可改时刻（ISO）；没改过昵称时为 null */
+  nickname_next_change_at?: string | null;
 }
 
 interface ExchangePayload extends MePayload {
@@ -1598,6 +1621,10 @@ function profileFromMe(data: MePayload): AccountProfile {
     email: data.email ?? "",
     avatarUrl: data.avatar ?? "",
     fetchedAt: new Date().toISOString(),
+    nicknamePending: data.nickname_pending ?? "",
+    nicknameStatus: data.nickname_moderation_status ?? "approved",
+    // null（从未改过）→ undefined（本地按"没有冷却"处理），别把它写成字符串 "null"
+    nicknameNextChangeAt: data.nickname_next_change_at ?? undefined,
   };
 }
 

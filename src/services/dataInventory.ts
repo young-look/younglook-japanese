@@ -587,8 +587,8 @@ async function collectArchivePart(
     },
     {
       key: "records",
-      label: "学习记录",
-      hint: "每条记录的标题、季集号这些展示信息",
+      label: "素材信息",
+      hint: "每条素材的标题、季集号这些展示信息",
       count: lives(records).length,
       bytes: utf8Bytes(lives(records)),
       trait: "cloud",

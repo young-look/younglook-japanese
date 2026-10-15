@@ -4,8 +4,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { StudySentence } from "../src/types/entities";
-import { collectVocabFromSlices, type SliceLearnInfo } from "../src/services/vocabLibrary";
+import type { SentenceAnalysis, StudySentence } from "../src/types/entities";
+import {
+  collectVocabFromAnalyses,
+  collectVocabFromSlices,
+  type SliceLearnInfo,
+} from "../src/services/vocabLibrary";
 
 function slice(cid: string, surface: string): StudySentence {
   return {
@@ -16,6 +20,12 @@ function slice(cid: string, surface: string): StudySentence {
       ],
     },
   } as unknown as StudySentence;
+}
+
+function analysis(surface: string): SentenceAnalysis {
+  return {
+    tokens: [{ surface, pos: "noun", reading: "", aiReading: "", romaji: "", def: "" }],
+  } as unknown as SentenceAnalysis;
 }
 
 const AT1 = "2026-10-01T10:00:00Z";
@@ -75,5 +85,50 @@ describe("词库例句：仿写必须包含该词", () => {
     );
     expect(into.get("春日影")?.example).toBe("また春日影やったの？");
     expect(into.get("春日影")?.exampleAt).toBe(AT2);
+  });
+});
+
+/**
+ * 总词汇量的口径不认"本机有没有素材"（2026-10-14 用户拍板）：AI 解析随同步回来，
+ * 本机没有切片行的孤儿句**照样计入** —— 换台机器、或把素材移掉，词库不能凭空少一截。
+ */
+describe("词库收词：孤儿句照样计入", () => {
+  it("本机没有切片行的完成句，词照样进词库", () => {
+    const into = new Map();
+    collectVocabFromAnalyses(
+      new Map([["S:orphan", analysis("春日影")]]),
+      new Map([["S:orphan", info("春日影を弾いた", AT1)]]),
+      () => "孤独摇滚 · 第 1 集",
+      into,
+    );
+    expect(into.get("春日影")?.seen).toBe(1);
+    expect(into.get("春日影")?.source).toBe("孤独摇滚 · 第 1 集");
+    expect(into.get("春日影")?.example).toBe("春日影を弾いた");
+  });
+
+  it("孤儿句与本机切片的词合并累加，出处按各自的句走", () => {
+    const into = new Map();
+    collectVocabFromSlices([slice("S:1", "春日影")], new Map([["S:1", info("", AT1)]]), "本机那集", into);
+    collectVocabFromAnalyses(
+      new Map([["S:orphan", analysis("春日影")]]),
+      new Map([["S:orphan", info("", AT2)]]),
+      () => "云端那集",
+      into,
+    );
+    expect(into.get("春日影")?.seen).toBe(2);
+    // 先到的那个记出处（与本机切片同一规则，不为孤儿句另开一套）
+    expect(into.get("春日影")?.source).toBe("本机那集");
+    expect(into.get("春日影")?.lastSeenAt).toBe(AT2);
+  });
+
+  it("没解析过的孤儿句不计入（没有 tokens 就没有词，不是漏算）", () => {
+    const into = new Map();
+    collectVocabFromAnalyses(
+      new Map([["S:orphan", { tokens: [] } as unknown as SentenceAnalysis]]),
+      new Map([["S:orphan", info("春日影を弾いた", AT1)]]),
+      () => "t",
+      into,
+    );
+    expect(into.size).toBe(0);
   });
 });

@@ -67,6 +67,13 @@ export interface AnalysisHandle {
   showExplanation(explanation: SentenceExplanation | null, errorMessage: string): void;
   /** 第二块（逐词释义）到齐：改提示语 —— 这时句子卡上的词才能点 */
   wordsReady(): void;
+  /**
+   * 「只重算逐词释义」走完（2026-10-15）：说清**这次刷的是哪一块**。
+   *
+   * 不能沿用 `wordsReady` 那句"已生成这一句的解读" —— 这一次解读根本没重算，
+   * 左右两块得各说各的实话（与 `explanationRefreshed` 对称）。
+   */
+  wordsRefreshed(): void;
   /** 第二块没拿到（重试过一次还是失败）：如实说，解读留着不动 */
   wordsFailed(message: string): void;
   /**
@@ -79,12 +86,37 @@ export interface AnalysisHandle {
    */
   explanationRefreshed(hasWords: boolean): void;
   /**
-   * 本机已经解析过这一句：直接铺开，**不再发请求**（也就不再花钱）。
+   * 本机存着这一句的解析：直接铺开，**不再发请求**（也就不再花钱）。
    * 与 `showExplanation` 的区别只是内容来源 —— 渲染路径完全同一条。
+   *
+   * 🔥 2026-10-15（用户拍板）：库里可能是**半份** —— 解读那块单独存下来了、
+   * 词表那次失败（见 `AnalysisHandle.showCached` 的调用点与 `persistExplanationOnly`）。
+   * 半份**照样铺**：用户花过钱的解读不能因为另一块没到就不给看。
+   *
+   * @param wordsReady 词表那块也在不在（= 记录里的 `done`）。决定提示语是
+   *   "点词可以看释义"还是"词还点不开、点「重新解析」只补这一块" ——
+   *   **不许撒谎**：说能点而点不动，比少说一句糟得多。
    */
-  showCached(analysis: SentenceAnalysis): void;
+  showCached(analysis: SentenceAnalysis, wordsReady: boolean): void;
   /** 分词器不可用（词典缺失等）：先记下，点了 AI 解析才提示 */
   showUnavailable(message: string): void;
+  /**
+   * 解析中：这张卡边缘转起那道弧（2026-10-15）。
+   *
+   * **只拨开关，不管起止时机** —— 由上层在"这一句真的在解析"的整段里拨上、
+   * 在每条出口拨下（与句子卡压灰/转圈同一个开关，见 `StudyView.setParsingActive`）。
+   * 放这儿而不是 `beginStream` 里自动开：两块（解读 + 词表）都落地才算解析完，
+   * 而 `beginStream` 只管**第一块**的开始、`showExplanation` 只管它的结束。
+   */
+  setParsing(on: boolean): void;
+  /**
+   * 「重新解析」选择窗里悬停某一行时，把**整块解析区**点亮（2026-10-15）。
+   *
+   * 为什么需要它：弹窗带遮罩，背景是压暗的；不把那块抬到遮罩之上，"悬停高亮"
+   * 根本看不见（实现在 `StudyView.highlightReparseTarget` + styles.css 的
+   * `.yl-spotlight`）。只拨类名，不碰布局。
+   */
+  setSpotlight(on: boolean): void;
   /** 登录状态变了（刚连接上 / 刚退出）后重算锁定态，不重建 DOM */
   refreshGate(): void;
   /**
@@ -126,6 +158,12 @@ export function buildAnalysis(opts: {
 
   // ── 唯一的卡片：动作行在上，结果（分界线 + 解读）在下 ──────────────────
   const card = root.createDiv({ cls: "yl-analysis-block" });
+
+  // 🔥 解析中顺着卡片边缘转的那道弧（2026-10-15 用户拍板：彗星单弧 + 匀速）。
+  // 纯装饰：**这里不放计时器、不管节奏**，转不转只认卡片上的 `.yl-parsing`，
+  // 关/开都由 `setParsing` 一处拨（上层 StudyView 与句子卡那道弧一起拨，见
+  // `setParsingActive`）。元素本身是空的 —— 弧是 CSS 的 conic-gradient。
+  card.createSpan({ cls: "yl-ring", attr: { "aria-hidden": "true" } }).createEl("i");
 
   const toolbar = card.createDiv({ cls: "yl-analysis-toolbar" });
 
@@ -399,6 +437,11 @@ export function buildAnalysis(opts: {
       hintEl.removeClass("yl-warn-text");
       hintEl.setText("已生成这一句的解读，点右上方卡片内句子里的词可以看释义。");
     },
+    wordsRefreshed() {
+      if (!explained) return;
+      hintEl.removeClass("yl-warn-text");
+      hintEl.setText("逐词释义已更新；点右上方卡片内句子里的词可以看新的释义。");
+    },
     wordsFailed(message) {
       hintEl.addClass("yl-warn-text");
       if (message) {
@@ -419,20 +462,31 @@ export function buildAnalysis(opts: {
           : "解读已更新；这一句的逐词释义还没有，句子卡上的词暂时点不开。",
       );
     },
-    showCached(analysis) {
+    showCached(analysis, wordsReady) {
       applyExplanation({
         translation: analysis.translation ?? "",
         sections: analysis.explanation ?? EMPTY_EXPLANATION_SECTIONS,
       });
-      // 缓存里那份逐词释义也在：直接进入"词可以点"的提示态
-      if (explained) {
-        hintEl.removeClass("yl-warn-text");
-        hintEl.setText("已生成这一句的解读，点右上方卡片内句子里的词可以看释义。");
-      }
+      // applyExplanation 那句"正在准备逐词释义…"是**流式刚写完**那条路的话 ——
+      // 从库里铺开时没有任何东西在路上，必须在这里改掉（半份记录尤其：它那句
+      // "正在准备"会一直挂着，用户等到天荒地老）。
+      if (!explained) return;
+      hintEl.removeClass("yl-warn-text");
+      hintEl.setText(
+        wordsReady
+          ? "已生成这一句的解读，点右上方卡片内句子里的词可以看释义。"
+          : "上次只生成了解读，逐词释义没拿到（词暂时点不开）—— 点「重新解析」可以只补这一块。",
+      );
     },
     showUnavailable(message) {
       // 点之前不提示（解析区保持空白）；消息先存着，点 AI 解析时会在按钮下冒出来
       pendingUnavailable = message;
+    },
+    setParsing(on) {
+      card.toggleClass("yl-parsing", on);
+    },
+    setSpotlight(on) {
+      root.toggleClass("yl-spotlight", on);
     },
     refreshGate() {
       applyGate();

@@ -102,6 +102,7 @@ export function assetShaCid(sha256: string): string {
  * ⚠️ 撞了就合并（用户拍板）：相同的三句序列 —— 无论同一条记录还是跨记录 ——
  * 得到同一个 cid，学习进度 / 笔记 / 解析只认这一份。
  */
+// @fence-start: plugin.slice-cid
 export function sliceCid(
   prevJa: string | null,
   curJa: string,
@@ -115,6 +116,7 @@ export function sliceCid(
     normalizeJa(nextJa ?? ""),
   ]);
 }
+// @fence-end: plugin.slice-cid
 
 export function progressCid(sliceCidValue: string): string {
   return `P:${sliceCidValue}`;
@@ -133,9 +135,11 @@ export function shortCid(cid: string): string {
   return cid.length <= 14 ? cid : `${cid.slice(0, 12)}…`;
 }
 
+// @fence-start: plugin.cid-prefix
 async function prefixed(prefix: string, parts: readonly string[]): Promise<string> {
   return `${prefix}${await sha256Hex(parts)}`;
 }
+// @fence-end: plugin.cid-prefix
 
 export function randomUuid(): string {
   // 不能直接写 `typeof crypto !== "undefined"`：lib.dom 下 crypto 恒为真，

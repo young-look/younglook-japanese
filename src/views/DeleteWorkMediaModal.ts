@@ -25,14 +25,14 @@ import { DialogModal } from "../ui/dialog";
 export interface DeleteWorkTarget {
   /** 作品名（挂在弹窗副标题上） */
   title: string;
-  /** 这一组名下有多少条学习记录 */
+  /** 这一组名下有多少条素材 */
   recordCount: number;
   /** 素材库里的副本路径 —— 真正会被删掉的那些 */
   inLibraryPaths: string[];
   bytes: number;
   /** 落在用户原位置、不会被删的文件数 */
   outsideCount: number;
-  /** 会一并移除的学习记录 cid */
+  /** 会一并移除的素材 cid（= record 行） */
   recordCids: string[];
 }
 
@@ -56,8 +56,10 @@ export class DeleteWorkMediaModal extends DialogModal {
       subtitle: this.target.title,
     });
 
+    // 「素材」在列表语境 = 一条组合（视频 + 字幕）；这个弹窗同时要报文件数，
+    // 于是两个粒度各自带量词收口：「N 条素材 · M 个素材文件」（术语表见 docs/concept/cid.md）。
     body.createEl("p", {
-      text: "确认后，这个作品名下的每条学习记录都会从列表移除，素材库里属于它的视频和字幕会一起删掉。",
+      text: "确认后，这个作品名下的每条素材都会从列表移除，素材库里属于它的视频和字幕会一起删掉。",
       cls: "yl-lead",
     });
 
@@ -65,12 +67,12 @@ export class DeleteWorkMediaModal extends DialogModal {
     const facts = body.createDiv({ cls: "yl-note" });
     facts.createDiv({
       cls: "yl-note-strong",
-      text: `共 ${this.target.recordCount} 条记录 · ${this.target.inLibraryPaths.length} 个文件 · 约 ${humanSize(this.target.bytes)}`,
+      text: `共 ${this.target.recordCount} 条素材 · ${this.target.inLibraryPaths.length} 个素材文件 · 约 ${humanSize(this.target.bytes)}`,
     });
     if (this.target.outsideCount > 0) {
       facts.createDiv({
         cls: "yl-note-sub",
-        text: `另有 ${this.target.outsideCount} 个文件留在你原来的位置，不会被删。`,
+        text: `另有 ${this.target.outsideCount} 个素材文件留在你原来的位置，不会被删。`,
       });
     }
 
@@ -78,7 +80,7 @@ export class DeleteWorkMediaModal extends DialogModal {
     const guard = body.createDiv({ cls: "yl-note" });
     guard.createDiv({ text: "学习进度不会被删除。", cls: "yl-note-strong" });
     guard.createDiv({
-      text: "跟读、抄写、仿写的进度，录音和笔记都留在这里；重新导入同一集就能恢复。",
+      text: "跟读、抄写、仿写的进度，录音和笔记都留在这里；重新导入同一份视频和字幕就能恢复。",
       cls: "yl-note-sub",
     });
 
@@ -120,7 +122,7 @@ export class DeleteWorkMediaModal extends DialogModal {
       new Notice(
         failed.length > 0
           ? `删掉了 ${removed} 个文件，另有 ${failed.length} 个没能删掉（可能正被占用）。`
-          : `删掉了这个作品的素材，共 ${removed} 个文件。`,
+          : `删掉了这个作品的素材，共 ${removed} 个素材文件。`,
         6000,
       );
       this.options.onDone?.();

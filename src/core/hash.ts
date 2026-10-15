@@ -5,6 +5,7 @@
  * 于是单测和运行时走的是完全同一份实现，不会出现"测试过了线上不一样"。
  */
 
+// @fence-start: plugin.hash
 const encoder = new TextEncoder();
 
 export type HashPart = string | Uint8Array | ArrayBuffer;
@@ -37,3 +38,4 @@ export function toHex(bytes: Uint8Array): string {
   for (const b of bytes) out += b.toString(16).padStart(2, "0");
   return out;
 }
+// @fence-end: plugin.hash

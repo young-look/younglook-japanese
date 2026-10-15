@@ -9,7 +9,7 @@ import { DialogModal } from "../ui/dialog";
 import { KIND_OPTIONS, type WorkKind } from "./ImportModal";
 
 /**
- * 「编辑这一集」对话框：改导入时配置的那组固有属性 —— 视频名称、作品类型、
+ * 「编辑素材信息」对话框：改导入时配置的那组固有属性 —— 视频名称、作品类型、
  * 年份、集号、季度、集标题。视频/字幕文件不在这里换（那是重新导入的事）。
  *
  * 与导入框同一套口径（2026-10-11 用户拍板）：作品类型必选（剧集类 / 非剧集类），
@@ -82,7 +82,7 @@ export class EditModal extends DialogModal {
   private render(): void {
     const { body, foot } = this.buildShell({
       icon: "notebook-pen",
-      title: "编辑这一集",
+      title: "编辑素材信息",
       subtitle: this.targetText(),
       // 这一屏有名字栏 + 作品类型分段钮 + 最多四行 meta —— 挤在 470 里每一行
       // 只剩 ~200px，说明小字会折成三行。宽一档是实测出来的，别改回窄档。

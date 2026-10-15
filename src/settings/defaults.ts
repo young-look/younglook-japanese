@@ -57,6 +57,8 @@ export function defaultSettings(): PluginSettings {
     lastView: "",
     // 第一次进学习页的「装词典」提醒还没出现过
     dictPromptSeen: false,
+    // 「这个麦克风采音会差一些」还没提醒过
+    micQualityPromptSeen: false,
     lastUpdateCheckAt: 0,
     prefsUpdatedAt: "",
     // 每日校验跑到哪天了（"YYYY-MM-DD"）；空串 = 从没校验过
@@ -210,6 +212,8 @@ export function fillDefaults(raw: unknown, buildEnv: BuildEnv = BUILD_ENV): Plug
     // 老版本没有这一项：补成"还没提醒过"。老用户第一次进学习页会看到一次
     // —— 他们多半本来就有 dict/（软链装法），弹窗前会先判磁盘，有就不弹。
     dictPromptSeen: given.dictPromptSeen === true,
+    // 老版本没这一项：补成"还没提醒过"
+    micQualityPromptSeen: given.micQualityPromptSeen === true,
     authServerUrl: typeof given.authServerUrl === "string" ? given.authServerUrl : "",
     // 偏好同步的 LWW 时间戳：老版本没有，补成空串（= 0，云端偏好因此能落进来）
     prefsUpdatedAt: typeof given.prefsUpdatedAt === "string" ? given.prefsUpdatedAt : "",

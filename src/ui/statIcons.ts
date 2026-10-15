@@ -15,6 +15,9 @@ export const ICON_FLAKE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentC
 /** 句子（总句子数）：引号气泡 */
 export const ICON_SENT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><path d="M9 8.5h6M9 12h4"/></svg>`;
 
+/** 累计学习：阶梯上行 + 箭头，累计向前、进步不止 */
+export const ICON_TOTAL = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h4v-5H3zM10 20h4v-9h-4zM17 20h4V7h-4z"/><path d="M14 4h7M21 4v7"/></svg>`;
+
 /** 词汇（总词汇量）：翻开的书 */
 export const ICON_VOCAB = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/></svg>`;
 

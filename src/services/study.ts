@@ -19,6 +19,7 @@ import { rowDigest } from "../core/digest";
 import { assetShaCid, progressCid, sessionCid } from "../core/ids";
 import { STORE, type StoreName, type VaultDb } from "../storage/db";
 import { fileExists } from "../storage/files";
+import { hasSections } from "./ai/client";
 import { bumpStudyDay, type StudyDayPatch } from "./studyDays";
 import type {
   AssetRow,
@@ -545,6 +546,27 @@ export async function saveSliceAnalysis(
   analysis: SentenceAnalysis,
 ): Promise<void> {
   await persistSentence(db, sentence, { analysis });
+}
+
+/**
+ * 这条记录里**有没有解读那一块**（两段正文或整句译文，任一有内容就算）。
+ *
+ * 🔥 为什么要有它（2026-10-15 用户拍板）：解析是**两块各自独立**来的，解读那一块
+ * 到手就**先单独落一次库**（见 StudyView.persistExplanationOnly）—— 于是库里会出现
+ * "只有解读、没有词表"的**半份**记录（`done` 仍是 false）。这时判断"要不要把解读
+ * 铺给用户看"就**不能再看 `done`** —— 那会把刚替他存下的解读又藏起来，等于白存，
+ * 用户重启一次插件就以为"整句解析不见了"。
+ *
+ * ⚠️ 与 `done` 的分工（两者不是一回事，别互相替代）：
+ *   · `done` = **两块都到**（解析完整：句子卡点亮、词点得开、按钮说「重新解析」）；
+ *   · 这一个只回答"解读那块在不在"。
+ */
+export function hasExplanationContent(
+  analysis: Pick<SentenceAnalysis, "explanation" | "translation"> | null | undefined,
+): boolean {
+  if (!analysis) return false;
+  if ((analysis.translation ?? "").trim()) return true;
+  return hasSections(analysis.explanation);
 }
 
 /**

@@ -61,6 +61,104 @@ export function isNoBalanceError(error: unknown): boolean {
   return error instanceof AiUnavailableError && error.code === "need-balance";
 }
 
+/**
+ * 上游（AI 供应商）自己报的错（502/503、上游首输出超时）的机器判定。
+ *
+ * 界面靠它决定"这次该不该再试一次"：撞的是上游这堵墙，**重试一次只会再撞一次** ——
+ * 如实报错收场，别让用户为同一堵墙多等一轮。
+ */
+export function isUpstreamError(error: unknown): boolean {
+  return error instanceof AiUnavailableError && error.code === "upstream";
+}
+
+/**
+ * SSE `type=error` 帧的 `reason` → 机器判定的错误码（服务端给的就是这几种）。
+ *
+ * 只有两种需要界面认出来：
+ *   · `upstream` —— 含服务端自己判的"模型没给出可用的结果"：**供应商那一趟没成**，
+ *     立即报错、不许重试（同一条链路再撞一次只是一样的结果，白花一笔钱、白等一轮）；
+ *   · `insufficient` —— 没余额，走统一弹窗。
+ * 其余（`busy` 并发锁、`rate_limited` 限流、`disabled` 开关关了、`pricing`/`config`）
+ * 都不带码 —— 交给调用方在**剩下的**首输出预算里再试一次（2026-10-15 用户拍板：
+ * 502/503 之外的错允许重试，只是总时长不许超过 20 秒）。
+ */
+function streamErrorCode(reason: string): string | undefined {
+  if (reason === "insufficient") return "need-balance";
+  if (reason === "upstream") return "upstream";
+  return undefined;
+}
+
+/**
+ * 一次 AI 动作的**首输出**预算（毫秒）。
+ *
+ * 思考模式等的是**思考块**、非思考模式等的是**正文** —— 两条口径都是"只要还有东西
+ * 往回流就算活着"，与文件名同级的服务端 `utils/llm.py::_OutputWatchdog` 是同一套
+ * 规矩（2026-10-15 用户拍板：无论发生什么情况，20 秒内没有思考/输出就必须有报错，
+ * 不能让用户无限等待）。服务端那份管的是托管链路；这里这份管的是**插件直连 BYOK**
+ * （没有服务端兜底）与**中间层把响应攒着不发**这两种情况。
+ */
+export const AI_FIRST_OUTPUT_MS = 20_000;
+
+/**
+ * 首输出预算耗尽时的用户文案，**按实际生效的轨道分叉**（2026-10-15 用户拍板）。
+ *
+ * 内置模型这条路上"没人说话"就是**我们的上游供应商挂了**（或它只发 keep-alive
+ * 心跳、一个 chunk 都不吐 —— 2026-10-15 DeepSeek 过载的形态）：直说"上游服务暂时
+ * 不可用"，别写成"太慢" —— 那听着像"再等等就快了"，用户会接着干等下去。
+ * BYOK 那条路的"上游"是用户自己配的端点，照"太慢"说才准确。
+ *
+ * 判定用 `resolveAiRoute`（与按钮下面那句费用提示同一口径）：用户选内置模型时
+ * 上游是我们的供应商，选自定义模型时上游是他自己配的端点。
+ */
+export function noOutputMessage(settings: PluginSettings): string {
+  return resolveAiRoute(settings) === "hosted"
+    ? "内置模型上游服务暂时不可用。"
+    : "模型这次响应太慢，稍后再试。";
+}
+
+/**
+ * 「首输出」看门狗：到点还没等到任何输出就中断这次请求。
+ *
+ * 三条用法缺一不可：
+ *   · 把 `signal` 传给底层请求（`hostedStream` / `fetch` 都认它）；
+ *   · **每收到一段有意义的输出**就 `touch()` 一次，计时归零重来 —— 这是"只要模型
+ *     还在写就一直等"与"死等到底"的分别；
+ *   · 收尾调 `stop()` 放掉计时器，别让它在已经结束的请求上再响一次。
+ *
+ * ⚠️ `timedOut()` 只在**这次请求被预算掐断**时为真。用户自己翻页 / 关面板走的是
+ * 外部 signal（`outer`），那条路不算超时 —— 调用方照旧按"自己掐的"静默处置。
+ */
+export function watchFirstOutput(outer: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: number | null = null;
+  const arm = (): void => {
+    if (timer !== null) window.clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, Math.max(0, timeoutMs));
+  };
+  const forward = (): void => controller.abort();
+  if (outer) {
+    if (outer.aborted) controller.abort();
+    else outer.addEventListener("abort", forward, { once: true });
+  }
+  arm();
+  return {
+    signal: controller.signal,
+    touch: (): void => {
+      if (!timedOut) arm();
+    },
+    timedOut: (): boolean => timedOut,
+    stop: (): void => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+      outer?.removeEventListener("abort", forward);
+    },
+  };
+}
+
 export function aiConfigOrThrow(settings: PluginSettings): AiConfig {
   const route = resolveAiRoute(settings);
   if (route === "off") {
@@ -239,7 +337,11 @@ export async function chatJson<T>(
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new AiUnavailableError(`AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`);
+    throw new AiUnavailableError(
+      `AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`,
+      // 5xx = 供应商那一趟没成（502/503 最常见）：重试只会再撞一次
+      response.status >= 500 ? "upstream" : undefined,
+    );
   }
   const body = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -276,7 +378,11 @@ export async function chat(
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new AiUnavailableError(`AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`);
+    throw new AiUnavailableError(
+      `AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`,
+      // 5xx = 供应商那一趟没成（502/503 最常见）：重试只会再撞一次
+      response.status >= 500 ? "upstream" : undefined,
+    );
   }
   const body = (await response.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -529,7 +635,9 @@ export async function verifyImitationStream(
         const message = typeof event.message === "string" ? event.message : "";
         failure = new AiUnavailableError(
           message || "模型这次没给出可用的判定，再试一次。",
-          reason === "insufficient" ? "need-balance" : undefined,
+          // reason → 码：上游自己报的错（含"一个字都没给"的那次）带 upstream 码，
+          // 调用方据此**不再重试** —— 见 client.ts::isUpstreamError
+          streamErrorCode(reason),
         );
       }
     });
@@ -573,7 +681,11 @@ export async function verifyImitationStream(
   }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new AiUnavailableError(`AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`);
+    throw new AiUnavailableError(
+      `AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`,
+      // 5xx = 供应商那一趟没成（502/503 最常见）：重试只会再撞一次
+      response.status >= 500 ? "upstream" : undefined,
+    );
   }
   let raw = "";
   let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;
@@ -694,6 +806,9 @@ export interface ExplainOptions {
   /**
    * 「重新解析」：内置模型那条路要求服务端**跳过解析缓存**重算一遍，并把新结果
    * 覆盖写回缓存（之后再有人命中这一句，拿到的就是最新那一版）。
+   *
+   * ⚠️ **解读与逐词释义两块共用这个开关**（2026-10-15）：服务端的缓存按块存
+   * （`lookup(ja, part, …)`），所以"只刷词表"带它只跳词表那一行，解读不受影响。
    *
    * 为什么必须有这个开关：用户点「重新解析」的前提就是"我不满意当前这条"——
    * 服务端若无条件回缓存，这个按钮就是按一次返回同一份、按多少次都一样
@@ -819,6 +934,7 @@ export async function explainSentence(
 export async function explainWords(
   input: ExplainInput,
   settings: PluginSettings,
+  options: ExplainOptions = {},
 ): Promise<WordEntry[] | null> {
   const route = resolveAiRoute(settings);
   if (route === "off") {
@@ -829,7 +945,11 @@ export async function explainWords(
     const { data } = await hostedRequest<{ words?: unknown }>(
       settings,
       "analyze",
-      analyzePayload(input, "words"),
+      // `refresh` 与解读那一块同口径（2026-10-15）：服务端的解析缓存是**按块**
+      // 存取的（`analysis_cache.lookup(ja, part, …)`），所以只刷词表时带上它，
+      // 跳过的只有词表那一行 —— 解读的缓存不受影响。不带 = 无条件回缓存里那份，
+      // 用户点「重新解析」就是按了没反应（解读那边 2026-10-08 实机报过同一个坑）。
+      analyzePayload(input, "words", options.refresh === true),
     );
     return normalizeWords(data.words);
   }
@@ -1166,7 +1286,9 @@ export async function explainSentenceStream(
         const message = typeof event.message === "string" ? event.message : "";
         failure = new AiUnavailableError(
           message || "模型这次没给出可用的结果，再试一次。",
-          reason === "insufficient" ? "need-balance" : undefined,
+          // reason → 码：上游自己报的错（含"一个字都没给"的那次）带 upstream 码，
+          // 调用方据此**不再重试** —— 见 client.ts::isUpstreamError
+          streamErrorCode(reason),
         );
       }
     });
@@ -1221,7 +1343,11 @@ export async function explainSentenceStream(
   }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new AiUnavailableError(`AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`);
+    throw new AiUnavailableError(
+      `AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`,
+      // 5xx = 供应商那一趟没成（502/503 最常见）：重试只会再撞一次
+      response.status >= 500 ? "upstream" : undefined,
+    );
   }
 
   let raw = "";
@@ -1367,7 +1493,9 @@ export async function askAboutSentenceStream(
         const message = typeof event.message === "string" ? event.message : "";
         failure = new AiUnavailableError(
           message || "模型这次没给出可用的结果，再试一次。",
-          reason === "insufficient" ? "need-balance" : undefined,
+          // reason → 码：上游自己报的错（含"一个字都没给"的那次）带 upstream 码，
+          // 调用方据此**不再重试** —— 见 client.ts::isUpstreamError
+          streamErrorCode(reason),
         );
       }
     });
@@ -1409,7 +1537,11 @@ export async function askAboutSentenceStream(
   }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new AiUnavailableError(`AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`);
+    throw new AiUnavailableError(
+      `AI 接口报错（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ""}`,
+      // 5xx = 供应商那一趟没成（502/503 最常见）：重试只会再撞一次
+      response.status >= 500 ? "upstream" : undefined,
+    );
   }
   let raw = "";
   let usage: { prompt_tokens?: number; completion_tokens?: number } | null = null;

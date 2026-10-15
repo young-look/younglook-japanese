@@ -12,8 +12,13 @@ import { RemoveModal } from "./RemoveModal";
 import { ImeHelpModal } from "./ImeHelpModal";
 import { CorrectionModal } from "./CorrectionModal";
 import { ModelSetupModal } from "./ModelSetupModal";
-import { ReparseConfirmModal } from "./study/ReparseConfirmModal";
+import {
+  ReparseConfirmModal,
+  type ReparseBlock,
+  type ReparseBlockState,
+} from "./study/ReparseConfirmModal";
 import { CorrectionSuggestModal } from "./study/CorrectionSuggestModal";
+import { BluetoothMicModal } from "./study/BluetoothMicModal";
 import { localMediaUrl } from "../services/localMedia";
 import { compareCopy, type CopyResult, type CopyTokenize } from "../services/copyCheck";
 import {
@@ -41,6 +46,7 @@ import {
   appendChatTurn,
   effectiveJa,
   effectiveZh,
+  hasExplanationContent,
   loadRecordList,
   loadProgress,
   loadStudySentences,
@@ -86,14 +92,18 @@ import { explainTargets, tokenize } from "../services/jaTokenize";
 import { onClickOutside } from "../core/onClickOutside";
 import { blockAnchor, episodeLabel } from "../markdown/templates";
 import {
+  AI_FIRST_OUTPUT_MS,
   AiUnavailableError,
   explainSentence,
   explainSentenceStream,
   explainWords,
   isNoBalanceError,
+  isUpstreamError,
+  noOutputMessage,
   renderExplanation,
   verifyImitation,
   verifyImitationStream,
+  watchFirstOutput,
   type ExplainInput,
   type ImitationVerdict,
   type SentenceExplanation,
@@ -120,6 +130,20 @@ import type YoungLookPlugin from "../main";
 import { createButton, setButtonIcon, setButtonRole } from "../ui/button";
 
 export const VIEW_TYPE_STUDY = "young-look-study";
+
+/**
+ * 学习卡片的**来路** —— 决定顶栏「返回」退到哪一页。
+ *
+ * · `"list"`    —— 从选集页进来的（列表行「开始学 / 接着学」、导入成功、示例下载）：
+ *                  「返回」= 结束这一集、回选集页。
+ * · `"history"` —— 从个人中心「历史」页的「打开」**新开 tab** 直接落进卡片的
+ *                  （见 `main.jumpToSentence`）。这条路**绕过了选集页**，上一个页面
+ *                  是历史页，所以「返回」必须收回这张卡片、把用户送回历史页 ——
+ *                  一律回选集页是错的（2026-10-14 用户：「只改名字」等于没改）。
+ *
+ * 中间经过个人中心再回来（`closePersonalCenter` → `restoreTo` 不传 origin）来路不变。
+ */
+export type CardOrigin = "list" | "history";
 
 /**
  * 本机解析结果的产出标记（含版本）。
@@ -207,6 +231,8 @@ export class StudyView extends ItemView {
   private session: SessionRow | null = null;
   private index = 0;
   private videoUrl = "";
+  /** 这张卡片的来路（「返回」退到哪一页，见 CardOrigin）。进卡片时定，中途不换。 */
+  private cardOrigin: CardOrigin = "list";
 
   // 复用的界面节点（卡片只建一次，换句就地更新）
   private cardBuilt = false;
@@ -290,8 +316,6 @@ export class StudyView extends ItemView {
   private heroWordInfo: HeroWordInfo[] = [];
   /** 词弹卡的收尾函数（摘监听 + 移除节点）；null = 弹卡没开着 */
   private closeHeroPopoverFn: (() => void) | null = null;
-  /** 句子卡"闪一下"的收尾定时器；null = 没在闪（见 flashHero） */
-  private heroFlashTimer: number | null = null;
   /**
    * 在开的流式解读。翻页 / 关视图 / 连点「重新解析」都要掐掉它 ——
    * 流式请求是长连接，用户已经不看这一句了还让它跑完，等于白花后面的 token。
@@ -327,6 +351,7 @@ export class StudyView extends ItemView {
     onReset: () => this.handleReset("read"),
     loadRecording: (sliceCid) => loadRecording(this.db, sliceCid).then((row) => row ?? null),
     saveRecording: (sliceCid, blob, mimeType, seconds) => saveRecording(this.db, sliceCid, blob, mimeType, seconds),
+    onBluetoothMicHint: (payload) => this.promptBluetoothMic(payload),
   });
   private copyPractice = buildCopyPractice({
     onSubmit: (typed, sliceCid) => this.handleSubmitCopy(typed, sliceCid),
@@ -394,8 +419,6 @@ export class StudyView extends ItemView {
     this.abortExplainStream();
     // 词弹卡挂在 body 上，关视图必须连监听一起摘干净
     this.closeHeroPopover();
-    // 句子卡的"闪一下"定时器：关视图后它不该还活着
-    this.clearHeroFlash();
     // 抄写/仿写的草稿兜底落库（敲了还没到防抖点就关视图，字不能丢）。
     // 仿写构件在 buildCard 里才创建 —— 没进过学习卡的会话（打开就是选集页）它是空的。
     this.copyPractice.dispose();
@@ -634,8 +657,8 @@ export class StudyView extends ItemView {
 
     const items = await loadRecordList(this.db);
 
-    // 演示素材还没下载：列表最前面摆一条「示例」，点它才谈下载（services/demoPack.ts）。
-    // 它是插件分发的东西、不是用户导入的集 —— **不并入 items**，也不计入上面那行概览数字。
+    // 演示素材还没下载：列表最前面摆一条「示例素材」，点它才谈下载（services/demoPack.ts）。
+    // 它是插件分发的东西、不是用户导入的一条素材 —— **不并入 items**，也不计入上面那行概览数字。
     if (!(await isDemoSeeded(this.db))) {
       this.mountDemoPlaceholderRow(list);
     }
@@ -654,9 +677,11 @@ export class StudyView extends ItemView {
     }
 
     // 概览：原来在「今日练习」侧栏面板上的那几个数字，并到这里来。
+    // 「N 条素材」= 列表里那几行，一条 = 视频 + 日字幕这一份组合（不是 N 个文件）——
+    // 「素材」是 UI 泛称，粒度靠量词/语境收口，术语表见 docs/concept/cid.md。
     const totalSlices = items.reduce((sum, entry) => sum + entry.total, 0);
     const doneSlices = items.reduce((sum, entry) => sum + entry.completed, 0);
-    const summary = [`已导入 ${items.length} 集`, `共 ${totalSlices} 句`];
+    const summary = [`已导入 ${items.length} 条素材`, `共 ${totalSlices} 句`];
     if (doneSlices > 0) summary.push(`已学 ${doneSlices} 句（${Math.round((doneSlices / totalSlices) * 100)}%）`);
     // 上报是全量快照重推，没有"待同步条数"这回事 —— 只报最近一次推上去的时刻
     const syncedAt = this.plugin.settings.lastStatsSyncAt;
@@ -667,25 +692,26 @@ export class StudyView extends ItemView {
       this.mountEpisodeRow(list, entry);
     }
 
-    // 未绑定视频的集沉底分组（2026-10-14 方案一定稿）：分隔线 + 整行置灰，
-    // 点之前就能看出这一集暂时学不了 —— 不用再靠点击后弹 Notice 才知道。
+    // 未绑定视频的素材沉底分组（2026-10-14 方案一定稿）：分隔线 + 整行置灰，
+    // 点之前就能看出这条素材暂时学不了 —— 不用再靠点击后弹 Notice 才知道。
     const unbound = items.filter((candidate) => !candidate.videoAvailable);
     if (unbound.length > 0) {
       list.createDiv({
         cls: "yl-unbound-divider yl-muted-sm",
-        text: `以下学习记录文件丢失 · ${unbound.length} 条`,
+        // 「原文件」是刻意的：素材（组合）那条记录还在，不见的是它引用的视频/字幕文件
+        text: `以下素材的原文件丢失 · ${unbound.length} 条`,
       });
       for (const entry of unbound) this.mountEpisodeRow(list, entry, { unbound: true });
     }
   }
 
   /**
-   * 首页一集 = 一条横行：标题/进度在左，主按钮 + 「⋯」在右。
+   * 首页一条素材 = 一条横行：标题/进度在左，主按钮 + 「⋯」在右。
    *
    * `unbound` = 未绑定视频的置灰行：主按钮不是「接着学」而是**可点**的「补视频」——
-   * 弹的就是「导入视频」那个窗口，名字/年份/季集号按这一集预填好，用户只要把视频
-   * 文件选上。recordCid 由「视频 sha256 + 日文字幕 sha256」派生，重新导入同一对文件、
-   * 由 sliceRebind 把学习记录挂回原句，不会产生重复集。
+   * 弹的就是「导入视频」那个窗口，名字/年份/季集号按这条素材预填好，用户只要把视频
+   * 文件选上。recordCid 由「视频 sha256 + 日文字幕 sha256」派生（见 core/ids.ts），
+   * 重新导入**同一对文件**就算出同一个键 ⇒ 直接命中这条记录把它复活，不会产生第二条。
    * ⚠️ 置灰只灰「行」，按钮保持正常可点 —— 按钮也灰掉用户会以为插件坏了。
    */
   private mountEpisodeRow(
@@ -750,10 +776,10 @@ export class StudyView extends ItemView {
   }
 
   /**
-   * 首页的「示例」占位行 —— 只在演示包还没下载时出现（见 services/demoPack.ts）。
+   * 首页的「示例素材」占位行 —— 只在演示包还没下载时出现（见 services/demoPack.ts）。
    *
-   * 它不是库里的真实集：点「开始学」会先弹窗问要不要下载示例素材，下载成功后才由
-   * `importSubtitle` 铺成**真实集**（带进度条、「⋯」菜单那套），这条占位自然消失。
+   * 它还不是库里的一条真实素材：点「开始学」会先弹窗问要不要下载示例素材，下载成功后才由
+   * `importSubtitle` 铺成**真素材行**（带进度条、「⋯」菜单那套），这条占位自然消失。
    * 按钮恒为「开始学」（没下过 = 没学过）；「接着学」是下载后真实行走的既有逻辑。
    */
   private mountDemoPlaceholderRow(list: HTMLElement): void {
@@ -815,9 +841,14 @@ export class StudyView extends ItemView {
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle("编辑这一集…")
+        .setTitle("编辑素材信息…")
         .setIcon("pencil")
-        .onClick(() => new EditModal(this.app, this.plugin, entry).open()),
+        // ⚠️ `onSaved` 必须传：改的是**这一行显示的东西**（名称/年份/季集号/集标题），
+        // 列表是整块重画出来的（buildList 每次现读库），不重画就还是旧字。
+        // 同下一条「移除…」的 `onRemoved` —— 这两个回调是行菜单唯一的刷新出口。
+        .onClick(() =>
+          new EditModal(this.app, this.plugin, entry, { onSaved: () => this.render() }).open(),
+        ),
     );
     menu.addItem((item) =>
       item
@@ -833,20 +864,20 @@ export class StudyView extends ItemView {
   // ── 进入一集 ─────────────────────────────────────────────────────────────
 
   /** 给导入流程用的直入口：导入成功后直接进这一集的学习界面。 */
-  async openEpisode(recordCid: string): Promise<void> {
+  async openEpisode(recordCid: string, origin: CardOrigin = "list"): Promise<void> {
     const items = await loadRecordList(this.db);
     const entry = items.find((candidate) => candidate.record.cid === recordCid);
     if (!entry) {
       await this.render();
       return;
     }
-    await this.enterEpisode(entry);
+    await this.enterEpisode(entry, origin);
   }
 
-  private async enterEpisode(item: RecordListItem): Promise<void> {
+  private async enterEpisode(item: RecordListItem, origin: CardOrigin = "list"): Promise<void> {
     const slices = await loadStudySentences(this.db, item.record.cid);
     if (slices.length === 0) {
-      new Notice("这一集没有可以学的句子。");
+      new Notice("这条素材没有可以学的句子。");
       return;
     }
     const allProgress = await this.db.getAll<ProgressRow>(STORE.progress);
@@ -871,6 +902,7 @@ export class StudyView extends ItemView {
 
     this.item = item;
     this.slices = slices;
+    this.cardOrigin = origin;
     this.session = await startSession(this.db, item.record.cid);
     this.videoUrl = url;
     this.videoAsset = videoAsset;
@@ -885,9 +917,15 @@ export class StudyView extends ItemView {
     this.showSlice(resumeIndex(slices, item.lastSession, completed));
   }
 
-  /** 个人中心「退出」回原位：回到指定记录的指定句（不自动播放）。 */
-  async restoreTo(recordCid: string, index: number): Promise<void> {
-    await this.openEpisode(recordCid);
+  /**
+   * 回到指定记录的指定句（不自动播放）。
+   *
+   * `origin` 省略 = **保持当前来路**：个人中心关掉时（`closePersonalCenter`）走这条路，
+   * 卡片原本从哪儿来还是从哪儿来。历史页「打开」（`jumpToSentence`）必须显式传
+   * `"history"`，否则「返回」会错退到选集页。
+   */
+  async restoreTo(recordCid: string, index: number, origin?: CardOrigin): Promise<void> {
+    await this.openEpisode(recordCid, origin ?? this.cardOrigin);
     this.showSlice(Math.max(1, Math.min(index, this.slices.length)), false);
   }
 
@@ -897,9 +935,17 @@ export class StudyView extends ItemView {
     await this.render();
   }
 
-  /** 退出这一集：会话收尾，回选集页。 */
+  /** 「返回」：退到这张卡片的来路（选集页 / 历史页，见 CardOrigin）。 */
   private async exitEpisode(): Promise<void> {
     await this.endSession();
+    if (this.cardOrigin === "history") {
+      // 卡片是历史页「打开」**新开 tab** 跳进来的：上一个页面是历史页。把这张卡片
+      // 收回去（这个 tab 就是为这次跳转开的，关掉它才算「返回」），历史页由插件侧
+      // 亮出来（还开着就聚焦，被用户手动关了就用同一入口重开、落在「历史」页签）。
+      this.plugin.revealHistoryPage();
+      this.leaf.detach();
+      return;
+    }
     this.mode = "list";
     this.cardBuilt = false;
     this.item = null;
@@ -943,7 +989,7 @@ export class StudyView extends ItemView {
      */
     const wrap = root.createDiv({ cls: "yl-study-wrap" });
 
-    // 顶栏：标题 + 便签 / 笔记 │ 上一句 / 目录 / 下一句 │ 分隔线 │ 退出
+    // 顶栏：标题 + 便签 / 笔记 │ 上一句 / 目录 / 下一句 │ 分隔线 │ 返回
     const header = wrap.createDiv({ cls: "yl-card-header" });
     // 标题要吃掉整行富余（flex:1）才能把按钮组推到最右。
     // （个人中心的灰色小字说明行在标题行外面，不占这一行 —— flex:1 留在
@@ -970,9 +1016,11 @@ export class StudyView extends ItemView {
       onClick: () => this.showSlice(this.index + 1, false),
     });
     // 出口钮和功能钮用分隔线切开（同个人中心标题行的语法：分隔线 + 排尾是出口）。
-    // 叫「退出」不叫「返回」：这里是结束这一集、会话收尾，页内也没有「退出登录」可撞词。
+    // 叫「返回」也叫得实（2026-10-14 用户定）：它退到卡片的**来路** —— 从选集页进来
+    // 就回选集页，从历史页「打开」跳进来就回历史页（见 CardOrigin）。页内没有
+    // 「退出登录」可撞词。
     nav.createDiv({ cls: "yl-card-nav-sep" });
-    createButton(nav, { text: "退出", onClick: () => void this.exitEpisode() });
+    createButton(nav, { text: "返回", onClick: () => void this.exitEpisode() });
 
     // 进度条
     const progressRow = wrap.createDiv({ cls: "yl-progress-row" });
@@ -1402,7 +1450,7 @@ export class StudyView extends ItemView {
     const total = this.slices.length;
     const next = Math.min(total, Math.max(1, index));
     if (index > total) {
-      new Notice("已经是最后一句了。点「退出」结束这一集。");
+      new Notice("已经是最后一句了。点「返回」离开这一集。");
       return;
     }
     if (index < 1) return;
@@ -1545,6 +1593,12 @@ export class StudyView extends ItemView {
     this.heroEl = panel.createDiv({ cls: "yl-hero" });
     const hero = this.heroEl;
 
+    // 🔥 边缘跑马灯（2026-10-15）：与左栏解析卡那道弧**同一套**（见 styles.css 的
+    // `.yl-ring`）—— 元素本身是空的，弧是 CSS 的 conic-gradient；转不转只认卡上的
+    // `.yl-parsing`，由 `setParsingActive` 一处拨。所以这一句不能省：
+    // 少了它，只刷词表时句子卡就"没有跑马灯可转"，用户看到的仍是按了没反应。
+    this.heroEl.createSpan({ cls: "yl-ring", attr: { "aria-hidden": "true" } }).createEl("i");
+
     // 卡片头一排放全所有操作按钮：喇叭 / 乌龟（慢放）| 弹性空隙 | 纠 / 罗马音。
     // （「原句」小标签 2026-10-02 按用户要求去掉，这一排就是纯按钮。）
     const head = hero.createDiv({ cls: "yl-hero-head" });
@@ -1624,11 +1678,10 @@ export class StudyView extends ItemView {
   /** 切句时同步铺底：句子/翻译立刻上屏，注音（本地分词是异步的）到了再补。 */
   private renderHero(slice: StudySentence): void {
     if (!this.heroJaEl || !this.heroZhEl) return;
-    // 换句先复位上一句留下的三个临时态：青蓝（已解析）、压灰（等逐词释义）、
-    // 闪烁（词到了）。它们都属于上一句，loadHeroReading 会按本句重定青蓝那一个。
+    // 换句先复位上一句留下的两个临时态：青蓝（已解析）、解析中（压灰 + 边缘跑马灯）。
+    // 它们都属于上一句，loadHeroReading 会按本句重定青蓝那一个。
     this.heroEl?.removeClass("yl-analyzed");
-    this.clearHeroFlash();
-    this.setHeroWordsPending(false);
+    this.setParsingActive(false);
     this.closeHeroPopover();
     this.heroJaEl.empty();
     // ⚠️ 走 `effectiveJa` / `effectiveZh`（用户在纠错弹窗里改过的版本），
@@ -1835,53 +1888,36 @@ export class StudyView extends ItemView {
   }
 
   /**
-   * 句子卡进入 / 退出「解析中」态：日文压灰。
+   * 「解析中」的全部视觉信号，**唯一开关**：句子卡日文压灰 + 两张卡的边缘跑马灯
+   * （2026-10-15）。
    *
-   * 解析是两次请求（解读 → 逐词释义），**从点下按钮到两块都落地**这段时间里句子卡
-   * 的日文压灰，两块到齐（或明确失败）才回到正文色 —— 用户由此知道"上面那张卡
-   * 正在变"，而不是点了按钮之后一片死寂（2026-10-07 用户拍板："解析完成之前文字
-   * 偏灰，解析完成之后才变成现在这种深色"）。
+   * 解析是两次请求（解读 + 逐词释义），**从点下按钮到两块都落地**这段时间里：
+   *   · 句子卡的日文**压灰**（2026-10-07 用户拍板："解析完成之前文字偏灰，
+   *     解析完成之后才变成现在这种深色"）—— 用户由此知道"上面那张卡正在变"，
+   *     而不是点了按钮之后一片死寂；
+   *   · **正在被解析的卡片边缘转一道弧**（2026-10-15 用户拍板：彗星单弧 + 匀速）——
+   *     回答"**哪几张**卡在动"。首次解析两块都发，两张卡一起转。
    *
-   * ⚠️ 由 `handleExplain` 压上、由它的每条出口清掉；`renderHero` 换句时也清一次
-   * （用户中途翻走，灰不能跟着下一条句子走）。
+   * ⚠️ 由 `handleExplain` 压上、由它的**每条出口**清掉；`renderHero` 换句时也清一次
+   * （用户中途翻走，灰和弧都不能跟着下一条句子走）。漏一条出口就会永久留着 —— 那个
+   * 症状（卡片一直转、一直灰）不报错、只是"看着像卡住了"，只能靠这份清单兜住。
+   *
+   * 🔥 2026-10-15：**弧要挂在真被重算的那张卡上**（用户原话："要确保实际被刷新的
+   * 有跑马灯"）。重新解析现在可单选一块，所以这里收 `targets`：
+   *   · 只刷解读 → 只拨左卡（句子卡一个字都没变，转起来是撒谎）；
+   *   · 只刷词表 → 只拨句子卡（同理，左侧没动）；
+   *   · 首次解析 / 两块都刷 → 两张都拨（默认值）。
+   * 撤的时候**一律两张一起撤**：留着谁转过不重要，留着它才是 bug。
    */
-  private setHeroWordsPending(on: boolean): void {
-    this.heroEl?.toggleClass("yl-words-pending", on);
-  }
-
-  /**
-   * 逐词释义落地：句子卡闪一下。
-   *
-   * 用户这时多半在看左栏的解读，右上的卡片悄悄从"灰"变成了"青蓝 + 词可点" ——
-   * 没有信号就完全错过了。两道信号一起给（2026-10-08 用户挑的 E 方案，见 styles.css
-   * 的 @keyframes yl-hero-pulse / yl-hero-sweep）：一道斜光带横扫整张卡说"这里变了"，
-   * 一圈加粗描边脉冲说"就是这张卡"。**不整块闪** —— 整块闪读起来像故障。
-   * 两道都是 0.95s 一次过，这里的定时器只是兜底摘类（动画被系统设置关掉时也要收干净）。
-   */
-  private flashHero(): void {
-    const hero = this.heroEl;
-    if (!hero) return;
-    this.clearHeroFlash();
-    hero.removeClass("yl-flash");
-    // 强制一次重排：同一个动画要在"换句后又解析同一句"时能再播一遍
-    void hero.offsetWidth;
-    hero.addClass("yl-flash");
-    // CSS 动画只负责观感，类的摘除自己兜底 —— 动画被系统设置关掉时也要收干净。
-    // ⚠️ 必须**长过最慢的那条动画**（扫光 1.1s）：类一摘 `overflow:hidden` 跟着没了，
-    //    扫光带会在最后几帧甩到卡外面去。1.4s = 1.1s + 300ms 余量。
-    this.heroFlashTimer = window.setTimeout(() => {
-      hero.removeClass("yl-flash");
-      this.heroFlashTimer = null;
-    }, 1400);
-  }
-
-  /** 停掉在闪的动画（换句 / 关视图），别让定时器摸到已经换掉的句子卡 */
-  private clearHeroFlash(): void {
-    if (this.heroFlashTimer !== null) {
-      window.clearTimeout(this.heroFlashTimer);
-      this.heroFlashTimer = null;
-    }
-    this.heroEl?.removeClass("yl-flash");
+  private setParsingActive(
+    on: boolean,
+    targets: { analysis?: boolean; hero?: boolean } = {},
+  ): void {
+    const analysis = on && (targets.analysis ?? true);
+    const hero = on && (targets.hero ?? true);
+    this.heroEl?.toggleClass("yl-words-pending", hero);
+    this.heroEl?.toggleClass("yl-parsing", hero);
+    this.analysis.setParsing(analysis);
   }
 
   // ── 注音纠错 ─────────────────────────────────────────────────────────────
@@ -2585,6 +2621,38 @@ export class StudyView extends ItemView {
   }
 
   /**
+   * 检测到**正在用蓝牙耳机录音**时问一句（2026-10-16 用户口径）。
+   *
+   * 🔒 这一句**只告知**：不开自动切换，不碰 `deviceId` —— 用户在系统里选了什么就录什么，
+   * 换不换由他决定（"录音自动避开蓝牙麦"那条已被明确否决，别再往回加）。
+   *
+   * **只问一次**：用户点过「就用它录」就等于表态接受了，之后无论他有没有换设备都不再打扰
+   * （记的是"问过了"，不是"换了没" —— 后者每次录音当场就能看出来）。
+   * 点「先不录」/ 直接关窗**不记账**：他多半还没换成，下次录音该提醒还得提醒。
+   *
+   * @returns `true` = 已经弹窗，录音那边等着用户表态；`false` = 别打扰，照常录。
+   */
+  private promptBluetoothMic(payload: {
+    deviceName: string;
+    sampleRate: number;
+    onContinue(): void;
+    onCancel(): void;
+  }): boolean {
+    if (this.plugin.settings.micQualityPromptSeen) return false;
+    new BluetoothMicModal(this.app, {
+      deviceName: payload.deviceName,
+      sampleRate: payload.sampleRate,
+      onContinue: () => {
+        this.plugin.settings.micQualityPromptSeen = true;
+        void this.plugin.saveSettings();
+        payload.onContinue();
+      },
+      onCancel: payload.onCancel,
+    }).open();
+    return true;
+  }
+
+  /**
    * ① 第一次进学习页：词典没装上就提醒一次。
    *
    * 老用户（软链装法 / 自己装过）本来就有词典 —— 先判磁盘，有就**只补标记不弹窗**，
@@ -2745,11 +2813,22 @@ export class StudyView extends ItemView {
       log.warn("记单词曝光失败", error);
     });
 
-    // 🔥 本机已经解析过这一句：直接把上次的结果铺开，**不再发请求**
+    // 🔥 本机存着这一句的解析：直接把上次的结果铺开，**不再发请求**
     // （也就不会再扣一次钱）。这条路径同时兜住了"翻走再翻回来"。
-    if (slice.analysis?.done && slice.analysis.engine === ANALYSIS_ENGINE) {
-      this.analysis.showCached(slice.analysis);
-      this.feedAssistant(slice.analysis);
+    //
+    // 2026-10-15 起分两种，都要铺：
+    //   · **两块齐**（`done`）—— 老样子，铺解读 + 句子卡可以点词；
+    //   · **只有解读**（半份，上一遍词表那块失败，见 `persistExplanationOnly`）——
+    //     解读照样铺出来（用户花过钱、也已经看过它了），只是提示语如实说词还点不开。
+    //     原先这里只认 `done`，于是半份记录存了也白存，用户重启插件就觉得"解析没了"。
+    const cached = slice.analysis;
+    if (
+      cached &&
+      cached.engine === ANALYSIS_ENGINE &&
+      (cached.done || hasExplanationContent(cached))
+    ) {
+      this.analysis.showCached(cached, cached.done);
+      this.feedAssistant(cached);
     }
   }
 
@@ -2765,7 +2844,8 @@ export class StudyView extends ItemView {
     this.assistant.setContext({
       analysis: {
         translation: analysis.translation ?? "",
-        words: analysis.tokens
+        // `?? []` 是防云端来的畸形行：半份记录（只有解读）也是空的，两种都走这里
+        words: (analysis.tokens ?? [])
           .filter((token) => token.def)
           .map((token) => ({ surface: token.surface, meaning: token.def ?? "" })),
         explanation: renderExplanation(analysis.explanation),
@@ -2797,13 +2877,20 @@ export class StudyView extends ItemView {
    * 因此更早到，句子卡更早点亮。
    *
    * 第二块失败**只重试它自己**（用户定的口径），解读照常留着 ——
-   * 没必要为了词表把已经看到的东西清掉。两块都成功才落库：只落一半的话，
-   * 翻回这句会显示成"解析过了"，但词点不开。
+   * 没必要为了词表把已经看到的东西清掉。
    *
-   * 🔥 整个过程里句子卡的日文**压灰**（2026-10-07 用户拍板"解析完成之前文字偏灰，
-   * 解析完成之后才变成现在这种深色"）：从点下按钮到两块都落地是一段看不见的等待，
-   * 压灰就是"上面那张卡正在变"。⚠️ **每条出口都要清掉**（失败 / 翻页 / 拿不到词表），
-   * 漏一条就会把灰永久留在卡上。
+   * 🔥 落库（2026-10-15 用户拍板）：**两块各自单独存，谁先到谁先存**。
+   *   · 解读一到手就先落一份半成品（`persistExplanationOnly`）—— 它已经花了钱、
+   *     也已经显示给用户看了，不该被另一块拖下水；
+   *   · 词表到了再落整份（`persistAnalysis`，`done:true`），把半份整个覆盖掉。
+   * 原先"两块齐了才落库"，代价是词表一失败，这段解读连本机都不留 ——
+   * 重启插件或翻页回来就没了（2026-10-15 实机报的）。
+   *
+   * 🔥 整个过程里句子卡的日文**压灰**、**两张被解析的卡边缘转一道弧**（2026-10-15
+   * 用户拍板"点了 AI 解析就加个跑马灯，让实际发生解析的那两张卡顺着边缘转"）：
+   * 从点下按钮到两块都落地是一段看不见的等待，这就是"哪张卡正在变"。
+   * ⚠️ **每条出口都要清掉**（失败 / 翻页 / 拿不到词表），漏一条就会永久留着 ——
+   * 卡片一直转、一直灰，不报错，只是看着像卡死。开关统一在 `setParsingActive`。
    *
    * `refresh` = 这次是「重新解析」触发的（见 `reparseExplanation`）：只影响左侧
    * 解读那块要不要让服务端**跳过缓存**重算，两块并发的骨架不变。
@@ -2828,29 +2915,48 @@ export class StudyView extends ItemView {
     const controller = new AbortController();
     this.explainAbort = controller;
     this.explainStreamCid = slice.cid;
+    // 两块**共用同一笔**首输出预算（2026-10-15）：从这一刻算起 20 秒，谁先到谁说话，
+    // 到点还没有输出就报错 —— 见 streamExplanation / fetchWords 的说明
+    const deadline = Date.now() + AI_FIRST_OUTPUT_MS;
 
-    // 从这一刻起压灰，直到两块都到齐（或明确失败）—— 见下方每条 return 前的清态
-    this.setHeroWordsPending(true);
+    // 从这一刻起进入"解析中"（句子卡压灰 + 两张卡边缘转弧），直到两块都到齐
+    //（或明确失败）—— 见下方每条 return 前的清态
+    this.setParsingActive(true);
     this.analysis.beginStream();
 
     // 逐词释义**同时**发出：它不显示成文字，没必要等解读（词表早到早点亮句子卡）
-    const wordsTask = this.fetchWords(input, slice, settings);
+    const wordsTask = this.fetchWords(input, slice, settings, deadline);
 
     // ── 第一块：解读（流式）。边生成边上屏，不等词表 ────────────────────
-    const streamed = await this.streamExplanation(input, settings, controller, slice, refresh);
+    const streamed = await this.streamExplanation(input, settings, controller, slice, refresh, deadline);
     if (streamed.aborted) return; // 翻页了 / 用户掐了 / 余额窗已经弹了
     if (streamed.partial) {
       // 已经有字上屏、流却断了：留着已显示的部分，只说这次没生成完
       this.analysis.streamFailed(streamed.errorMessage);
-      this.setHeroWordsPending(false);
+      this.setParsingActive(false);
       return;
     }
     this.analysis.showExplanation(streamed.explanation, streamed.errorMessage);
     if (!streamed.explanation) {
       // 解析成功但没给回可用的解读：别把灰留在卡上
-      this.setHeroWordsPending(false);
+      this.setParsingActive(false);
       return; // 提示已由 showExplanation 给出
     }
+
+    // 🔥 解读到手就**立刻单独落一次库**（2026-10-15 用户拍板）。
+    //
+    // 这一段已经花过钱、也已经显示在用户眼前了 —— 它的归宿不该由**另一块**
+    //（逐词释义）成不成来决定。原先"两块齐了才落库"，于是词表一失败就什么都不存：
+    // 用户重启 Obsidian、或翻到别的句子再回来，左栏这段解读凭空消失，只剩一张
+    // 光秃秃的卡（2026-10-15 实机截图：解读铺满 + 词表报"模型这次没给出可用的结果"）。
+    //
+    // 存的是一份**半份**记录（`done:false`，只有解读、没有词表），读侧认它
+    //（见 `renderAnalysis` 的 `hasExplanationContent` 分支），所以翻回来照样看得到。
+    // 词表若随后到了，下面那份整份解析会把它整个覆盖成完整记录。
+    await this.persistExplanationOnly(slice, streamed.explanation).catch((error: unknown) => {
+      log.warn("解读没能单独存进本地库", error);
+    });
+
     // 讲过的东西喂给助手（这一刻还没有词表，词到了会再喂一次）
     this.assistant.setContext({
       analysis: {
@@ -2864,11 +2970,11 @@ export class StudyView extends ItemView {
     const wordList = await wordsTask;
     if (this.currentSlice()?.cid !== slice.cid) {
       // 用户已经翻走：别去动现在这张卡的日文颜色，也別闪
-      this.setHeroWordsPending(false);
+      this.setParsingActive(false);
       return;
     }
     if (!wordList) {
-      this.setHeroWordsPending(false);
+      this.setParsingActive(false);
       return; // fetchWords 已经如实报过了
     }
 
@@ -2880,19 +2986,22 @@ export class StudyView extends ItemView {
     this.analysis.wordsReady();
     // AI 的句内读音刚落库：原句区的 ruby / 注音行按新读音重铺一遍
     // （此前铺的是词典注音；loadHeroReading 里有 cid 守卫，翻走了就静默丢弃）。
-    // 重铺顺带带上 `.yl-analyzed`（青蓝）与可点词数据，所以等它铺完再闪。
+    // 重铺顺带带上 `.yl-analyzed`（青蓝）与可点词数据。
+    // 两块都落地了 ⇒ 撤掉"解析中"（压灰 + 两张卡的边缘弧）。
+    // ⚠️ 2026-10-15 起这里**不再闪一下**：原先那道横扫的斜光带与描边脉冲已删，
+    //    "哪张卡在动"改由解析期间一直挂着的跑马灯回答。
     await this.loadHeroReading(slice);
     if (this.currentSlice()?.cid !== slice.cid) return;
-    this.setHeroWordsPending(false);
-    this.flashHero();
+    this.setParsingActive(false);
   }
 
   /**
    * 「重新解析」= 只重算**左侧的解读那一块**（2026-10-08 用户拍板）。
    *
    * 右侧句子卡（逐词释义 / 句内读音 / 词源 / 可点词）**不重新解析**：那些东西没有变，
-   * 再跑一遍等于让用户为同一份词表再付一次钱，卡片还会重铺一次、闪一下。所以这条路
-   * **不发 words 请求、不压灰、不重铺读音、不闪卡**，只管左边那段文字。
+   * 再跑一遍等于让用户为同一份词表再付一次钱，卡片还会重铺一次。所以这条路
+   * **不发 words 请求、不压灰、不重铺读音**，只管左边那段文字；边缘跑马灯也只挂在
+   * 左栏解析卡上（句子卡没在解析，就不该转 —— 见 `setParsingActive`）。
    *
    * 与 `handleExplain` 的分工：共用同一个流式出口（`streamExplanation`）—— 两条路
    * 各写一份解析逻辑，必然有一处先腐坏；差别只在"要不要第二块"和"落库怎么合"。
@@ -2921,11 +3030,14 @@ export class StudyView extends ItemView {
       originHash: corrected ? slice.cid.slice(2) : undefined,
     };
 
-    // ⚠️ 例外一条（别删）：这一句**还没有落档的解析记录**时（上一遍两块里词表那块
-    // 失败过），左侧解读没有可合并的宿主 —— 只重算左边等于"这次解析留不下来、卡片也
-    // 永远亮不起来"，用户反复点却什么都不会变。这种时候退回"两块一起"的老路。
-    // 这不是"重新解析右侧"：右侧本来就没有东西可解析，这是它的**第一次**解析。
-    if (!slice.analysis?.done || slice.analysis.engine !== ANALYSIS_ENGINE) {
+    // ⚠️ 例外一条（别删）：这一句**还没有落档的解析记录**时，左侧解读没有可合并的
+    // 宿主 —— 只重算左边等于"这次解析留不下来、卡片也永远亮不起来"，用户反复点却
+    // 什么都不会变。这种时候退回"两块一起"的老路。这不是"重新解析右侧"：右侧本来
+    // 就没有东西可解析，这是它的**第一次**解析。
+    // 🔥 2026-10-15：判据是"记录在不在"，**不再要求 `done`** —— 上一遍只有词表那块
+    // 失败时（半份记录只有解读、或压根没记录）不该一律按首次解析办：半份记录是有
+    // 宿主的，合并进去就行，别让用户为已经拿到的解读再付一次钱。
+    if (!slice.analysis || slice.analysis.engine !== ANALYSIS_ENGINE) {
       log.info("[yl-reparse] 这一句还没有落档记录，按首次解析走（两块一起）", { cid: slice.cid });
       await this.handleExplain(input.words, true);
       return;
@@ -2936,31 +3048,119 @@ export class StudyView extends ItemView {
     const controller = new AbortController();
     this.explainAbort = controller;
     this.explainStreamCid = slice.cid;
+    // 与首次解析同一笔首输出预算（2026-10-15）：确认过之后起算 20 秒 ——
+    // 用户点确认之前那段思考时间不算在这一笔里
+    const deadline = Date.now() + AI_FIRST_OUTPUT_MS;
 
     // ⚠️ 这里**不压灰**：句子卡不参与这次解析 —— 压灰会让用户以为上面那张卡也在变
-    //（它不会变）。
+    //（它不会变）。同理，跑马灯这次**只挂在左栏解析卡上**（2026-10-15）：按用户的口径
+    //"哪张卡真的在解析，哪张卡才转"，这一趟只有解读那一块重新生成。
     this.analysis.beginStream();
+    this.setParsingActive(true, { analysis: true, hero: false });
 
-    // 🔥 `refresh=true` 是这条链路的**全部意义**：不带它，服务端照旧回解析缓存里
-    // 那一份，用户点的"重新解析"看上去就是没反应（2026-10-08 实机报的）。
-    // 带上之后服务端跳过缓存重算，并把新结果覆盖写回缓存 —— 最新的一条为准。
-    const streamed = await this.streamExplanation(input, settings, controller, slice, true);
-    if (streamed.aborted) return;
-    if (streamed.partial) {
-      // 已有字上屏、流却断了：留着已显示的部分，只说这次没生成完
-      this.analysis.streamFailed(streamed.errorMessage);
+    try {
+      // 🔥 `refresh=true` 是这条链路的**全部意义**：不带它，服务端照旧回解析缓存里
+      // 那一份，用户点的"重新解析"看上去就是没反应（2026-10-08 实机报的）。
+      // 带上之后服务端跳过缓存重算，并把新结果覆盖写回缓存 —— 最新的一条为准。
+      const streamed = await this.streamExplanation(input, settings, controller, slice, true, deadline);
+      if (streamed.aborted) return;
+      if (streamed.partial) {
+        // 已有字上屏、流却断了：留着已显示的部分，只说这次没生成完
+        this.analysis.streamFailed(streamed.errorMessage);
+        return;
+      }
+      this.analysis.showExplanation(streamed.explanation, streamed.errorMessage);
+      if (!streamed.explanation) return; // 提示已由 showExplanation 给出
+
+      // 讲的还是这一句，只是解读换了：把新解读并进已有的那份记录（词表原样保留），
+      // 再把**整份**喂给助手 —— 助手要的是"已经讲过什么"，只喂解读那一半等于把
+      // 词表从它脑子里抹掉（上面已经确认过这份记录可合并，正常不会走到 null；
+      // 真走到就什么都不动，别拿半份去覆盖它已有的上下文）。
+      const merged = await this.mergeExplanation(slice, streamed.explanation);
+      if (merged) this.feedAssistant(merged);
+      this.analysis.explanationRefreshed(Boolean(merged?.tokens.length));
+    } finally {
+      // ⚠️ 用 finally 而不是在每条出口手写一遍：这条路有 4 条出口（掐流 / 断流 /
+      // 没给回结果 / 正常走完），漏一条卡片就会一直转下去 —— 而它不报错。
+      this.setParsingActive(false);
+    }
+  }
+
+  /**
+   * 「重新解析」的第三条路：**只重算逐词释义那一块**（2026-10-15 用户拍板）。
+   *
+   * 为什么需要它：原先这条路根本不存在 —— 「重新解析」写死只刷解读，而句子卡上的
+   * 逐词释义（释义 / 句内读音 / 词源）一旦不满意，唯一的路是「纠」。可「纠」是
+   * **手改**，不是重新生成；想"再让 AI 好好答一遍词表"的用户被指错了门。
+   *
+   * 与另外两条路的分工：
+   *   · 只刷解读 → `reparseExplanation`（不动词表，不重铺句子卡）；
+   *   · 只刷词表 → **本条**（不动解读那段文字，不重发解读请求）；
+   *   · 两块都刷 → 走首次解析的老路 `handleExplain(words, true)`（两块并发、
+   *     整份重写落库）——不是重新发明第三条流程。
+   *
+   * 🔥 `refresh=true` 一路带到词表那一块（`fetchWords` → `explainWords`）：服务端的
+   * 解析缓存**按块存**，所以跳过缓存只影响词表那一行，解读的缓存不受牵连。不带它
+   * 就跟解读那边 2026-10-08 报的坑一样 —— 按了没反应。
+   *
+   * ⚠️ 跑马灯只挂句子卡：左侧解读这一趟一个字都不会变，转起来是撒谎（用户口径：
+   * "要确保实际被刷新的有跑马灯"）。落库用 `mergeWords`（解读与译文原样留着）。
+   */
+  private async reparseWords(): Promise<void> {
+    const slice = this.currentSlice();
+    if (!slice) return;
+    const settings = this.plugin.settings;
+    const words = explainTargets(this.currentTokens);
+    if (words.length === 0) {
+      // ⚠️ 不能静静 return：点了没反应用户只会反复点（与 confirmReparse 同一条口径）
+      log.warn("[yl-reparse] 这一句没有可解析的词，不发请求");
+      this.analysis.wordsFailed("这一句没能分出词来，没法重新解析。");
       return;
     }
-    this.analysis.showExplanation(streamed.explanation, streamed.errorMessage);
-    if (!streamed.explanation) return; // 提示已由 showExplanation 给出
 
-    // 讲的还是这一句，只是解读换了：把新解读并进已有的那份记录（词表原样保留），
-    // 再把**整份**喂给助手 —— 助手要的是"已经讲过什么"，只喂解读那一半等于把
-    // 词表从它脑子里抹掉（上面已经确认过这份记录可合并，正常不会走到 null；
-    // 真走到就什么都不动，别拿半份去覆盖它已有的上下文）。
-    const merged = await this.mergeExplanation(slice, streamed.explanation);
-    if (merged) this.feedAssistant(merged);
-    this.analysis.explanationRefreshed(Boolean(merged?.tokens.length));
+    // 没有落档记录时退回首次解析（两块一起）：只重算词表**没有可合并的宿主**，
+    // 落不下去等于这次白花（见 mergeWords 的说明）。
+    // 🔥 2026-10-15：判据是"记录在不在"，**不再要求 `done`** —— 半份记录（解读已单独
+    // 存下、词表那次失败）正是这条路的主要服务对象，它是有宿主的，补上就成完整记录。
+    if (!slice.analysis || slice.analysis.engine !== ANALYSIS_ENGINE) {
+      log.info("[yl-reparse] 这一句还没有落档记录，按首次解析走（两块一起）", { cid: slice.cid });
+      await this.handleExplain(words, true);
+      return;
+    }
+
+    const corrected = Boolean(slice.textFixes?.ja?.trim());
+    const input = {
+      ja: effectiveJa(slice),
+      zh: effectiveZh(slice),
+      words,
+      ...this.explainContextFor(slice),
+      corrected,
+      originHash: corrected ? slice.cid.slice(2) : undefined,
+    };
+
+    // 连点先掐掉在开的那一路（解读流 / 上一次词表请求的落库回调）
+    this.abortExplainStream();
+    // 与首次解析同一笔首输出预算：确认之后起算 20 秒
+    const deadline = Date.now() + AI_FIRST_OUTPUT_MS;
+    // 只拨句子卡那道弧 —— 左栏解析卡这一趟不参与
+    this.setParsingActive(true, { analysis: false, hero: true });
+
+    try {
+      const wordList = await this.fetchWords(input, slice, settings, deadline, true);
+      if (this.currentSlice()?.cid !== slice.cid) return; // 翻走了：别动现在这张卡
+      if (!wordList) return; // fetchWords 已经如实报过了
+
+      const merged = await this.mergeWords(slice, wordList);
+      if (merged) this.feedAssistant(merged);
+      // AI 的句内读音刚落库：原句区按新读音重铺一遍（ruby / 注音行 / 可点词）
+      await this.loadHeroReading(slice);
+      if (this.currentSlice()?.cid !== slice.cid) return;
+      this.analysis.wordsRefreshed();
+    } finally {
+      // 与只刷解读同一条纪律：出口不止一条（翻走 / 拿不到词表 / 正常走完），
+      // 漏一条弧就一直转 —— 而它不报错，只是"看着像卡死"。
+      this.setParsingActive(false);
+    }
   }
 
   /**
@@ -2969,10 +3169,11 @@ export class StudyView extends ItemView {
    * 句子卡那份（词表 / 句内读音 / 词源）**原样保留** —— 这次压根没重新解析它们，
    * 覆盖或清空都等于把用户已经拿到的东西弄丢。
    *
-   * ⚠️ 这一句还没有可合并的记录时（上一遍两块里词表那块失败过）**绝不落库**：
-   * 落一条没有词表的记录，翻回来会显示成"解析过了"但词点不开、卡片也不亮 ——
-   * 那正是 `persistAnalysis` 那条"两块齐了才落库"的规矩要防的东西，别在这儿绕开它。
-   * 这种情况下界面上的解读照旧更新（用户看得到这次解析的结果），只是不留档。
+   * 宿主判定（2026-10-15 放宽）：**记录在就行**（engine 对得上），不再要求 `done`。
+   * 半份记录（上一遍词表那块失败、解读单独存下来的那种，见 `persistExplanationOnly`）
+   * 正是这条路最该服务的对象 —— 拿着它当"没记录"，用户点「只重算整句解读」就会被
+   * 退回"两块一起"白花一笔。没有记录时仍然**绝不落库**（见 `reparseExplanation` 的
+   * 例外说明：那种情况退回首次解析，两块一起走）。
    *
    * @returns 合并后的那份；没有可合并的记录时返回 null
    */
@@ -2981,7 +3182,7 @@ export class StudyView extends ItemView {
     explanation: SentenceExplanation,
   ): Promise<SentenceAnalysis | null> {
     const previous = slice.analysis;
-    if (!previous?.done || previous.engine !== ANALYSIS_ENGINE) {
+    if (!previous || previous.engine !== ANALYSIS_ENGINE) {
       log.warn("[yl-reparse] 这一句还没有可合并的解析记录，只更新界面、不落库", {
         cid: slice.cid,
       });
@@ -2995,6 +3196,10 @@ export class StudyView extends ItemView {
       text: effectiveJa(slice),
       explanation: explanation.sections,
       translation: explanation.translation,
+      // 🔥 `done` **只升不降**：这次补的是解读，词表在不在仍然看 previous。
+      //（半份记录合并后还是半份 —— 词表确实还没到；反过来，一份完整记录绝不会
+      // 因为"这次没重算词表"被打回半份，那会把点亮的句子卡灭掉。）
+      done: previous.done || previous.tokens.length > 0,
     };
     // 内存里那份先换上；落库失败只该影响"下次翻回来"，不该让这次的结果白给
     slice.analysis = merged;
@@ -3006,31 +3211,41 @@ export class StudyView extends ItemView {
   }
 
   /**
-   * 「重新解析」的确认出口 —— 解析区弹统一弹窗问一句，**用户点了确认才再花一次**。
+   * 「重新解析」的确认出口 —— 解析区弹统一弹窗，**用户点了确认才再花一次**。
    *
    * 为什么不在解析区里直接问（2026-10-08 用户拍板）：得按**实际生效的轨道**说话。
    * "扣谁的"这层判断（`resolveAiRoute`，双轨自由选后即用户选的那条）只在视图
    * 这层拿得到；解析区只负责"问"，不猜钱的事。
    *
-   * 确认 = 走 `reparseExplanation`（**只重算左侧解读那一块**，2026-10-08 用户拍板）。
-   * 别在这儿另写一条解析路径，也别回到 `handleExplain` —— 前者必然与流式出口腐开，
-   * 后者会把句子卡那一块一起重算（多花一次词表的钱）。
+   * 🔥 2026-10-15 起这一窗**还负责"选"**：两块（整句解读 / 逐词释义）各一个复选框，
+   * 缺哪块默认勾哪块（都不缺就都勾），确认后按勾选路由 ——
+   *   · 两块 → `handleExplain(words, true)`（首次解析那条老路，两块并发、整份重写）；
+   *   · 只解读 → `reparseExplanation`（句子卡一个字不碰）；
+   *   · 只词表 → `reparseWords`（解读那段文字一个字不碰）。
+   * 三条路共用同一批出口（词表判定、门控、跑马灯），别在这儿另写第四条。
+   *
+   * 悬停某一行时背景里对应的那块会亮起来（`highlightReparseTarget`）：用户不用猜
+   * "整句解读"和"逐词释义"分别是屏幕上哪一块。
    */
   private confirmReparse(): void {
     const slice = this.currentSlice();
     log.info("[yl-reparse] 弹确认窗", { cid: slice?.cid ?? null, mode: this.mode, tokens: this.currentTokens.length });
+    const states = this.reparseBlockStates(slice);
     new ReparseConfirmModal(this.app, {
       // 建窗这一刻的实际轨道（不是 settings.aiMode 的原值）：文案说错比不说更糟
       aiMode: resolveAiRoute(this.plugin.settings),
-      onConfirm: () => {
+      explain: states.explain,
+      words: states.words,
+      // 悬停某一行 → 背景里那一块点亮（弹窗带遮罩，见 highlightReparseTarget）
+      onHighlight: (block) => this.highlightReparseTarget(block),
+      onConfirm: (selection) => {
         // 弹窗开着的时候用户可能翻页 / 关视图了：那这一下不该再落到别人身上。
-        // 词表在这里现算一次，只为两件事：判断"这一句有没有词可送给模型"、
-        // 留一条可查的日志。真正的词表解析（第二块请求）在 `reparseExplanation`
-        // 里根本不会发生 —— 它的底账是 `currentTokens`（本机分词），不是 API 回的。
         if (this.mode !== "card" || !this.currentSlice()) {
           log.warn("[yl-reparse] 确认时已经不在这一句上，丢弃", { mode: this.mode });
           return;
         }
+        // 词表在这儿现算一次：两块路都要用它（解读的提示词里是【本句分词参考】，
+        // 词表请求里是"每个词都要讲"的依据）。
         const words = explainTargets(this.currentTokens);
         // ⚠️ 这里**不能静静 return**（2026-10-08 用户报"点了重新解析没反应"）：
         // 发不出去就必须说出来，否则界面零反馈 —— 用户只能反复点，看不出任何变化。
@@ -3039,10 +3254,85 @@ export class StudyView extends ItemView {
           this.analysis.wordsFailed("这一句没能分出词来，没法重新解析。");
           return;
         }
-        log.info("[yl-reparse] 确认，发请求", { cid: this.currentSlice()?.cid ?? null, words: words.length });
-        void this.reparseExplanation();
+        log.info("[yl-reparse] 确认，发请求", {
+          cid: this.currentSlice()?.cid ?? null,
+          words: words.length,
+          explain: selection.explain,
+          wordsBlock: selection.words,
+        });
+        // 三选一：两块都刷 = 首次解析那条老路（两块并发、整份重写落库）；
+        // 只刷一块 = 各自那条只动一块的路（另一块一个字都不碰）。
+        if (selection.explain && selection.words) {
+          void this.handleExplain(words, true);
+          return;
+        }
+        if (selection.explain) {
+          void this.reparseExplanation();
+          return;
+        }
+        void this.reparseWords();
       },
     }).open();
+  }
+
+  /**
+   * 「重新解析」窗要的两块现状：缺不缺（决定默认勾选）+ 行内那行小字。
+   *
+   * 「缺」的口径 = **界面上真看得见的缺**，不是"记录里有没有这个字段"：
+   *   · 整句解读：正文一段都没有（模型上次某段没给出来）；
+   *   · 逐词释义：一个释义都没有，或内容词里还有没释义的。
+   *
+   * 🔥 为什么必须有这层判定（2026-10-15 评估结论）：能走到「重新解析」这句按钮，
+   * 就说明本机**存着这一句的东西**，所以"两块都空"实际上到不了这里 —— 死按字面
+   * 执行"缺哪个勾哪个"会永远勾满两块。真正的"半缺"只有上面两类：解读正文空、
+   * 或有内容词没释义。
+   *
+   * ⚠️ 2026-10-15 起"存着的东西"不一定是完整记录：解读那块到手就先单独落了库
+   *（`persistExplanationOnly`，`done:false`）。半份记录正好落在"解读有内容、
+   * 词表没有"这一档 —— 默认只勾「逐词释义」，也就是**只补缺的那一块**，
+   * 用户点确认不必为已经看过的解读再付一次钱。
+   */
+  private reparseBlockStates(
+    slice: StudySentence | null,
+  ): { explain: ReparseBlockState; words: ReparseBlockState } {
+    const analysis = slice?.analysis;
+    // 「解读缺不缺」与读侧（`renderAnalysis`）、落库侧（`mergeWords`）**同一个判据** ——
+    // 三处各写一遍"两段正文或译文任一有内容"，必然有一天分叉
+    const explainMissing = !hasExplanationContent(analysis);
+
+    const tokens = analysis?.tokens ?? [];
+    const content = tokens.filter((token) => CONTENT_POS.has(token.pos));
+    const defined = content.filter((token) => Boolean(token.def));
+    const missingWords = content.length - defined.length;
+    const wordsMissing = defined.length === 0 || missingWords > 0;
+
+    return {
+      explain: {
+        missing: explainMissing,
+        note: explainMissing ? "还没有解读内容" : "已有解读内容",
+      },
+      words: {
+        missing: wordsMissing,
+        note: content.length === 0
+          ? "还没有逐词释义"
+          : missingWords > 0
+            ? `有 ${missingWords} 个词还没有释义`
+            : `已有逐词释义（${defined.length} 个词）`,
+      },
+    };
+  }
+
+  /**
+   * 「重新解析」窗里悬停某一行 → 背景里那一块点亮（2026-10-15 用户要求）。
+   *
+   * ⚠️ **弹窗带遮罩，光加类名是看不见的**：`.yl-spotlight` 会同时做两件事（见
+   * styles.css）：把那块描一圈青蓝边，并让遮罩让开一点（`body.yl-spotlighting`）——
+   * 只靠调 z-index 在 Obsidian 各种主题/层叠结构下不可靠，遮罩让开才是稳的。
+   */
+  private highlightReparseTarget(block: ReparseBlock | null): void {
+    this.analysis.setSpotlight(block === "explain");
+    this.heroEl?.toggleClass("yl-spotlight", block === "words");
+    document.body.classList.toggle("yl-spotlighting", block !== null);
   }
 
   /**
@@ -3052,8 +3342,18 @@ export class StudyView extends ItemView {
    *   · 正常：边生成边 `pushFields` 上屏，最后以整份解析结果为准收口；
    *   · 已经有字上屏、流却断了：如实说"这次没生成完"（`partial`），**不推倒
    *     重来** —— 重来等于再花一次钱，而且用户已经看到的内容会跳一下；
-   *   · 一个字都没到就失败：退回一次非流式请求。老服务端 / 中间网关不认 SSE
-   *     时这条退路就是"流式坏了也能用"与"整个功能不可用"的差别。
+   *   · 一个字都没到就失败：**还有预算**且不是上游自己报的错时，退回一次非流式
+   *     请求。老服务端 / 中间网关不认 SSE 时这条退路就是"流式坏了也能用"与
+   *     "整个功能不可用"的差别。
+   *
+   * 🔥 `deadline`（2026-10-15 用户拍板）：从用户点下按钮算起，**整条链路**（含上面
+   * 那条退路）必须在 `AI_FIRST_OUTPUT_MS` 内给出首输出或报错 —— 防的是上游挂死那类
+   * 事故，用户对着"解析中…"无限等。所以：
+   *   · 流式这一趟由 `watchFirstOutput` 看着：`AI_FIRST_OUTPUT_MS` 里一个字都没等到
+   *     （思考块也算输出）就掐断，按上游不可用报错；
+   *   · 退路只用**剩下的**那点预算，不另起一个 20 秒 → 全程 ≤ 20 秒；
+   *   · 上游自己报的错（502/503、上游首输出超时）**不走退路** —— 从用户的角度，
+   *     从点下按钮到看见报错也就一两秒，谈不上"等"。
    *
    * ⚠️ `refresh` 要**两条出口都带**（流式 + 非流式退路）：这条退路存在的意义是
    * "流式坏了也能用"，漏传它就变成"流式一坏，重新解析又回去读缓存"—— 那正是
@@ -3065,12 +3365,18 @@ export class StudyView extends ItemView {
     controller: AbortController,
     slice: StudySentence,
     refresh = false,
+    deadline: number = Date.now() + AI_FIRST_OUTPUT_MS,
   ): Promise<
     | { aborted: true }
     | { aborted: false; partial: boolean; explanation: SentenceExplanation | null; errorMessage: string }
   > {
     const stale = (): boolean =>
       controller.signal.aborted || this.currentSlice()?.cid !== slice.cid;
+    /** 还剩多少首输出预算（毫秒）。非流式退路与 `fetchWords` 共用这一份账。 */
+    const remaining = (): number => Math.max(0, deadline - Date.now());
+    const watchdog = watchFirstOutput(controller.signal, remaining());
+    // "没人说话"要按轨道说事：内置模型 = 我们的供应商挂了（见 noOutputMessage）
+    const noOutput = noOutputMessage(settings);
     let arrived = false;
 
     try {
@@ -3079,10 +3385,14 @@ export class StudyView extends ItemView {
         settings,
         (fields) => {
           if (stale()) return;
-          if (fields.translation || Object.keys(fields.sections).length > 0) arrived = true;
+          if (fields.translation || Object.keys(fields.sections).length > 0) {
+            // 有字了：首输出预算作废 —— 往后只管"还在不在写"（`touch` 把计时归零）
+            arrived = true;
+            watchdog.touch();
+          }
           this.analysis.pushFields(fields);
         },
-        controller.signal,
+        watchdog.signal,
         { refresh },
       );
       return { aborted: false, partial: false, explanation, errorMessage: "" };
@@ -3090,19 +3400,32 @@ export class StudyView extends ItemView {
       // 自己掐的（翻页 / 关视图）：静默，别给已经不在这一句上的人摆错误
       if (stale()) return { aborted: true };
       if (isNoBalanceError(error)) {
-        this.setHeroWordsPending(false);
+        this.setParsingActive(false);
         this.handleOutOfBalance();
         return { aborted: true };
       }
+      const message = watchdog.timedOut() ? noOutput : this.aiMessage(error);
       if (arrived) {
-        return { aborted: false, partial: true, explanation: null, errorMessage: this.aiMessage(error) };
+        return { aborted: false, partial: true, explanation: null, errorMessage: message };
+      }
+      // 预算已经用完 / 上游自己报了错：如实报错收场，别再花第二笔、再等一轮
+      if (watchdog.timedOut() || isUpstreamError(error)) {
+        return { aborted: false, partial: false, explanation: null, errorMessage: message };
+      }
+      const budget = remaining();
+      if (budget <= 0) {
+        return { aborted: false, partial: false, explanation: null, errorMessage: noOutput };
       }
       try {
-        const explanation = await explainSentence(input, settings, { refresh });
+        const explanation = await this.withinBudget(
+          explainSentence(input, settings, { refresh }),
+          budget,
+          noOutput,
+        );
         return { aborted: false, partial: false, explanation, errorMessage: "" };
       } catch (retryError) {
         if (isNoBalanceError(retryError)) {
-          this.setHeroWordsPending(false);
+          this.setParsingActive(false);
           this.handleOutOfBalance();
           return { aborted: true };
         }
@@ -3111,7 +3434,37 @@ export class StudyView extends ItemView {
           explanation: null, errorMessage: this.aiMessage(retryError),
         };
       }
+    } finally {
+      watchdog.stop();
     }
+  }
+
+  /**
+   * 给一个已经在路上的请求套上"剩下的预算"：到点还没回就按上游没响应收场。
+   *
+   * 只是**不再等**它 —— 底层那次调用交给它自己的超时收尾（托管链路那一趟另有
+   * 服务端 `HOSTED_LLM_UPSTREAM_TIMEOUT` 看着，失败不扣费）。
+   *
+   * `message` 由调用方按轨道挑（`noOutputMessage`）：内置模型说"上游不可用"，
+   * BYOK 说"太慢" —— 这里不带 settings，是因为一条链路上的两三处报错必须同口径。
+   */
+  private withinBudget<T>(promise: Promise<T>, budgetMs: number, message: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(
+        () => reject(new AiUnavailableError(message, "upstream")),
+        budgetMs,
+      );
+      promise.then(
+        (value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        },
+        (error: unknown) => {
+          window.clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   /** 中断在开的流式解读（翻页 / 关视图 / 重新解析）。中断后剩下的 token 不再产生。 */
@@ -3126,13 +3479,30 @@ export class StudyView extends ItemView {
    *
    * 返回 null = 这次拿不到词表（已经通过解析区如实告诉用户了）。
    * 没余额不走重试：再试一次还是 402，该做的是弹充值窗而不是重试。
+   *
+   * 🔥 重试要落在**同一笔**首输出预算里（2026-10-15 用户拍板）：逐词释义是
+   * **非流式**的，没有"边生成边到"，这里的"输出"就是整份响应本身 —— 两次尝试
+   * 加起来还没回就按上游没响应报错。原先两次各给 20 秒，用户要干等 40 秒。
+   * 上游自己报的错（502/503）同样不重试，见 `isUpstreamError`。
    */
   private async fetchWords(
     input: ExplainInput,
     slice: StudySentence,
     settings: PluginSettings,
+    deadline: number = Date.now() + AI_FIRST_OUTPUT_MS,
+    refresh = false,
   ): Promise<WordEntry[] | null> {
-    const attempt = async (): Promise<WordEntry[] | null> => explainWords(input, settings);
+    const remaining = (): number => Math.max(0, deadline - Date.now());
+    // 与解读那一块同口径：内置模型说"上游不可用"，BYOK 说"太慢"
+    const noOutput = noOutputMessage(settings);
+    const attempt = async (): Promise<WordEntry[] | null> => {
+      const budget = remaining();
+      // 预算已经见底：这一趟连发都别发，直接按上游没响应报错
+      if (budget <= 0) throw new AiUnavailableError(noOutput, "upstream");
+      // `refresh` = 「只重算逐词释义」那条路（见 `reparseWords`）：让服务端跳过
+      // 词表那一行的缓存。首次解析不带它（false）—— 该命中缓存就命中。
+      return this.withinBudget(explainWords(input, settings, { refresh }), budget, noOutput);
+    };
     /** 报错前先确认用户还停在这一句：两块并行之后，翻页后到达的错误提示
      *  会落到**新那句**的卡片上（那是最难查的一类串台）。 */
     const report = (message: string): void => {
@@ -3146,6 +3516,11 @@ export class StudyView extends ItemView {
       if (isNoBalanceError(error)) {
         report("");
         this.handleOutOfBalance();
+        return null;
+      }
+      // 预算用完 / 上游自己报了错：再试一次只是白花一笔、白等一轮
+      if (isUpstreamError(error) || remaining() <= 0) {
+        report(this.aiMessage(error));
         return null;
       }
       // 网络抖一下／模型这次空手而归：再试一次。重试前确认用户还停在这一句 ——
@@ -3171,20 +3546,19 @@ export class StudyView extends ItemView {
   }
 
   /**
-   * 把这次的解析落进切片行 —— 翻回来不用再点、也不再花钱。
+   * 把 AI 回的词条贴到**本机分词**的结果上 —— 「逐词释义」这一块的**唯一**贴词逻辑。
    *
-   * ⚠️ **两块都拿到了才调用**（解读 + 逐词释义）：只落一半的话，翻回这句会
-   * 显示成"解析过了"，但句子卡不点亮、词点不开，用户还得再点一次「重新解析」——
-   * 不如当时就不落。
+   * 首解析与「只重算逐词释义」两条路共用它：各写一份必然有一处先腐坏（模型把
+   * 「おくれよ」拆成「おくれ」+「よ」这类边界情况全靠 match* 兜，见 services/meaningMatch）。
    *
-   * 词块带的是**本地分词**的结果（`this.currentTokens`），AI 只往上面贴释义、
-   * 句内读音与词源；这样与界面看到的那一份结构一致，读回来渲染时不差分毫。
+   * 底账永远是 `this.currentTokens`（本机分词）：AI 只往上面贴释义、句内读音与
+   * 词源，贴完的结构与界面看到的那一份一模一样，读回来渲染时不差分毫。
+   *
+   * ⚠️ 手改的注音（`slice.readingFixes`）**不在这份数据里**：它按分词序号存在
+   * 切片行上，渲染时才盖到 AI 读音之上（优先级 手改 > AI > 词典）。所以重刷词表
+   * 天然冲不掉用户手改的东西。
    */
-  private async persistAnalysis(
-    slice: StudySentence,
-    explanation: SentenceExplanation,
-    words: WordEntry[],
-  ): Promise<void> {
+  private enrichTokens(words: WordEntry[]): { tokens: Token[]; missing: string[] } {
     const tokens = this.currentTokens;
     // ⚠️ 三样都用 match* 贴，不要按词形精确查表：模型会把一个词拆开
     // （「おくれよ」→「おくれ」+「よ」），精确查表存下来的这份就缺东西，
@@ -3210,11 +3584,26 @@ export class StudyView extends ItemView {
     const missing = enriched
       .filter((token) => CONTENT_POS.has(token.pos) && !token.def)
       .map((token) => token.surface);
+    return { tokens: enriched, missing };
+  }
+
+  /**
+   * 两块都到手：落一份**完整**的解析（`done:true`）。
+   *
+   * 内存里那份先换上：后面重铺原句（青蓝态 / 可点词 / 弹卡数据）读的就是它，
+   * 落库失败只该影响"下次翻回来"，不该让这一次的词点不开。
+   */
+  private async persistAnalysis(
+    slice: StudySentence,
+    explanation: SentenceExplanation,
+    words: WordEntry[],
+  ): Promise<void> {
+    const { tokens: enriched, missing } = this.enrichTokens(words);
 
     const analysis: SentenceAnalysis = {
       engine: ANALYSIS_ENGINE,
       text: effectiveJa(slice),
-      romaji: tokens.map((token) => token.romaji).filter(Boolean).join(" "),
+      romaji: this.currentTokens.map((token) => token.romaji).filter(Boolean).join(" "),
       tokens: enriched,
       explanation: explanation.sections,
       missingDefinitions: missing,
@@ -3223,11 +3612,95 @@ export class StudyView extends ItemView {
       translation: explanation.translation,
     };
 
-    // 内存里那份先换上：后面重铺原句（青蓝态 / 可点词 / 弹卡数据）读的就是它，
-    // 落库失败只该影响"下次翻回来"，不该让这一次的词点不开
     slice.analysis = analysis;
     await saveSliceAnalysis(this.db, slice, analysis);
     // 解析落库即刷新笔记（2026-10-07 定稿）：学过的句子当场补全，零成本不挡人
+  }
+
+  /**
+   * 只拿到了**解读那一块**：立刻按半份落库（2026-10-15 用户拍板）。
+   *
+   * "不能因为原句卡片没有出来，我重启 Obsidian 或者换个页面，这个整句解析就不见了"
+   * —— 解读已经花钱拿到并显示给用户了，它的去留不该被逐词释义那一块决定。
+   *
+   * 这份记录的形状（每一条都有理由，动之前先想清楚）：
+   *   · `done: false` —— **`done` 的定义一个字没改**：两块都到才算解析过。句子卡
+   *     据此**不点亮**（青蓝 / 可点词都不给）：词没有释义却装成能点，是另一种撒谎。
+   *   · `explanation` / `translation` —— 真正要留住的东西，读侧靠它决定铺不铺。
+   *   · `tokens: []` —— ⚠️ **刻意留空，别"顺手"填上本机分词**：词表那份压根没拿到，
+   *     填进去等于凭空造出一堆"有词面、无释义"的 token。词库聚合
+   *     （`collectVocabFromTokens`）只看 token 不看 `done`，会把它们当**真词条**收进
+   *     词表，用户的"总词汇量"里就多出一批空释义的词。
+   *   · `romaji: ""` —— 句罗马音由词表那块的读音拼出来，这次没有，就是没有。
+   *
+   * 词表随后到了的话，`persistAnalysis` 会用整份记录把它整个覆盖掉。
+   */
+  private async persistExplanationOnly(
+    slice: StudySentence,
+    explanation: SentenceExplanation,
+  ): Promise<void> {
+    const analysis: SentenceAnalysis = {
+      engine: ANALYSIS_ENGINE,
+      text: effectiveJa(slice),
+      romaji: "",
+      tokens: [],
+      explanation: explanation.sections,
+      missingDefinitions: [],
+      definitionsComplete: false,
+      done: false,
+      translation: explanation.translation,
+    };
+
+    slice.analysis = analysis;
+    await saveSliceAnalysis(this.db, slice, analysis);
+  }
+
+  /**
+   * 「只重算逐词释义」的落库（2026-10-15）：**词表那块整体换新，解读与译文原样留着**。
+   *
+   * 与 `mergeExplanation` 完全对称 —— 一次只合并被重算的那一块，另一块是用户
+   * 已经看过并认可的内容，不该被这次操作顺带改掉（也不该多花一次钱）。
+   *
+   * 宿主判定（2026-10-15 放宽）：记录在就行（engine 对得上）。**半份记录能因此补全** ——
+   * 上一遍词表失败、解读已单独存下的那种，用户点「逐词释义」补一次就成了完整记录
+   *（`done` 在这一步由 false 升到 true，句子卡才点亮）。
+   *
+   * 返回合并后的记录；没有可合并的宿主（这一句没有落档记录）时返回 null，
+   * 上层据此走首次解析那条路（见 `reparseWords`）。
+   */
+  private async mergeWords(
+    slice: StudySentence,
+    words: WordEntry[],
+  ): Promise<SentenceAnalysis | null> {
+    const previous = slice.analysis;
+    if (!previous || previous.engine !== ANALYSIS_ENGINE) {
+      log.warn("[yl-reparse] 这一句没有可合并的词表宿主，放弃合并", {
+        cid: slice.cid,
+      });
+      return null;
+    }
+    const { tokens: enriched, missing } = this.enrichTokens(words);
+    // 解读、译文、engine、text 全部沿用 previous（`...previous` 就是这个意思）——
+    // 只换词表相关的四样。
+    const merged: SentenceAnalysis = {
+      ...previous,
+      engine: ANALYSIS_ENGINE,
+      text: effectiveJa(slice),
+      romaji: this.currentTokens.map((token) => token.romaji).filter(Boolean).join(" "),
+      tokens: enriched,
+      missingDefinitions: missing,
+      definitionsComplete: missing.length === 0,
+      // 🔥 `done` **只升不降**：这次补的是词表，解读在不在看 previous。
+      //（半份记录补上词表就成了完整记录 —— 这是它唯一能"转正"的路；
+      // 而没有解读的记录合并后仍是半份，别把一张空着的左栏说成"已解析"。）
+      done: previous.done || hasExplanationContent(previous),
+    };
+    // 内存里那份先换上：落库失败只该影响"下次翻回来"，不该让这次的结果白给
+    slice.analysis = merged;
+    await saveSliceAnalysis(this.db, slice, merged).catch((error: unknown) => {
+      log.warn("重新解析的词表没能存进本地库", error);
+    });
+    return merged;
   }
 
   /** 记一轮助手问答。写库失败只记日志：聊天不因为它而中断。 */
@@ -3268,18 +3741,40 @@ export class StudyView extends ItemView {
     const slice = this.sliceByCid(sliceCid);
     if (!slice) return { status: "error", message: "这一句已经不在了，换一句再试。" };
     const input = { ja: effectiveJa(slice), zh: effectiveZh(slice), text };
+    // 首输出预算（2026-10-15）：仿写判定也是"边生成边显示"，一个字都不来就报错
+    // 收场（流式那一趟由看门狗掐断，非流式那一趟由 `withinBudget` 兜底）
+    const controller = new AbortController();
+    const watchdog = watchFirstOutput(controller.signal, AI_FIRST_OUTPUT_MS);
+    const noOutput = noOutputMessage(this.plugin.settings);
     let verdict: ImitationVerdict;
     try {
       verdict = onFields
-        ? await verifyImitationStream(input, this.plugin.settings, onFields)
-        : await verifyImitation(input, this.plugin.settings);
+        ? await verifyImitationStream(
+            input,
+            this.plugin.settings,
+            (fields) => {
+              watchdog.touch();
+              onFields(fields);
+            },
+            watchdog.signal,
+          )
+        : await this.withinBudget(
+            verifyImitation(input, this.plugin.settings),
+            AI_FIRST_OUTPUT_MS,
+            noOutput,
+          );
     } catch (error) {
       // 没余额不再就地摆提示（2026-10-04 用户拍板）：message 留空 = 弹窗已接管
       if (isNoBalanceError(error)) {
         this.handleOutOfBalance();
         return { status: "error", message: "" };
       }
-      return { status: "error", message: this.aiMessage(error) };
+      return {
+        status: "error",
+        message: watchdog.timedOut() ? noOutput : this.aiMessage(error),
+      };
+    } finally {
+      watchdog.stop();
     }
     const row = await submitImitation(this.db, slice, {
       text,

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { installObsidianDomHelpers } from "./obsidianDom";
 
@@ -7,6 +8,7 @@ import { installObsidianDomHelpers } from "./obsidianDom";
 installObsidianDomHelpers();
 
 import { AiUnavailableError, explainSentence, isNoBalanceError } from "../src/services/ai/client";
+import { hasExplanationContent } from "../src/services/study";
 import { buildAnalysis, type AnalysisHandle } from "../src/views/study/analysis";
 import {
   buildCopyPractice,
@@ -93,6 +95,7 @@ function hostedSettings(overrides: Partial<PluginSettings> = {}): PluginSettings
     lastView: "",
     lastUpdateCheckAt: 0,
     dictPromptSeen: false,
+    micQualityPromptSeen: false,
   prefsUpdatedAt: "",
     lastVerifyDay: "",
     ...overrides,
@@ -271,11 +274,15 @@ describe("AI 解析卡", () => {
     });
     handle.load(slice);
     handle.showTokens([token]);
-    // StudyView 命中本机缓存时就是这么调（见 loadSlice 的 `analysis?.done` 分支）
-    handle.showCached({
-      translation: "猫在睡觉。",
-      explanation: SECTIONS,
-    } as SentenceAnalysis);
+    // StudyView 命中本机缓存时就是这么调（见 loadSlice 的 `analysis?.done` 分支）；
+    // 第二个参数 = 词表那块在不在（记录里的 `done`）
+    handle.showCached(
+      {
+        translation: "猫在睡觉。",
+        explanation: SECTIONS,
+      } as SentenceAnalysis,
+      true,
+    );
 
     const btn = buttonByText(handle.root, "重新解析");
     btn.click();
@@ -1093,10 +1100,10 @@ describe("AI 提醒弹窗的接线钉子（2026-10-04 用户令：改没了测�
     expect(read("../src/views/study/assistant.ts").match(/isNoBalanceError\(/g)?.length).toBe(2);
   });
 
-  it("「重新解析」只重算左侧解读：句子卡那一路（词表 / 压灰 / 闪卡）都不碰", () => {
+  it("「重新解析」只重算左侧解读：句子卡那一路（词表 / 压灰 / 跑马灯）都不碰", () => {
     // 🔥 2026-10-08 用户拍板：右侧句子卡上的逐词释义没有变过，再跑一遍等于为同一份
     //    词表再付一次钱。这条钉子钉的就是"它没被顺手带回去重算" —— 那种回退不报错，
-    //    只是账单上多一笔、卡片多闪一下。
+    //    只是账单上多一笔、卡片多转一圈。
     const src = read("../src/views/StudyView.ts");
     const start = src.indexOf("private async reparseExplanation");
     expect(start).toBeGreaterThan(-1);
@@ -1106,10 +1113,13 @@ describe("AI 提醒弹窗的接线钉子（2026-10-04 用户令：改没了测�
     // 只发解读那一块（共用流式出口），不发 words 请求
     expect(body).toContain("streamExplanation(");
     expect(body).not.toContain("fetchWords(");
-    // 句子卡不参与：不压灰、不重铺读音、不闪卡
-    expect(body).not.toContain("setHeroWordsPending(");
+    // 句子卡不参与：不压灰、不重铺读音、也不转圈 —— 总开关带 targets 明确说"只拨左卡"
+    // （2026-10-15：总开关从"两张一起拨"改成可按卡拨，所以这条路现在也走它，
+    //  但**必须**把 hero 显式写成 false；漏写就会让没变的那张卡跟着转，正是这条钉子防的）
+    expect(body).toContain("this.setParsingActive(true, { analysis: true, hero: false })");
     expect(body).not.toContain("loadHeroReading(");
-    expect(body).not.toContain("flashHero(");
+    // 撤态走同一个总开关（关闭不分卡，一律两张一起撤）
+    expect(body).toContain("this.setParsingActive(false)");
     // 新解读**并进**已有记录（词表/读音/词源原样保留），不是整份覆盖
     expect(body).toContain("mergeExplanation(");
     // 确认窗的确认出口必须接到这条路上（别回到会重算两块的那条）
@@ -1117,9 +1127,66 @@ describe("AI 提醒弹窗的接线钉子（2026-10-04 用户令：改没了测�
 
     // 🔥 而且**必须带 `refresh`** —— 不带它，服务端照旧回解析缓存里那一份，
     //    用户点的"重新解析"看上去就是按了没反应（2026-10-08 实机报的 bug）。
-    expect(body).toContain("slice, true)");
+    //    （`deadline` 是 2026-10-15 起的首输出预算，紧随 refresh 之后传入）
+    expect(body).toContain("controller, slice, true, deadline)");
     // 没有本机落档、退回"两块一起"那条例外上，左侧那一块照样要 refresh
     expect(body).toContain("handleExplain(input.words, true)");
+  });
+
+  it("「只重算逐词释义」：不碰解读那条流，跑马灯只挂句子卡", () => {
+    // 🔥 2026-10-15 用户拍板新增的第三条路（原先只刷解读，想救词表只能走「纠」——
+    //    可「纠」是手改，不是重新生成）。它必须**只有词表那一块**参与：
+    //    不重发解读请求、不覆盖解读文字，弧也只挂句子卡。
+    const src = read("../src/views/StudyView.ts");
+    const start = src.indexOf("private async reparseWords");
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf("\n  private ", start + 10);
+    const body = src.slice(start, next < 0 ? undefined : next);
+
+    expect(body).toContain("fetchWords(");
+    // 不带 refresh 就等于让服务端回缓存里那份词表 —— 按了没反应（同一个坑）
+    expect(body).toContain("deadline, true)");
+    expect(body).not.toContain("streamExplanation(");
+    // 解读那块一个字都不动：不并解读、也不重刷解读缓存
+    expect(body).not.toContain("mergeExplanation(");
+    expect(body).toContain("mergeWords(");
+    // 跑马灯只拨句子卡：左栏解析卡这一趟没参与
+    expect(body).toContain("this.setParsingActive(true, { analysis: false, hero: true })");
+    expect(body).toContain("this.setParsingActive(false)");
+    // 落库后重铺句子卡（新读音要上屏）与"这次刷的是词表"的收尾提示
+    expect(body).toContain("loadHeroReading(");
+    expect(body).toContain("this.analysis.wordsRefreshed()");
+    // 确认窗的确认出口要接到它
+    expect(src).toContain("void this.reparseWords()");
+  });
+
+  it("确认窗的三条路由齐了：两块都刷 / 只解读 / 只词表", () => {
+    const src = read("../src/views/StudyView.ts");
+    const start = src.indexOf("private confirmReparse");
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf("\n  private ", start + 10);
+    const body = src.slice(start, next < 0 ? undefined : next);
+    // 两块都刷走首次解析那条老路（两块并发、整份重写落库）
+    expect(body).toContain("if (selection.explain && selection.words)");
+    expect(body).toContain("this.handleExplain(words, true)");
+    expect(body).toContain("this.reparseExplanation()");
+    expect(body).toContain("this.reparseWords()");
+    // 悬停高亮要接上（用户要求：悬停哪一行，背景里那一块就亮）
+    expect(body).toContain("onHighlight");
+    expect(body).toContain("this.highlightReparseTarget(block)");
+  });
+
+  it("两张卡都真的挂了跑马灯元素：光有 CSS 是不够的", () => {
+    // 🔥 2026-10-15 用户令「要确保实际被刷新的有跑马灯」。弧确实是纯 CSS 画的
+    //    （conic-gradient），但**弧得有个元素可挂**：`.yl-hero.yl-parsing .yl-ring`
+    //    这条选择器少建那个 span，句子卡就永远转不起来 —— 而且不报错，
+    //    界面只是"按了没反应"，正是这条需求要防的那种坏法。
+    //    左栏解析卡在建卡时就挂了（analysis.ts），句子卡挂在自己的建卡函数里
+    //    （StudyView.buildHero）—— 两处都得在，少一处就丢一张卡。
+    expect(read("../src/views/study/analysis.ts")).toContain('cls: "yl-ring"');
+    expect(read("../src/views/StudyView.ts")).toContain('cls: "yl-ring"');
+    // 两张卡的状态类也必须同名：CSS 按 `.yl-*-block.yl-parsing` / `.yl-hero.yl-parsing` 认
+    expect(read("../src/views/StudyView.ts")).toContain('toggleClass("yl-parsing", hero)');
   });
 
   it("refresh 要一路传到请求上：流式与非流式退路**两个出口都得带**", () => {
@@ -1161,5 +1228,189 @@ describe("AI 提醒弹窗的接线钉子（2026-10-04 用户令：改没了测�
     const src = read("../src/services/ai/gate.ts");
     expect(src).toContain('"need-balance"');
     expect(src).toContain("aiBalanceMillis <= 0");
+  });
+});
+
+/**
+ * 首输出预算（2026-10-15 用户令）。
+ *
+ * 规矩：**无论发生什么情况，20 秒内没有思考（思考模式）或没有输出（非思考模式），
+ * 就必须有报错** —— 不能让用户对着"解析中…"无限等。上游（供应商）自己报的
+ * 502/503 要**立即**报错、不许等那 20 秒，也不许拿退路/重试再撞一次。
+ *
+ * 服务端那一份管托管链路（`utils/llm.py::_OutputWatchdog`）；这里钉的是插件侧的
+ * 接线：看门狗有没有真挂上去、退路有没有偷跑第二个 20 秒、上游报错有没有被放行重试。
+ * 看门狗自己的行为用例在 ai.test.ts。
+ */
+describe("首输出预算的接线（2026-10-15）", () => {
+  /** 内置模型下"上游没人说话"的唯一口径 —— 见下方跨文件那条钉子。 */
+  const UPSTREAM_UNAVAILABLE_TEXT = "内置模型上游服务暂时不可用。";
+  const read = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
+  /** 截一段方法体（到下一个同缩进的 `private` 或文件尾）—— 免得断言串到隔壁去。 */
+  const cut = (src: string, marker: string): string => {
+    const start = src.indexOf(marker);
+    expect(start).toBeGreaterThan(-1);
+    const next = src.indexOf("\n  private ", start + marker.length);
+    return src.slice(start, next < 0 ? undefined : next);
+  };
+
+  it("解读那块：流式那一趟挂上看门狗，一个字都没来就掐断", () => {
+    const body = cut(read("../src/views/StudyView.ts"), "private async streamExplanation");
+    // 看门狗有自己的 controller：所以"预算耗尽"不会被认成"用户自己翻页/关面板"
+    expect(body).toContain("watchFirstOutput(controller.signal, remaining())");
+    // 🔥 流式请求带的必须是**看门狗**的 signal —— 带成 controller.signal 就永远没有超时
+    expect(body).toContain("watchdog.signal,");
+    // 首输出（思考块也算）一到就重新计时：这是"模型还在写就一直等"的那一半
+    expect(body).toContain("watchdog.touch();");
+    // 掐断后按"上游没响应"说话，不把 AbortError 原样丢给用户。
+    // 🔥 文案必须按轨道挑（noOutputMessage）：内置模型下这是**我们的供应商挂了**，
+    //    写成"太慢"用户会以为再等等就快了（2026-10-15 实机报的）。
+    expect(body).toContain("noOutputMessage(settings)");
+    // 收尾（finally）放掉计时器
+    expect(body).toContain("watchdog.stop();");
+  });
+
+  it("退路只花**剩下**的预算：不另起第二个 20 秒（全程 ≤ 20 秒）", () => {
+    const stream = cut(read("../src/views/StudyView.ts"), "private async streamExplanation");
+    // 整个方法里只该出现一次 AI_FIRST_OUTPUT_MS（无参调用时的默认值）——
+    // 退路那次要是再写一遍，就是给用户两次 20 秒（原先的 bug 就是干等 40 秒）
+    expect(stream.match(/AI_FIRST_OUTPUT_MS/g)?.length).toBe(1);
+    expect(stream).toContain("this.withinBudget(");
+    // 上游自己报的错（502/503）：立即收场，别把退路当重试通道
+    expect(stream).toContain("isUpstreamError(error)");
+    // 预算见底时连发都不发，直接报错
+    expect(stream).toContain("if (budget <= 0)");
+  });
+
+  it("逐词释义：两次尝试共用同一笔预算，上游报错不重试", () => {
+    const words = cut(read("../src/views/StudyView.ts"), "private async fetchWords");
+    // 只有默认参数那一处 —— 重试不许再起一笔 20 秒
+    expect(words.match(/AI_FIRST_OUTPUT_MS/g)?.length).toBe(1);
+    expect(words).toContain("this.withinBudget(");
+    // 上游报错 / 预算花光：不重试，如实报错
+    expect(words).toContain("isUpstreamError(error) || remaining() <= 0");
+  });
+
+  it("两块共用**同一笔**预算：从点下按钮那一刻起算，不各自起算", () => {
+    const body = cut(read("../src/views/StudyView.ts"), "private async handleExplain");
+    expect(body.match(/const deadline = Date\.now\(\) \+ AI_FIRST_OUTPUT_MS;/g)?.length).toBe(1);
+    // 解读与词表拿的是同一个 deadline（各自再算一遍 = 用户得等两次 20 秒）
+    expect(body).toContain(
+      "this.streamExplanation(input, settings, controller, slice, refresh, deadline)",
+    );
+    expect(body).toContain("this.fetchWords(input, slice, settings, deadline)");
+  });
+
+  it("仿写核对：流式那一趟有看门狗，非流式那一趟套预算", () => {
+    const body = cut(read("../src/views/StudyView.ts"), "private async handleVerifyImitation");
+    expect(body).toContain("watchFirstOutput(controller.signal, AI_FIRST_OUTPUT_MS)");
+    expect(body).toContain("watchdog.signal,");
+    expect(body).toContain("watchdog.touch();");
+    expect(body).toContain("noOutputMessage(this.plugin.settings)");
+    expect(body).toContain("watchdog.stop();");
+  });
+
+  it("小助手追问：看门狗用 askAbort.signal，超时不被误判成「用户换句」", () => {
+    const src = read("../src/views/study/assistant.ts");
+    expect(src).toContain("watchFirstOutput(askAbort.signal, AI_FIRST_OUTPUT_MS)");
+    expect(src).toContain("watchdog.touch();");
+    // 流式请求带的是看门狗的 signal
+    expect(src).toContain("watchdog.signal,");
+    // 超时那一趟要按轨道说事（内置模型 = 上游挂了），不能沉默
+    //（沉默 = 用户接着无限等）
+    expect(src).toContain("watchdog.timedOut()");
+    expect(src).toContain("noOutputMessage(currentSettings())");
+    // 收尾放掉计时器
+    expect(src).toContain("watchdog.stop();");
+  });
+
+  it("服务端那份文案与插件这份**逐字一致**：同一场故障不能看到两句不同的话", () => {
+    // 插件自己的看门狗通常先到（窗口从发请求起算），服务端那份从调上游起算 ——
+    // 两边写不一样，用户就会时而看到"内置模型上游服务暂时不可用。"
+    // 时而看到服务端的旧文案。这条钉子把它们锁在一起。
+    // 服务端那行常量在仓库另一头（core/）：用工作目录往上找，不走 import.meta.url
+    //（jsdom 环境下那个 URL 出了 plugin 目录就不认 file 协议）
+    const core = readFileSync(
+      resolve(process.cwd(), "..", "core", "billing", "services", "hosted_llm.py"),
+      "utf8",
+    );
+    const constant = core.match(/UPSTREAM_UNAVAILABLE_MESSAGE = '([^']+)'/)?.[1];
+    expect(constant).toBe(UPSTREAM_UNAVAILABLE_TEXT);
+    expect(read("../src/services/ai/client.ts")).toContain(UPSTREAM_UNAVAILABLE_TEXT);
+  });
+});
+
+/**
+ * 解析的**两块各自单独落库**（2026-10-15 用户令）。
+ *
+ * 原话："明明已经出来结果了 应该单独保存 并且客户端本地要保存。不能因为原句卡片
+ * 没有出来，我重启 obsdian 或者换个页面，这个整句解析就不见了"。
+ *
+ * 这条需求有两半，缺一半都等于没做：
+ *   · **写**：解读一到手就先落一份半成品（`persistExplanationOnly`）；
+ *   · **读**：翻回来 / 重启后，半份记录照样铺得出来（`hasExplanationContent`）。
+ * 只做写不做读 —— 存了又藏起来，用户看到的还是"解析不见了"。
+ */
+describe("解析分块落库与读回（2026-10-15）", () => {
+  const read = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
+
+  const half = {
+    explanation: { words: "「なんで」是口语化的为什么", grammar: "" },
+    translation: "",
+  };
+
+  it("「有没有解读」的判据：正文两段或整句译文，任一有内容就算", () => {
+    expect(hasExplanationContent(half)).toBe(true);
+    expect(hasExplanationContent({ explanation: undefined, translation: "为什么这么说" })).toBe(true);
+    // 空壳（两段全空、也没译文）不算 —— 那是"这次没给出解读"，不是有内容
+    expect(hasExplanationContent({ explanation: { words: "", grammar: "" }, translation: "" })).toBe(false);
+    expect(hasExplanationContent({ explanation: undefined, translation: "" })).toBe(false);
+    expect(hasExplanationContent(null)).toBe(false);
+  });
+
+  it("写：解读到手立刻单独落库，不等词表那一块", () => {
+    const src = read("../src/views/StudyView.ts");
+    // 落库那一句必须排在 wordsTask 收口**之前** —— 排在后面就等于又回到"两块齐了才落"
+    const persistAt = src.indexOf("this.persistExplanationOnly(slice, streamed.explanation)");
+    const wordsAt = src.indexOf("const wordList = await wordsTask;");
+    expect(persistAt).toBeGreaterThan(-1);
+    expect(wordsAt).toBeGreaterThan(-1);
+    expect(persistAt).toBeLessThan(wordsAt);
+  });
+
+  it("半份记录的形状：done 仍是 false、tokens 刻意留空（别拿本机分词凑数）", () => {
+    const src = read("../src/views/StudyView.ts");
+    const body = src.slice(src.indexOf("private async persistExplanationOnly"));
+    // `done` 的定义一个字没改：两块都到才算解析过 ⇒ 半份不点亮句子卡
+    expect(body).toContain("done: false");
+    // ⚠️ 留空不是漏写：填上本机分词会让词库把"有词面、无释义"的 token 当真空词条收进去
+    expect(body).toContain("tokens: []");
+  });
+
+  it("读：半份照样铺开，且提示语不撒谎（词点不开就说点不开）", () => {
+    const view = read("../src/views/StudyView.ts");
+    // 判据是"两块齐 **或** 有解读"，不能只看 done
+    expect(view).toContain("cached.done || hasExplanationContent(cached)");
+    expect(view).toContain("this.analysis.showCached(cached, cached.done)");
+    // 铺开时把"词表在不在"一并交出去 —— 少了它提示语只能说"词可以点"（半份下是假的）
+    const analysis = read("../src/views/study/analysis.ts");
+    expect(analysis).toContain("showCached(analysis, wordsReady)");
+    expect(analysis).toContain("逐词释义没拿到（词暂时点不开）");
+  });
+
+  it("半份能转正：补上缺的那一块就成完整记录，done 只升不降", () => {
+    const src = read("../src/views/StudyView.ts");
+    // 宿主判定从 `previous?.done` 放宽成"记录在就行" —— 否则半份记录点「只补词表」
+    // 会被当成"没记录"，退回两块一起、白花一笔解读的钱
+    expect(src).not.toContain("if (!previous?.done || previous.engine !== ANALYSIS_ENGINE)");
+    expect(src).toContain("done: previous.done || hasExplanationContent(previous)");
+    // 反过来：只补解读不会把一份完整记录打回半份
+    expect(src).toContain("done: previous.done || previous.tokens.length > 0");
+  });
+
+  it("两块各自的现状判定只有一处实现：读侧 / 落库侧 / 确认窗共用它", () => {
+    const src = read("../src/views/StudyView.ts");
+    // 三处各写一遍"两段正文或译文任一有内容"，必然有一天分叉
+    expect(src).toContain("const explainMissing = !hasExplanationContent(analysis);");
   });
 });

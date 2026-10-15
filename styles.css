@@ -64,11 +64,15 @@
      别拿 --yl-ok-tint 顶替 —— 它只有 95% 亮度，画出来的晕几乎看不见。 */
   --yl-ok-halo: hsl(193 60% 46% / 0.20);
 
-  /* 原句卡"变了"的那道扫光（2026-10-08，E 方案）。
-     比 ok-halo 浓一档：halo 是躺着不动的晕，扫光只有 1.1s 一闪而过，
-     太淡就白扫了。用 alpha 同上，跟用户主题底融合。
-     ⚠️ 别拿 --yl-acc-tint 顶替 —— 它 95% 亮度，扫过白底等于没扫。 */
-  --yl-sweep: hsl(193 88% 58% / 0.42);
+  /* 「解析中」边缘跑马灯（2026-10-15，取代原句卡原来那道扫光）。
+     一道彗星弧顺着卡片边缘匀速跑，四档色 = 尾 → 腰 → 头 → 尖端。
+     ⚠️ **浅色主题的"光"靠饱和不靠发白**：初版尖端用的 hsl(190 100% 88%)，
+        白底上整条弧被"洗掉"、截图里几乎看不见（2026-10-15 实测）。
+        这里 c5 才是最亮的一点，它是浅青不是白 —— 白在浅底上等于没有。 */
+  --yl-run-2: hsl(193 88% 46% / 0.18);
+  --yl-run-3: hsl(193 95% 43% / 0.72);
+  --yl-run-4: hsl(191 100% 45%);
+  --yl-run-5: hsl(187 100% 60%);
 
   --yl-on-solid: #ffffff;
 
@@ -112,8 +116,11 @@
   /* ok 系列**不在这里重复定义** —— 它们是指向 --yl-acc-* 的别名，
      会跟着上面几行自动走暗色。只有 halo 要单独给（alpha 不同）。 */
   --yl-ok-halo: hsl(193 50% 45% / 0.26);
-  /* 扫光（暗色）：暗底上要降饱和降亮度，否则那道带子白得刺眼、像页面烂了 */
-  --yl-sweep: hsl(193 72% 52% / 0.26);
+  /* 跑马灯（暗色）：暗底上反着来 —— 尖端要接近白才像"光"，浅色主题那样做反而糊成一团 */
+  --yl-run-2: hsl(193 80% 55% / 0.34);
+  --yl-run-3: hsl(190 95% 58% / 0.85);
+  --yl-run-4: hsl(188 100% 72%);
+  --yl-run-5: #f2ffff;
 
   --yl-warn-ink: hsl(38 90% 72%);
   --yl-warn-line: hsl(38 42% 36%);
@@ -1289,6 +1296,11 @@ button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
   overflow-y: auto;
 }
 .yl-analysis-block {
+  /* 🔥 position+z-index 是**给边缘跑马灯用的**（见下方「解析中的边缘跑马灯」）：
+     卡片要成一个层叠上下文，里面那圈 z-index:-1 的环才会压在卡自己的边框/底色
+     之上、又落在全部正文之下。少一样那圈环就会盖住字。 */
+  position: relative;
+  z-index: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 12px;
   padding: 10px 12px;
@@ -1298,6 +1310,176 @@ button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
   /* 不许被压扁：里面是分界线 + 解读文本，压扁了就只剩一条缝 */
   flex: 0 0 auto;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   解析中的边缘跑马灯（2026-10-15 用户拍板：彗星单弧 + 匀速中速）
+   ──────────────────────────────────────────────────────────────────
+   挂在这儿的是**所有正在解析的卡片**：左栏的解析卡（.yl-analysis-block）
+   和右栏的原句卡（.yl-hero）。两处共用一套，别各写一份。
+
+   怎么转起来的：环层铺满卡片（inset:0）+ overflow:hidden 裁掉溢出，
+   里面塞一个 **220% 见方**的方块绕着卡片中心转，方块上是 conic-gradient
+   的彗星弧（尾透明 → 尖端最亮），再盖一层卡片底色的内衬 —— 于是只剩
+   **贴着圆角边缘走的一圈弧**。圆角处自然跟着拐弯，不用额外处理。
+
+   几条别动的：
+   · **z-index:-1** —— 环压在卡自己的边框/底色之上（所以盖得住那根 1px 灰边），
+     又落在全部正文之下（内衬是实色，盖在字上就全毁了）。
+     代价 = 卡片必须**自己成层叠上下文**：.yl-analysis-block 靠 position+z-index:0
+     （见上面那条），.yl-hero 本来就 position:sticky + z-index:5。
+   · **animation 必须 linear** —— 用户明确要"匀速，不要变速"。默认缓动是 ease，
+     写成 `linear` 才是恒速；改回 ease 会看到弧一段一段地蹿。
+   · **1.5s 一圈**（用户挑的"中速"档，别再随手调）。
+   · 内衬用 `--background-primary`：解析卡是透明卡（背后就是 Obsidian 的
+     .view-content 底），原句卡的底色也是它 —— 两张卡用同一个值刚好都对。
+     原句卡"已解析"时的淡青晕只可能在环撤下前后那一两帧短暂共存，可以忽略。
+   ══════════════════════════════════════════════════════════════════ */
+.yl-ring {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.yl-ring > i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 220%;
+  aspect-ratio: 1;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 190deg,
+    var(--yl-run-2) 248deg,
+    var(--yl-run-3) 314deg,
+    var(--yl-run-4) 345deg,
+    var(--yl-run-5) 357deg,
+    transparent 359deg
+  );
+  animation: yl-ring-spin 1.5s linear infinite;
+}
+/* 内衬：掏空中间，只留 2px 一圈弧。
+   ⚠️ 内衬的圆角要**比卡片少 2px** 才是同心弧（它 inset 了 2px）——
+   直接 inherit 会得到和卡片一样的圆角，四角的弧会粗一圈。 */
+.yl-ring::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--background-primary);
+}
+.yl-analysis-block .yl-ring::after {
+  border-radius: 10px; /* 卡片 12px − 2px */
+}
+.yl-hero .yl-ring::after {
+  border-radius: 12px; /* 卡片 14px − 2px */
+}
+@keyframes yl-ring-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+/* 谁在解析谁转（状态类由 StudyView.setParsingActive 一处拨）。
+   ⚠️ **只给弧，不给卡片加外发光**：demo 里那圈 16px 柔光在真机上会被裁 ——
+   `.yl-analysis` 是 `overflow-y:auto` 的滚动容器（另一个轴按规范也变 auto），
+   解析卡又正好铺满它的宽度，横向的晕会被容器边缘切出一道硬边。
+   弧画在**卡片边框内侧**，压根不越界，所以只有它是安全的。 */
+.yl-analysis-block.yl-parsing .yl-ring,
+.yl-hero.yl-parsing .yl-ring {
+  opacity: 1;
+}
+/* 关掉动效的人：弧不转，但"正在解析"必须照样看得出来 ——
+   换成整圈常亮的青蓝描边（不是把信号一起关掉）。 */
+@media (prefers-reduced-motion: reduce) {
+  .yl-ring > i {
+    animation: none;
+    background: var(--yl-run-3);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   「重新解析」选择窗（2026-10-15 用户拍板）：两块勾选 + 背景高亮
+   ──────────────────────────────────────────────────────────────────
+   这一窗同时干两件事：**问**（花钱前点头）与**选**（这次重算哪一块）。
+   只有两个构件：一行一块（`.yl-reparse-opt`），以及勾选结果那行字
+   （`.yl-reparse-summary`）。
+   ══════════════════════════════════════════════════════════════════ */
+.yl-reparse-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 10px;
+}
+.yl-reparse-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.yl-reparse-opt:hover {
+  border-color: var(--yl-acc-line);
+  background: var(--yl-acc-tint);
+}
+.yl-reparse-opt input[type="checkbox"] {
+  /* 顶对齐：行里是"标题 + 说明"两行，方框跟着第一行才不飘 */
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+}
+.yl-reparse-opt-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* 位置词（左下 / 右上）：悬停高亮万一被主题的遮罩挡住，它就是兜底答案 */
+.yl-reparse-opt-where {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+.yl-reparse-opt-note {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+/* 缺的那块：说明文字用青蓝点出来 —— 默认被勾上的就是它，得让人看懂"为什么" */
+.yl-reparse-opt.is-missing .yl-reparse-opt-note {
+  color: var(--yl-acc-ink);
+}
+.yl-reparse-summary {
+  margin-bottom: 2px;
+  font-size: 12.5px;
+  color: var(--text-normal);
+}
+/* 一块都没勾：确认钮已置灰（见 ReparseConfirmModal.sync），这行字说明原因 */
+.yl-reparse-summary.yl-warn-text {
+  color: var(--text-error);
+}
+
+/* ── 悬停某一行 → 背景里那一块亮起来 ────────────────────────────────
+   两件事一起做才看得见：
+   ① **遮罩让开**（`body.yl-spotlighting`）：弹窗的暗层会把背景压得很黑，
+      光靠调 z-index 在 Obsidian 各种主题下层叠结构并不可靠 —— 让暗层变淡
+      才是稳的，这也是"高亮"真正生效的那一半；
+   ② 那一块用 **inset 阴影**描一圈青蓝边：inset 画在盒内，不会被
+      `.yl-card-grid`（overflow:hidden）之类的祖先裁掉，也不动布局。 */
+body.yl-spotlighting .modal-bg {
+  opacity: 0.25;
+  transition: opacity 140ms ease;
+}
+.yl-analysis.yl-spotlight,
+.yl-hero.yl-spotlight {
+  box-shadow: inset 0 0 0 2px var(--yl-run-4);
+  filter: brightness(1.05);
+}
+
 /* 动作行：AI 解析按钮 + 费用/状态提示。按钮管的就是下面那块解读，所以同一张卡。 */
 .yl-analysis-toolbar {
   display: flex;
@@ -1457,86 +1639,11 @@ button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
 .yl-hero.yl-words-pending .yl-hero-ja {
   color: var(--text-muted);
 }
-/* 逐词释义落地：把"右上角这张卡变了"推到用户眼前（2026-10-08 用户挑的 E 方案）。
-   两条通道同时说话，缺一条都不够：
-     · 一道斜光带从左扫到右 —— 回答"**哪里**变了"（横扫整张卡，不是在边上蹭）；
-     · 一圈加粗描边脉冲一次 —— 回答"就是**这张**卡"（环用 mid 色、扩到 10px，
-       同时描边自己从 line 提到 mid 再落回 line，等于边上也亮了一下）。
-   ⚠️ **不整块闪**：整块闪读起来像故障。扫光是一条有方向的带子，不是整卡变色。
-   ⚠️ 扫光靠 ::after + overflow:hidden 裁。**只在 .yl-flash 那一下开 overflow**，
-      平时不挂 —— 这张卡是 sticky 的，常态下的渲染别去动它。
-      （卡里没有会溢出的东西；词卡是 position:fixed 挂 body 的，不受影响。）
-   z-index 5 的 sticky 卡加 box-shadow 不会溢出父级裁切（阴影跟着元素走）。 */
-@keyframes yl-hero-pulse {
-  0% {
-    box-shadow: 0 0 0 0 var(--yl-acc-mid);
-    border-color: var(--yl-acc-mid);
-  }
-  60% {
-    box-shadow: 0 0 0 8px transparent;
-    border-color: var(--yl-acc-mid);
-  }
-  100% {
-    box-shadow: 0 0 0 10px transparent;
-    /* 落回解析态本来的边色，动画结束时不会"啪"地跳一下 */
-    border-color: var(--yl-acc-line);
-  }
-}
-/* 扫光带：一条窄的亮青蓝斜带（不是渐变底色），起点在卡外左侧。
-   ⚠️ 缓动**必须是 linear**（2026-10-08 实测，别改回去）：带子的"可见窗口"
-   = 它有多少时间露在卡里。任何"前快后慢"的缓动（ease-out / cubic-bezier(.25,.6,.3,1)）
-   都会让带子在前 300ms 一口气扫完，之后动画还在跑但屏幕上什么都没有 ——
-   实测可见窗口只有 250ms，等于白闪一下（那是"不够明显"的老毛病）。
-   同一套参数下各缓动的可见窗口：linear@1100ms = 560ms，linear@950ms = 490ms，
-   cubic-bezier(.35,.2,.65,.8) = 410ms，现状的 cubic-bezier(.25,.6,.3,1) = 250ms。
-   量法见 temp/hero-sweep-timing.cjs（Web Animations API 暂停逐帧采样，不是抓帧猜）。
-   ⚠️ 带宽固定占元素 40%（30%~70%），改宽度要重跑上面那份量测。 */
-@keyframes yl-hero-sweep {
-  0% {
-    transform: translateX(-130%);
-    opacity: 0;
-  }
-  12% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(130%);
-    opacity: 0;
-  }
-}
-.yl-hero::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    100deg,
-    transparent 30%,
-    var(--yl-sweep) 50%,
-    transparent 70%
-  );
-  transform: translateX(-130%);
-  opacity: 0;
-}
-.yl-hero.yl-flash {
-  overflow: hidden;
-  animation: yl-hero-pulse 0.95s cubic-bezier(0.2, 0.75, 0.3, 1) 1;
-}
-.yl-hero.yl-flash::after {
-  animation: yl-hero-sweep 1.1s linear 1;
-}
-/* 关掉动效的人不该看到脉冲/扫光，但**变化本身要看得出来**：直接把青蓝描边压深一档，
-   闪的那一下等于"强调一下已经是解析态了"（类的摘除由 JS 的定时器兜底）。 */
-@media (prefers-reduced-motion: reduce) {
-  .yl-hero.yl-flash {
-    animation: none;
-    border-color: var(--yl-acc-mid);
-  }
-  /* 扫光是纯动效：关掉动效就没有它，也不该留一道静止的带子横在卡上 */
-  .yl-hero::after {
-    display: none;
-  }
-}
+/* 🔥 逐词释义落地时原句卡**不再闪一下**（2026-10-15 用户要求去掉）。
+   原先两道信号（斜光带横扫 + 描边脉冲）都被新加的「边缘跑马灯」取代：
+   跑马灯在解析期间一直挂在两张卡上，本就是"哪张卡在动"的信号，再补一次闪
+   只是同一件事说两遍。CSS 与 JS（flashHero / heroFlashTimer）一并删干净。
+   注：`prefers-reduced-motion` 下跑马灯**不转但常亮**（见上方 .yl-ring 段）。 */
 /* ── 卡片头一排（.yl-hero-head）：全部操作按钮同一行 ──
    喇叭(重播) / 慢(0.5x 慢放) | 弹性空隙 | 纠(注音纠错) / あ⇄Aa(罗马音开关)。
    慢放按钮的图标几轮试下来（亀字 / OpenMoji 线稿 / Twemoji 彩色），
@@ -1864,6 +1971,99 @@ input.yl-corr-input {
 }
 /* 「这些为什么没列出来」常驻说清，别让用户以为漏了 */
 .yl-corr-locked { font-size: 11.5px; color: var(--text-faint); margin: 6px 0 0; }
+
+/* ── 问题反馈弹窗（`.yl-fb-*`，结构见 views/FeedbackModal.ts）───────────────
+   2026-10-15：个人中心「我的」页底部「问题反馈」打开的窗。三段：分类（三选一）
+   → 正文 → 截图。
+   ⚠️ 壳（宽度 / 圆角 / 标题行 / 底栏）归 `.yl-dialog` 那套，这里一条都不写 ——
+      全站弹窗只有 `src/ui/dialog.ts` 一个壳。本段只管壳**里面**的排布。
+   ⚠️ 分类那三颗是全站 button.yl-btn 的皮，选中态只加 `.is-on`（跟
+      `.yl-pc-track.is-pick` 两条路的写法一致：主色描边 + 极淡主色底）。 */
+
+.yl-fb-field + .yl-fb-field { margin-top: 12px; }
+.yl-fb-label {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 650;
+}
+/* 字数/上限与「可选」这类跟随说明：跟着标题走，不另起一行占高度 */
+.yl-fb-tip { flex: 1; font-size: 11.5px; font-weight: 400; color: var(--text-faint); }
+.yl-fb-count {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分类：三颗等宽一排，窄窗里也别折成两截（三选一就该一眼看完） */
+.yl-fb-kinds { display: flex; gap: 8px; }
+button.yl-fb-kind { flex: 1; min-width: 0; }
+button.yl-fb-kind.is-on {
+  border-color: var(--yl-acc-mid);
+  background-color: var(--yl-acc-tint);
+  color: var(--yl-acc-ink);
+  font-weight: 600;
+}
+
+textarea.yl-fb-text {
+  width: 100%;
+  min-height: 92px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  resize: vertical;
+}
+
+/* 截图区：空的时候只留一句「可以直接粘贴」，不占一大块 */
+.yl-fb-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 0;
+  margin-bottom: 8px;
+}
+.yl-fb-shots.is-empty { margin-bottom: 0; }
+.yl-fb-shot-empty {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  padding: 7px 0;
+}
+.yl-fb-shot {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--background-primary-alt);
+}
+.yl-fb-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 移除钮压在缩略图右上角：整张图都是预览，不能再给按钮腾一行 */
+button.yl-fb-shot-del {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.yl-fb-shot:hover button.yl-fb-shot-del { opacity: 1; }
+button.yl-fb-shot-del:focus-visible { opacity: 1; }
+.yl-fb-shot-row { display: flex; align-items: center; gap: 8px; }
+
 /* ── 三步时间线：左圆点导轨 + 右卡片 ──
    圆点三态：✓ 青蓝实心（做完）/ 描边高亮（当前步 = 第一个没做完的）/ 灰数字（未开始）。
    ⚠️ "做完"只用主色，不再用绿 —— 跟"当前步"的差异靠**实心面 vs 描边**，不靠色相。
@@ -4003,7 +4203,7 @@ button.yl-locked:hover:not(:disabled) {
 .yl-pc-faint { color: var(--text-faint); }
 
 /* ── 「你的学习」四张指标卡（2026-10-04 用户拍板 v2 渐变徽章版）────────────
-   设计稿 temp/demo/space_cards/v2.html。连续学习 / 等级 / 总句子数 / 总词汇量，
+   设计稿 temp/demo/space_cards/v2.html。连续学习 / 累计学习 / 等级 / 总词汇量，
    每项一个专属色渐变徽章：火焰橙红 / 等级青（品牌色）/ 句子紫 / 词汇绿。
    火焰三态换的是徽章底色（图形不变）：红=连续中、蓝+雪花角标=宽限、灰=默认/已断；
    等级徽章外套一圈升级进度环（.yl-pc-ring，SVG 圆弧，进度在 TS 里算好写进 dashoffset）。 */
@@ -4782,13 +4982,16 @@ button.yl-v3-edit .svg-icon { width: 12px; height: 12px; }
   text-align: center;
 }
 
-/* 退出登录：页底单独一行（2026-10-04。原来混在编辑表单里 —— 账号级动作
-   不和资料字段装一起）。分隔线 + 居中的次要文字钮。 */
+/* 退出登录 + 问题反馈：页底单独一行（2026-10-04。原来混在编辑表单里 —— 账号级
+   动作不和资料字段装一起）。分隔线 + 两颗居中的次要文字钮（2026-10-15 加反馈钮）。 */
 .yl-v3-logout-row {
   margin-top: 18px;
   padding-top: 14px;
   border-top: 1px solid var(--background-modifier-border);
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
 }
 
 /* 窄面板断点（容器名 ylpc，与内容区共用一套；这里只补本页自己的几处布局） */
@@ -5078,8 +5281,75 @@ a[href^="obsidian://young-look"] {
   color: hsl(193 60% 76%);
 }
 
-/* 「生成学习卡片」弹窗：二维码 + 链接。
-   二维码必须是白底黑码 —— 扫不出来的一切花活都没有意义。 */
+/* 「生成学习卡片」弹窗（2026-10-15 重写）：主题是卡片本身 —— 最上是当场
+   画好的学习卡，下面是「分享到手机」的二维码 + 说明；下载图片在底栏。
+   ⚠️ 卡是 5:8 竖版，弹窗整体可能比窗口高，所以只在这个类名下给弹窗封顶、
+      让正文自己滚（别的弹窗正文都不滚，别把这两条提出去）。 */
+.modal.yl-dialog.yl-share-modal {
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+}
+.modal.yl-dialog.yl-share-modal .yl-dialog-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.modal.yl-dialog.yl-share-modal .yl-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+/* 卡片预览：白底圆角，宽封顶 320px（5:8 → 高约 512px；再宽弹窗就压不住了）。 */
+.yl-share-cardbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.yl-share-cardhint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 5 / 8;
+  margin: 0 auto;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.yl-share-card {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  margin: 0 auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: #ffffff;
+}
+/* 「分享到手机」分区：一条细线隔开，内容全部居中。 */
+.yl-share-phone {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--background-modifier-border);
+  text-align: center;
+}
+.yl-share-phone-t {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.yl-share-phone-d {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+/* 二维码必须是白底黑码 —— 扫不出来的一切花活都没有意义。 */
 .yl-share-qr {
   display: flex;
   justify-content: center;
@@ -5104,17 +5374,6 @@ a[href^="obsidian://young-look"] {
   display: block;
   width: 100%;
   height: 100%;
-}
-.yl-share-link {
-  display: inline-block;
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  text-decoration: none;
-}
-.yl-share-link:hover {
-  color: var(--text-accent);
-  text-decoration: underline;
 }
 
 /* ── 历史页签的范围下拉 + 词库页签的搜索框（2026-10-10）────────────────
@@ -5150,3 +5409,76 @@ input.yl-vb-search:focus {
 /* 滚动哨兵：历史 / 词库两页签共用（消费记录有自己的 .yl-pc-spend-sentinel）。
    触发器盯着它进视口就再拉一页，它本身什么都不显示 */
 .yl-pc-pagesentinel { height: 1px; }
+
+/* ══ 头像裁剪（2026-10-15）══════════════════════════════════════════════
+    visuals 全在 canvas 里画（图 + 框外遮罩 + 实线框 + 内切圆虚线），
+    CSS 只管排布和光标 —— 不碰颜色，所以明暗主题不用各写一份。
+   为什么要画进 canvas：DOM 叠加层要在 CSS 里处理 pointer-events、
+   跟图的缩放同步，还得给两种主题各配一套边框色；画布里一次 evenodd
+   挖洞 + 描边两遍（深色垫底 / 浅色压上）就都解决了。 */
+
+.yl-crop-stage {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 10px;
+}
+canvas.yl-crop-canvas {
+  /* 尺寸由 AvatarCropModal 按 devicePixelRatio 写在 width/height 上，
+     这里给 touch-action 是为了让 Pointer Events 拿到竖向拖动而不是滚页面 */
+  display: block;
+  border-radius: 10px;
+  background: var(--background-secondary);
+  cursor: grab;
+  touch-action: none;
+}
+canvas.yl-crop-canvas:active,
+canvas.yl-crop-canvas.is-dragging { cursor: grabbing; }
+canvas.yl-crop-canvas:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+/* 缩放条：减号 / 滑杆 / 加号一行，跟画布同宽地居中 */
+.yl-crop-zoom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 320px;
+  margin: 0 auto;
+}
+.yl-crop-zoom-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  flex: none;
+}
+.yl-crop-zoom-icon svg { width: 14px; height: 14px; }
+.yl-crop-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--interactive-accent);
+}
+
+/* 资料编辑卡右下角的「取消 / 保存」—— 2026-10-15：三行不再各自带着保存键，
+   统一落到这里，卡片也因此不再因为改了某一项而被关掉。 */
+.yl-pc-editfoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+/* 「头像 / 昵称 / 邮箱」行下方的提示小字：审核中、冷却中、已改邮箱。
+   三种文案长短不一，所以不设死宽度，让它自然折行。 */
+.yl-pc-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  /* `.yl-pc-wvalue > div` 给所有子 div 上了 ellipsis + nowrap（那是为了让长的
+     展示值缩成一行）；提示语反过来要能正常折行，这里显式让开。 */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+.yl-pc-hint.is-warn { color: var(--text-warning); }

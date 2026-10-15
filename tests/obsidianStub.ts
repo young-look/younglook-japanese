@@ -28,6 +28,53 @@ export class Notice {
 }
 
 /**
+ * 视图基类的最小壳（`StudyView` / `PersonalCenterView` 继承它）。
+ *
+ * 单测要的是"视图里的**分支**对不对"（比如学习卡片「返回」按来路退到哪一页，
+ * 见 tests/studyBackNavigation.test.ts），不是渲染出来长什么样 —— 所以这里只给
+ * 三个真节点（containerEl / contentEl）+ app + leaf，够构造、够挂监听即可。
+ * ⚠️ 用纯 jsdom API 建节点，不依赖 `installObsidianDomHelpers()`（那个补丁是给
+ *    运行时的 `createDiv` 这类扩展方法用的，构造期不该假定它已经装上）。
+ */
+export class ItemView {
+  app: unknown = {};
+  containerEl: HTMLElement;
+  contentEl: HTMLElement;
+
+  constructor(public leaf: unknown) {
+    this.containerEl = document.createElement("div");
+    this.contentEl = document.createElement("div");
+    this.containerEl.appendChild(this.contentEl);
+  }
+}
+
+/** 右键菜单：单测不点它，只要 `addItem().setTitle()...` 这条链能跑通。 */
+export class MenuItem {
+  setTitle(_title: string): this {
+    return this;
+  }
+  setIcon(_icon: string): this {
+    return this;
+  }
+  onClick(_callback: (evt: MouseEvent) => unknown): this {
+    return this;
+  }
+}
+
+export class Menu {
+  addItem(cb: (item: MenuItem) => unknown): this {
+    cb(new MenuItem());
+    return this;
+  }
+  showAtMouseEvent(_evt: MouseEvent): void {}
+}
+
+/** vault 文件对象：单测只当类型/占位用（路径由测试自己塞）。 */
+export class TFile {
+  path = "";
+}
+
+/**
  * 键位作用域（真身是 obsidian 的 `Scope`）。单测只关心一件事：**「锁定」的
  * 弹窗能不能被 Esc 关掉** —— 所以这里给一个够用的壳，`register` 记下处理器，
  * `triggerEscape()` 手动按一下，返回 `false` 表示被拦下（阻止默认）。

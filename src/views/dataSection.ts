@@ -392,7 +392,8 @@ export class DataPane {
       ghead.createSpan({ cls: "yl-dt-gname", text: group.title });
       ghead.createSpan({
         cls: "yl-dt-gmeta",
-        text: `${group.records} 条记录 · ${group.files.length} 个文件 · ${humanSize(group.bytes)}`,
+        // 两个粒度都带量词收口（2026-10-15「素材」术语口径）：条 = 组合，个素材文件 = 文件
+        text: `${group.records} 条素材 · ${group.files.length} 个素材文件 · ${humanSize(group.bytes)}`,
       });
       ghead.createDiv({ cls: "yl-pc-grow" });
       if (group.attention > 0) {

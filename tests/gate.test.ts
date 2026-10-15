@@ -36,6 +36,7 @@ function settings(overrides: Partial<PluginSettings> = {}): PluginSettings {
     lastView: "",
     lastUpdateCheckAt: 0,
     dictPromptSeen: false,
+    micQualityPromptSeen: false,
     prefsUpdatedAt: "",
     lastVerifyDay: "",
     ...overrides,

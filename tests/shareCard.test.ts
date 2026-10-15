@@ -3,9 +3,16 @@
  * `parseShareQuery` 是同一份约定的两处实现，这里的断言就是那份契约：
  * 字段名、顺序无关紧要，**值必须原样可还原**。改格式两边一起改。
  */
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildShareUrl, localDay, type ShareCardPayload } from "../src/services/shareCard";
+import {
+  buildShareUrl,
+  localDay,
+  savePngViaSystemDialog,
+  shareCardFileName,
+  type ShareCardPayload,
+} from "../src/services/shareCard";
 
 const PAYLOAD: ShareCardPayload = {
   nickname: "小满",
@@ -47,5 +54,69 @@ describe("localDay", () => {
   it("按本地时区取日（不是 UTC）", () => {
     expect(localDay(new Date(2026, 9, 9, 23, 59))).toBe("2026-10-09");
     expect(localDay(new Date(2026, 0, 1, 0, 0))).toBe("2026-01-01");
+  });
+});
+
+describe("shareCardFileName", () => {
+  it("默认名带日期、png 结尾（与网页端「保存图片」同一格式）", () => {
+    expect(shareCardFileName("2026-10-15")).toBe("洋流日语-学习卡-2026-10-15.png");
+  });
+
+  it("日期缺失时兜底「今天」", () => {
+    expect(shareCardFileName("")).toBe("洋流日语-学习卡-今天.png");
+  });
+});
+
+describe("savePngViaSystemDialog", () => {
+  /** 恰好 8 字节 —— PNG 文件头魔数，用来验 base64 → Buffer 的解码没跑偏。 */
+  const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgo=";
+  const PNG_HEAD = Buffer.from("iVBORw0KGgo=", "base64");
+
+  /** 假扮 Obsidian 渲染进程：`window.require("electron")` 给出保存框。 */
+  function stubElectron(showSaveDialog: (opts: unknown) => Promise<unknown>): void {
+    (globalThis as unknown as { window: unknown }).window = {
+      require: (name: string) =>
+        name === "electron" ? { remote: { dialog: { showSaveDialog } } } : undefined,
+    };
+  }
+
+  afterEach(() => {
+    delete (globalThis as unknown as { window?: unknown }).window;
+    vi.restoreAllMocks();
+  });
+
+  it("拿不到系统保存框时返回 undefined（调用方据此告知用户没保存成）", async () => {
+    // node 环境里没有 window —— 函数自己兜住，不炸
+    await expect(savePngViaSystemDialog("a.png", PNG_DATA_URL)).resolves.toBeUndefined();
+  });
+
+  it("用户取消保存框返回 null，一个字节都不写", async () => {
+    stubElectron(() => Promise.resolve({ canceled: true }));
+    const write = vi.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+    await expect(savePngViaSystemDialog("a.png", PNG_DATA_URL)).resolves.toBeNull();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("选了位置就写盘：补 .png 后缀，落盘的是解码后的 PNG 字节", async () => {
+    const showSaveDialog = vi.fn(() =>
+      Promise.resolve({ filePath: "/tmp/洋流日语-学习卡-2026-10-15" }),
+    );
+    stubElectron(showSaveDialog);
+    const write = vi.spyOn(fs, "writeFileSync").mockImplementation(() => undefined);
+
+    const saved = await savePngViaSystemDialog("洋流日语-学习卡-2026-10-15.png", PNG_DATA_URL);
+
+    expect(saved).toBe("/tmp/洋流日语-学习卡-2026-10-15.png");
+    expect(write).toHaveBeenCalledTimes(1);
+    const [path, buf] = write.mock.calls[0] as unknown as [string, Buffer];
+    expect(path).toBe("/tmp/洋流日语-学习卡-2026-10-15.png");
+    expect(buf.equals(PNG_HEAD)).toBe(true);
+    // 保存框带默认名 + PNG 过滤器（用户自己选位置的那一步）
+    expect(showSaveDialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultPath: "洋流日语-学习卡-2026-10-15.png",
+        filters: [{ name: "图片", extensions: ["png"] }],
+      }),
+    );
   });
 });
