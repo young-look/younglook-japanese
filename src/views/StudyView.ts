@@ -427,7 +427,26 @@ export class StudyView extends ItemView {
     // 笔记抽屉挂在 contentEl 上，随视图销毁一起拆，不用手动关
   }
 
+  /**
+   * 渲染的唯一入口 —— 两道纪律（2026-10-16，"新装后首页只剩 logo 和按钮"事故）：
+   *
+   *  · **串行化**：reopenLastView 在插件启用时可能连跑两遍（onLayoutReady 回调 +
+   *    layoutReady 已就绪时的立即调用各一次），两次 render 并发交错 —— 后一次的
+   *    contentEl.empty() 正好砸在前一次 await 的中间。锁成一条队列，谁也不打谁的架。
+   *  · **失败必须可见**：render 中途抛错（典型：布局恢复比 db 开得早，loadRecordList
+   *    拿着 undefined 就炸）以前被静默吞掉，页面永远停在"只有顶栏"的半截 —— 没有提示、
+   *    不会自己恢复，用户只会觉得"异步加载完也不刷新"。现在失败就地铺错误面板
+   *    （带原因原文 + 重试钮），宁可吵，不要静默半页。
+   */
+  private renderChain: Promise<void> = Promise.resolve();
+
   async render(): Promise<void> {
+    const run = this.renderChain.then(() => this.renderInner());
+    this.renderChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async renderInner(): Promise<void> {
     if (this.mode === "card" && this.cardBuilt) {
       // ⚠️ 卡片模式下**不能重建** —— 用户可能正打了一半的字。
       // 连接/退出账号后走这里：只把三个 AI 入口的锁定态就地刷新。
@@ -437,9 +456,41 @@ export class StudyView extends ItemView {
     }
     this.contentEl.empty();
     this.contentEl.addClass("yl-study-root");
-    if (this.mode === "card") this.buildCard();
-    else await this.buildList();
+    try {
+      if (this.mode === "card") {
+        this.buildCard();
+      } else if (!this.plugin.db) {
+        // 启动竞态：视图被布局恢复建出来时 onload 还没开完库。铺一句话别留白屏 ——
+        // db 一就绪 main.ts 会调 refreshOpenViews() 自动重绘，用户不用自己动手。
+        this.mountInitializing();
+      } else {
+        await this.buildList();
+      }
+    } catch (error) {
+      log.error("学习页渲染失败", error);
+      this.mountRenderError(error);
+    }
     this.syncViewTitle();
+  }
+
+  /** db 没就绪时的占位（renderInner）：一句话即可，恢复是自动的，不需要用户做任何事。 */
+  private mountInitializing(): void {
+    this.contentEl.createDiv({ cls: "yl-empty" }).createEl("p", { text: "正在初始化，马上就好…" });
+  }
+
+  /** 渲染失败的面板（renderInner）：说人话 + 原因原文 + 重试。 */
+  private mountRenderError(error: unknown): void {
+    const panel = this.contentEl.createDiv({ cls: "yl-empty" });
+    panel.createEl("p", { text: "页面加载出了点问题，点下面的按钮重试。" });
+    panel.createEl("p", {
+      cls: "yl-muted-sm",
+      text: error instanceof Error ? error.message : String(error),
+    });
+    createButton(panel, {
+      text: "重试",
+      role: "primary",
+      onClick: () => void this.render(),
+    });
   }
 
   /** 页签 / 页头标题（页签带品牌前缀，页头只写页面名，见 ui/viewTitle.ts）。 */

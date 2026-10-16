@@ -121,6 +121,9 @@ export default class YoungLookPlugin extends Plugin {
     // 一份本机数据只跟一个账号（2026-10-09），换过账号就可能有多个空间。
     // 老用户的 spaces 只有一条、id 正是 vaultLocalId ⇒ 行为与以前完全一致。
     this.db = await VaultDb.open(this.settings.activeSpaceId);
+    // 启动竞态兜底：布局恢复可能比这行先到（视图已建、db 还是 undefined，页面停在
+    // "正在初始化"占位上）。库一开好就把已经开着的页面重绘一遍 —— 用户不用自己刷新。
+    void this.refreshOpenViews();
     await this.tagVaultPath();
 
     // 演示素材（首页那条「示例素材」）不再在启动时铺：它改走服务端按需下载，用户在
