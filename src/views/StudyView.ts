@@ -84,7 +84,7 @@ import { pluginDirPath, resolveDictPath } from "../services/dictPath";
 import { fetchDictManifest, isDictInstalled } from "../services/dictInstall";
 import { DictInstallModal } from "./DictInstallModal";
 // 演示素材（示例那一集）改走服务端按需下载：不再内联进 main.js（见 services/demoPack.ts）。
-import { DEMO_WORK_TITLE, isDemoSeeded } from "../services/demo";
+import { DEMO_WORK_TITLE } from "../services/demo";
 import { fetchDemoManifest } from "../services/demoPack";
 import { resolveMediaDir } from "../services/mediaStore";
 import { DemoDownloadModal } from "./DemoDownloadModal";
@@ -657,13 +657,13 @@ export class StudyView extends ItemView {
 
     const items = await loadRecordList(this.db);
 
-    // 演示素材还没下载：列表最前面摆一条「示例素材」，点它才谈下载（services/demoPack.ts）。
-    // 它是插件分发的东西、不是用户导入的一条素材 —— **不并入 items**，也不计入上面那行概览数字。
-    if (!(await isDemoSeeded(this.db))) {
-      this.mountDemoPlaceholderRow(list);
-    }
-
+    // 库里一条素材都没有 = 摆出那条「示例素材」，点它才谈下载（services/demoPack.ts）。
+    // 判据是**「本地有没有素材」**，不是「演示包下过没有」（2026-10-16 用户定）：新装插件
+    // 是空的、人工把本地素材全删了也是空的 —— 两种情况它都该冒出来；库里一旦有了任何一条
+    // 素材（自己导入的，或点示例下载来的）就自然收起。
+    // 它是插件分发的东西、不是用户导入的一条素材 —— **不并入 items**，也不计入那行概览数字。
     if (items.length === 0) {
+      this.mountDemoPlaceholderRow(list);
       overview.remove();
       const empty = list.createDiv({ cls: "yl-empty" });
       empty.createEl("p", {
@@ -776,11 +776,12 @@ export class StudyView extends ItemView {
   }
 
   /**
-   * 首页的「示例素材」占位行 —— 只在演示包还没下载时出现（见 services/demoPack.ts）。
+   * 首页的「示例素材」占位行 —— **本地一条素材都没有时**才出现（2026-10-16 用户定）。
    *
    * 它还不是库里的一条真实素材：点「开始学」会先弹窗问要不要下载示例素材，下载成功后才由
    * `importSubtitle` 铺成**真素材行**（带进度条、「⋯」菜单那套），这条占位自然消失。
-   * 按钮恒为「开始学」（没下过 = 没学过）；「接着学」是下载后真实行走的既有逻辑。
+   * 反过来说只要库里还剩一条素材它就不出现；用户把素材全删光了，它会照常回来。
+   * 按钮恒为「开始学」（占位行本身没有被学过的状态）；「接着学」是下载后真实行走的既有逻辑。
    */
   private mountDemoPlaceholderRow(list: HTMLElement): void {
     const row = list.createDiv({ cls: "yl-episode-row yl-demo-row" });

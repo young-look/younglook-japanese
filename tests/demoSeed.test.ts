@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DEMO_META_KEY, DEMO_WORK_TITLE, isDemoSeeded } from "../src/services/demo";
+import { DEMO_WORK_TITLE } from "../src/services/demo";
 import { defaultSettings } from "../src/settings/defaults";
 import { collectInventory } from "../src/services/dataInventory";
 import {
@@ -28,8 +28,10 @@ import type { AssetRow } from "../src/types/entities";
  * 演示包不再内联进 main.js —— 它托管在服务端 `/storage/media/videos/`，用户点首页那条
  * 「示例」时才下载。这组用例钉的是同词典下载一脉相承的**两条会静默出事的纪律**：
  *  · 清单里的文件名可不可信（`../` 或带路径分隔符的名字能写到暂存目录外）；
- *  · **只有真的导进来了才落 `demoSeeded` 标记** —— 反了会让首页占位行消失、
- *    而演示又没进来（"装完一片空白"那种缺口）。
+ *  · **失败时库里不能留下半条素材** —— 首页「示例」占位行的判据 = `loadRecordList` 为空
+ *    （2026-10-16 起；原先那个 `demoSeeded` 标记已退役）。下载 / 校验 / 导入任一步没走完，
+ *    库里就必须还是空的，占位行才留得住；反过来只要真导进来了，库里就有素材、占位行自然
+ *    收起。所以下面每个失败用例都钉死"库还是 0 条"。判据本身见 `services/demo.ts` 头注释。
  */
 
 const sha = (content: Buffer): string => createHash("sha256").update(content).digest("hex");
@@ -240,7 +242,7 @@ describe("demoManifestBytes", () => {
 });
 
 describe("installDemoPack", () => {
-  it("下载 + 导入成功：建集、落标记、素材进本空间素材库、暂存被清", async () => {
+  it("下载 + 导入成功：建集、素材进本空间素材库、暂存被清", async () => {
     const { db, mediaDir, stagingDir } = await harness();
     const bodies = { "demo.mp4": VIDEO, "demo.srt": SRT };
     const manifest = manifestOf([fileEntry("demo.mp4", VIDEO), fileEntry("demo.srt", SRT)]);
@@ -256,15 +258,11 @@ describe("installDemoPack", () => {
     });
 
     expect(result).toMatchObject({ ok: true });
+    // 🔒 这条非空就是首页「示例」占位行收起的**唯一依据**（判据见 demo.ts 头注释）
     const episodes = await loadRecordList(db);
     expect(episodes).toHaveLength(1);
     expect(episodes[0].record.title).toBe(DEMO_WORK_TITLE);
     expect(await loadStudySentences(db, episodes[0].record.cid)).toHaveLength(2);
-
-    // 🔒 只有真的导进来了才落标记
-    expect(await isDemoSeeded(db)).toBe(true);
-    const flag = await db.get<{ key: string; value: string }>(STORE.meta, DEMO_META_KEY);
-    expect(flag?.value).toBeTruthy();
 
     // 素材收进了本机空间的素材库（与用户导入同一条路：`<空间 id>/<作品名>/`）
     const video = await liveVideoAsset(db, episodes[0].record.videoSha256);
@@ -274,7 +272,7 @@ describe("installDemoPack", () => {
     expect(seen).toEqual([1, 2]);
   });
 
-  it("sha 对不上：返回失败、不落标记，坏文件也不留在暂存目录", async () => {
+  it("sha 对不上：返回失败、库里不留素材，坏文件也不留在暂存目录", async () => {
     const { db, mediaDir, stagingDir } = await harness();
     const bodies = { "demo.mp4": VIDEO, "demo.srt": SRT };
     const manifest = manifestOf([fileEntry("demo.mp4", VIDEO), fileEntry("demo.srt", SRT)]);
@@ -291,14 +289,13 @@ describe("installDemoPack", () => {
 
     expect(result.ok).toBe(false);
     expect(await loadRecordList(db)).toHaveLength(0);
-    expect(await isDemoSeeded(db)).toBe(false);
     // 校验不过的那个文件必须删掉（留着下一趟会被当成"已下好"）
     expect(fs.existsSync(path.join(stagingDir, "demo.srt"))).toBe(false);
     // 前一个已校验过的文件留着 —— 下一趟重试不用重下它
     expect(fs.existsSync(path.join(stagingDir, "demo.mp4"))).toBe(true);
   });
 
-  it("🔒 导入失败（字幕读不出时间轴）：不落标记，占位行继续挂着", async () => {
+  it("🔒 导入失败（字幕读不出时间轴）：库里仍是空的，占位行继续挂着", async () => {
     const { db, mediaDir, stagingDir } = await harness();
     const bodies = { "demo.mp4": VIDEO, "demo.srt": SRT_BAD };
     const manifest = manifestOf([fileEntry("demo.mp4", VIDEO), fileEntry("demo.srt", SRT_BAD)]);
@@ -313,7 +310,6 @@ describe("installDemoPack", () => {
 
     expect(result.ok).toBe(false);
     expect(await loadRecordList(db)).toHaveLength(0);
-    expect(await isDemoSeeded(db)).toBe(false);
     // 失败时暂存目录**保留** —— 已下好的文件下一趟按 sha 跳过
     expect(fs.existsSync(path.join(stagingDir, "demo.mp4"))).toBe(true);
   });
@@ -339,7 +335,8 @@ describe("installDemoPack", () => {
     expect(second).toMatchObject({ ok: true });
     const asked = fetchImpl.mock.calls.map((call) => new URL(call[0]).pathname);
     expect(asked.some((p) => p.endsWith("demo.mp4"))).toBe(false);
-    expect(await isDemoSeeded(db)).toBe(true);
+    // 第二趟真的导进来了 ⇒ 库里 1 条素材（首页占位行据此收起）
+    expect(await loadRecordList(db)).toHaveLength(1);
   });
 
   it("暂存目录里清单之外的旧文件会被清掉（换版本时不该混进来）", async () => {
@@ -361,7 +358,7 @@ describe("installDemoPack", () => {
     expect(fs.existsSync(path.join(stagingDir, "旧的.mp4"))).toBe(false);
   });
 
-  it("清单缺视频或字幕：直接从清单判断失败，不落标记", async () => {
+  it("清单缺视频或字幕：直接从清单判断失败，库里不留素材", async () => {
     const { db, mediaDir, stagingDir } = await harness();
     const onlyVideo = manifestOf([fileEntry("demo.mp4", VIDEO)]);
 
@@ -374,6 +371,6 @@ describe("installDemoPack", () => {
     });
 
     expect(result).toMatchObject({ ok: false });
-    expect(await isDemoSeeded(db)).toBe(false);
+    expect(await loadRecordList(db)).toHaveLength(0);
   });
 });

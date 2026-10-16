@@ -16,8 +16,10 @@
  * 不做目录级原子 rename —— `importSubtitle` 经 `takeIntoMediaDir` 把文件**复制**
  * 进素材库，暂存目录只是一次性的复制源，天然不需要原子换。
  *
- * 🔒 **导入成功之后才落 `demoSeeded` 标记**（见 demo.ts）：先落标记会让首页占位行
- *    消失，而演示又没真的进来 —— 正是"装完一片空白"那种静默缺口。
+ * 🔒 **导入成功与否，看的是「库里到底有没有素材」**（2026-10-16 起）：首页那条「示例」
+ *    占位行的判据是 `loadRecordList` 是否为空（见 demo.ts 头注释）。所以这里**不需要**
+ *    落任何"下过了"的标记 —— 演示真的导进来时，库里自然多出一条素材，占位行自己就收起了；
+ *    没导进来时库还是空的，占位行继续挂着。少一个状态，就少一处能对不上的地方。
  *
  * ⚠️ 下载源在 `settings.serverUrl` 后面拼 `DEMO_MANIFEST_PATH`（nginx 直接吐静态
  *    文件，不经过后端）—— 换域名不用重发清单。
@@ -28,7 +30,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { ensureAppDataSubdir } from "./appData";
-import { DEMO_WORK_TITLE, markDemoSeeded } from "./demo";
+import { DEMO_WORK_TITLE } from "./demo";
 import { importSubtitle } from "./importer";
 import type { VaultDb } from "../storage/db";
 
@@ -158,12 +160,11 @@ const isSubtitleName = (name: string): boolean => /\.(srt|ass|ssa|vtt|lrc)$/iu.t
  * 下载演示包并导成一集。
  *
  * 顺序：逐个文件「下载 → sha256 校验 → 写进暂存目录」；**全部就位之后**才调用
- * `importSubtitle` 把它导成一集（素材照常收进素材库）。成功后才落 `demoSeeded`
- * 标记、清掉暂存目录。
+ * `importSubtitle` 把它导成一集（素材照常收进素材库），成功才清掉暂存目录。
  *
  * 中途任何失败：返回 `{ ok:false, reason }`，让界面说"下载失败，再试一次"。
  * 暂存目录**故意留着** —— 已经下好且校验过的文件下一趟按 sha 跳过，"下到一半断了"
- * 不用从头再来。导入失败（例如重名）同样不落标记，占位行会继续挂着。
+ * 不用从头再来。导入失败（例如重名）时库里还是空的，首页的「示例」占位行会继续挂着。
  */
 export async function installDemoPack(opts: InstallDemoPackOptions): Promise<InstallDemoPackResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -220,8 +221,6 @@ export async function installDemoPack(opts: InstallDemoPackOptions): Promise<Ins
     });
     if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
-    // 🔒 只有真的导进来了才落标记（顺序不能反，见文件头）
-    await markDemoSeeded(opts.db);
     fs.rmSync(staging, { recursive: true, force: true });
     return { ok: true, recordCid: outcome.result.recordCid };
   } catch (error) {
