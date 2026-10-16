@@ -27,21 +27,8 @@ export interface AccountProfile {
   avatarUrl: string;
   /** 抓取时间（ISO）。离线时用缓存，界面按这个标注「数据可能过期」 */
   fetchedAt: string;
-
-  // ── 昵称三条规则的状态（2026-10-15）─────────────────────────────────
-  // 全部**可选**：老版本 data.json 的快照没有这三个字段（读出来是 undefined，
-  // 按"没有待审、没有冷却"处理，等价于从来没改过名字 —— 安全）。
-  /** 正在审核的新昵称（空 = 没有在途申请） */
-  nicknamePending?: string;
-  /** 上面那条申请的审核状态：pending = 在排队；rejected = 上次那个没通过 */
-  nicknameStatus?: string;
-  /**
-   * 下一次可以改昵称的时刻（服务端算好的 ISO）。没有 = 现在就能改。
-   *
-   * ⚠️ 服务端发算好的时刻而不是"上次改名时间"，就是为了不让本机去加 30 天 ——
-   *    本地时钟不准已经是小事，"显示可以改、点了却被拒"才是要防的。
-   */
-  nicknameNextChangeAt?: string;
+  // 昵称审核三件套（nicknamePending / nicknameStatus / nicknameNextChangeAt）
+  // 已随 2026-10-16「提交即生效」口径退役 —— 没有审核与冷却可解释了。
 }
 
 /**

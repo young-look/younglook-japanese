@@ -14,8 +14,8 @@
  *    「取消」、「保存」；改头像、改昵称、改邮箱都只在这一张卡里就地生效。
  *  · 头像与昵称先进**草稿**，点保存才提交；邮箱是例外 —— 它要过新邮箱的验证码，
  *    服务端是"确认即改绑"，没有草稿态，所以它保持即时生效（并在行里写明）。
- *  · 昵称不再即时生效：提交后进入 ops 审核队列，`nickname` 一个字都不动，
- *    行里会显示"正在审核"。
+ *  · 昵称提交即生效（2026-10-16，服务端只剩撞名校验，审核链已退役）——
+ *    但仍走草稿：跟头像一起点「保存」统一提交，撞名时服务端弹一句人话。
  *
  * ⚠️ 这个类**不自己负责重绘整页** —— 那是 `renderProfile()` 的事。这里任何一处
  *    调 `renderProfile()` 都会把这张卡连带关掉，正是要修的那个毛病。
@@ -32,16 +32,10 @@ import {
 } from "../services/auth/authApi";
 import { AvatarCropModal } from "./AvatarCropModal";
 
-/** 昵称行此刻的形态：能不能改、不能改的话因为什么。 */
+/** 昵称行此刻的形态：现在只有一种 —— 随时可改（审核与冷却已退役）。 */
 type NickState =
   /** 正常可改 */
-  | { kind: "editable"; hint?: string }
-  /** 有申请在 ops 排队 */
-  | { kind: "pending"; hint: string }
-  /** 上次申请被驳回 —— 可以改，但要告诉用户上次的没通过 */
-  | { kind: "rejected"; hint: string }
-  /** 30 天冷却没过 */
-  | { kind: "cooling"; hint: string };
+  | { kind: "editable"; hint?: string };
 
 export interface ProfileEditCardContext {
   plugin: YoungLookPlugin;
@@ -62,8 +56,6 @@ interface Draft {
   avatarPreviewUrl: string | null;
   /** 昵称草稿：null = 没动过 */
   nickname: string | null;
-  /** 这一轮的昵称申请已经提交了 —— 防止重试点保存再次撞「还在审核中」 */
-  nickSubmitted: boolean;
 }
 
 export class ProfileEditCard {
@@ -71,7 +63,6 @@ export class ProfileEditCard {
     avatarFile: null,
     avatarPreviewUrl: null,
     nickname: null,
-    nickSubmitted: false,
   };
   private nickInput: HTMLInputElement | null = null;
   private nickHint: HTMLElement | null = null;
@@ -195,7 +186,6 @@ export class ProfileEditCard {
     const row = this.host.createDiv({ cls: "yl-pc-wrow" });
     row.createDiv({ cls: "yl-pc-wlabel", text: "昵称" });
     const body = row.createDiv({ cls: "yl-pc-wvalue" });
-    const state = this.nickState();
     const profile = this.ctx.plugin.settings.accountProfile;
 
     const input = body.createEl("input", {
@@ -203,15 +193,12 @@ export class ProfileEditCard {
       attr: {
         type: "text",
         maxlength: "20",
-        value: state.kind === "pending" ? this.pendingNickname() : profile?.nickname ?? "",
+        value: profile?.nickname ?? "",
       },
     });
     this.nickInput = input;
-    if (state.kind === "pending" || state.kind === "cooling") input.disabled = true;
-    if (this.draft.nickSubmitted) input.disabled = true;
 
-    this.nickHint = body.createDiv({ cls: "yl-pc-hint", text: state.hint ?? this.defaultNickHint() });
-    if (state.kind === "pending" || state.kind === "cooling") this.nickHint.addClass("is-warn");
+    this.nickHint = body.createDiv({ cls: "yl-pc-hint", text: this.defaultNickHint() });
 
     input.addEventListener("input", () => {
       const value = input.value.trim();
@@ -220,43 +207,8 @@ export class ProfileEditCard {
     });
   }
 
-  private pendingNickname(): string {
-    const profile = this.ctx.plugin.settings.accountProfile;
-    return profile?.nicknamePending?.trim() || profile?.nickname || "";
-  }
-
   private defaultNickHint(): string {
-    return "平台内不能重名 · 改完要等审核 · 通过后 30 天内不能再改";
-  }
-
-  /**
-   * 昵称这四个形态：能改 / 在审 / 上次被驳回 / 冷却没过。
-   *
-   * ⚠️ 冷却的判断用**服务端算好的** `nicknameNextChangeAt`，不在本地加 30 天 ——
-   *    规则只在服务端，本机时钟也不一定准；本机算出来的结论跟服务端不一致时，
-   *    用户看到的是"显示可以改、点了却被拒"。
-   */
-  private nickState(): NickState {
-    const profile = this.ctx.plugin.settings.accountProfile;
-    const pending = profile?.nicknamePending?.trim() ?? "";
-
-    if (profile?.nicknameStatus === "pending" && pending) {
-      return { kind: "pending", hint: `「${pending}」正在审核中，通过后生效` };
-    }
-    if (profile?.nicknameStatus === "rejected" && pending) {
-      return { kind: "rejected", hint: `上次申请的「${pending}」没通过，换一个再提交` };
-    }
-    const gate = profile?.nicknameNextChangeAt;
-    if (gate) {
-      const at = new Date(gate);
-      if (Number.isFinite(at.getTime()) && at.getTime() > Date.now()) {
-        return {
-          kind: "cooling",
-          hint: `昵称刚改过，${at.getMonth() + 1}月${at.getDate()}日之后才能再改`,
-        };
-      }
-    }
-    return { kind: "editable" };
+    return "平台内不能重名 · 撞名会提示换一个";
   }
 
   // ── ③ 邮箱 ────────────────────────────────────────────────────────────
@@ -357,9 +309,6 @@ export class ProfileEditCard {
 
   /**
    * 有没有东西要提。
-   *
-   * 昵称草稿在「已提交」「审核中」「冷却中」三种情况下都**不算脏** ——
-   * 那些时候输入框本来就禁用着，把它算成脏会让保存钮明明点了却无事发生。
    */
   private isDirty(): boolean {
     return Boolean(this.draft.avatarFile) || Boolean(this.draft.nickname);
@@ -376,25 +325,19 @@ export class ProfileEditCard {
 
     // 🔴 顺序：**昵称先、头像后**。
     //    反过来一旦头像已经落盘（服务端立刻存成文件、那是用户资产）而昵称提交
-    //    失败，头像是没法回滚的；现在这个顺序下，最坏情况是"昵称已进审核、
+    //    失败，头像是没法回滚的；现在这个顺序下，最坏情况是"昵称没改成、
     //    头像还没传"，用户可以重来。
     let nicknameDone = false;
     try {
       if (wantNick) {
+        // 2026-10-16 起提交即生效：不撞名直接改，撞名/重名时服务端返回
+        // 非 0 code，postProfile 会把人话 message 抛出来走下面的 catch。
         await updateNickname(this.ctx.plugin.settings, wantNick);
         nicknameDone = true;
-        // 立刻从草稿里摘掉：再点保存（比如头像那步失败了要重试）不能又把同一份
-        // 申请提交一次 —— 服务端会因为「还在审核中」把他打回来。
+        // 立刻从草稿里摘掉：再点保存（比如头像那步失败了要重试）不能又提交一次
         this.draft.nickname = null;
-        this.draft.nickSubmitted = true;
-        if (this.nickInput) {
-          this.nickInput.disabled = true;
-          this.nickInput.value = wantNick;
-        }
-        if (this.nickHint) {
-          this.nickHint.setText(`「${wantNick}」已提交，审核通过后生效`);
-          this.nickHint.addClass("is-warn");
-        }
+        if (this.nickInput) this.nickInput.value = wantNick;
+        if (this.nickHint) this.nickHint.setText(this.defaultNickHint());
       }
       if (wantAvatar) {
         const path = await updateAvatar(this.ctx.plugin.settings, wantAvatar);
@@ -404,10 +347,10 @@ export class ProfileEditCard {
           await this.ctx.plugin.saveSettings();
         }
       }
-      // 强拉一次快照：60 秒节流会让「审核中」三个字迟到一分钟，
+      // 强拉一次快照：60 秒节流会让新昵称迟到一分钟，
       // 而用户刚点完保存，这时候不刷新等于说"没生效"。
       await this.ctx.plugin.refreshAccountProfile(true);
-      new Notice(nicknameDone ? "已保存。昵称审核通过后生效" : "已保存");
+      new Notice(nicknameDone ? "已保存，昵称已更新" : "已保存");
       this.dispose();
       this.ctx.close(true);
       return;

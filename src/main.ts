@@ -1602,11 +1602,6 @@ interface MePayload {
   avatar?: string;
   email?: string;
   ai_balance_millis?: number;
-  // 昵称三件套（2026-10-15）：/me/ 带上它们，个人中心才知道输入框该不该禁用
-  nickname_pending?: string;
-  nickname_moderation_status?: string;
-  /** 服务端算好的下次可改时刻（ISO）；没改过昵称时为 null */
-  nickname_next_change_at?: string | null;
 }
 
 interface ExchangePayload extends MePayload {
@@ -1624,10 +1619,6 @@ function profileFromMe(data: MePayload): AccountProfile {
     email: data.email ?? "",
     avatarUrl: data.avatar ?? "",
     fetchedAt: new Date().toISOString(),
-    nicknamePending: data.nickname_pending ?? "",
-    nicknameStatus: data.nickname_moderation_status ?? "approved",
-    // null（从未改过）→ undefined（本地按"没有冷却"处理），别把它写成字符串 "null"
-    nicknameNextChangeAt: data.nickname_next_change_at ?? undefined,
   };
 }
 
