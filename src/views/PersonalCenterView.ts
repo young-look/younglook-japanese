@@ -41,7 +41,7 @@ import { FeedbackModal } from "./FeedbackModal";
 import { ProfileEditCard } from "./ProfileEditCard";
 import { submitFeedback } from "../services/feedbackApi";
 import { log } from "../core/logger";
-import { createButton, setButtonIcon } from "../ui/button";
+import { createButton } from "../ui/button";
 import { signedYuanMilli as signedYuan, yuanMilli as yuan } from "../ui/money";
 import { setViewTitle } from "../ui/viewTitle";
 import {
@@ -99,18 +99,22 @@ const TAB_DEFS: { key: TabKey; label: string }[] = [
 ];
 
 /**
- * 页签下的灰色小字说明（2026-10-04 用户拍板）：各页签带一句"这一页是什么"，
- * 版式与 Obsidian 设置里插件页一致 —— 标题行不动，说明行在标题行**下面**，
- * 往下挤的是正文。没配小字的页签不显示这行。
+ * 页签下的灰色小字说明（2026-10-04 用户拍板；2026-10-17 全量改写一版）。
  *
- * 「账户」页签原来也有一句（AI 轨道那行灰字），2026-10-10 用户拍板撤掉：
- * 一行灰字说不清二选一的关系，改由 renderWallet 顶部的黑字说明块交代
- * （.yl-pc-guide，见下）。
+ * 2026-10-17 起版式变了：标题行左槽由**本页签的名字**占着（「个人中心」只在
+ * 「我的」这一页——而且它的位置被身份头占掉了）。说明行因此跟标题长在一起：
+ * 标题 + 这行小字是一个左对齐的两行块，右侧仍是药丸导航，标题行高度固定
+ * （见 styles.css 的 .yl-card-header / .yl-pc-head）。
+ *
+ * 「账户」页签原来没有这一行（2026-10-10 撤掉：一行灰字说不清双轨二选一），
+ * 2026-10-17 补回一句只交代"这页能看到什么"，二选一的关系仍由 renderWallet
+ * 顶部的黑字说明块（.yl-pc-guide）讲。
  */
 const TAB_SUBS: Partial<Record<TabKey, string>> = {
-  vocab: "学过的句子里出现过的词：读音、释义、例句（你的仿写）都在",
-  sentences: "学完的每一句都记在这里；你写的笔记跟在句下，点「打开」回到学它的位置。",
-  data: "只算你自己产生的数据 —— 各占多少、放在哪、哪些会上云",
+  vocab: "学过的句子里出现过的词：读音、释义、例句，按最近学到排。",
+  sentences: "学完的每一句都在这里，笔记跟在句下；点「打开」回到学它的位置。",
+  data: "只算你自己产生的数据：各占多少、存在哪、哪些会上云。",
+  wallet: "AI 走哪条轨道、余额还剩多少、每一笔花在哪里。",
 };
 
 // 2026-10-05 撤掉「常用服务商」预设 chips（用户定案：这一轨只留接口地址 / API Key /
@@ -287,8 +291,21 @@ export class PersonalCenterView extends ItemView {
   /** 正文滚动容器（.yl-v3-body）；切分区时复位滚动位置用 */
   private scrollEl: HTMLElement | null = null;
   private activeTab: TabKey = "profile";
-  /** 标题下那行灰色小字（词库 / 存储页签的说明）；切页签时换字或藏起 */
-  private subEl: HTMLElement | null = null;
+  /**
+   * 标题行左槽（.yl-pc-head）。两种内容二选一（2026-10-17 用户定）：
+   *   - 「我的」→ 身份块（头像 + 昵称 + 等级 + 副行），由 renderProfile 画；
+   *   - 其余 → 本页签的名字 + 一行灰色说明，由 renderHeadTitle 画。
+   * 两种内容高度都落在同一个 56px 行里，切页签不跳。
+   */
+  private headEl: HTMLElement | null = null;
+  /**
+   * 页头说明行行尾的计数位（目前只有「词库」用：「共 N 词」）。
+   *
+   * 2026-10-17 用户拍板：页内那颗「词库」标题撤掉 —— 页头已经写着「词库」，
+   * 再来一颗就是重复；计数不能跟着一起丢，于是挪进页头说明行（跟着页签重生）。
+   * `vocabSection` 通过 `countEl` 往这个节点里写，写多少显示多少。
+   */
+  private headCntEl: HTMLElement | null = null;
   /** 「存储」页：自带盘点与筛选状态，跨次切换可复用 */
   private dataPane: DataPane | null = null;
   /** 「历史」页：学完的句子按集分组；懒加载，本次打开期间复用 */
@@ -406,11 +423,12 @@ export class PersonalCenterView extends ItemView {
     // 内容包裹层：两侧留白在这一层（同学习页 .yl-study-wrap）
     const wrap = root.createDiv({ cls: "yl-v3-wrap" });
 
-    // 标题行：与学习页 .yl-card-header 同一套（标题占满、导航靠右）。
-    // ⚠️ 这一行任何页签下都一个样 —— 小字说明不进来（进来会把「个人中心」
-    // 几个字和页签顶高），见下面 subEl。
+    // 标题行：左边是本页的身份（「我的」= 身份块，其余 = 页签名 + 说明），右边是药丸导航。
+    // ⚠️ 这一行高度固定 56px（styles.css 的 .yl-card-header）：五个页签互切，
+    //    标题行不跳、正文起点也不动。对齐方式是**顶对齐** —— 身份块（52 头像 +
+    //    两行字 = 56）与药丸上沿齐平，块自然往下探出，见 .yl-v3 .yl-card-header。
     const header = wrap.createDiv({ cls: "yl-card-header" });
-    header.createDiv({ cls: "yl-card-title", text: "个人中心" });
+    this.headEl = header.createDiv({ cls: "yl-pc-head" });
     const nav = header.createDiv({ cls: "yl-card-nav" });
     for (const tab of TAB_DEFS) {
       const btn = createButton(nav, { text: tab.label, onClick: () => this.setTab(tab.key) });
@@ -426,11 +444,6 @@ export class PersonalCenterView extends ItemView {
       text: "返回",
       onClick: () => void this.plugin.closePersonalCenter(),
     });
-
-    // 灰色小字说明行：夹在标题行**下面**、正文**上面**（与 Obsidian 设置里插件页
-    // 的版式一致）—— 标题行几何不动，被往下挤的是正文。词库 / 存储才显示。
-    this.subEl = wrap.createDiv({ cls: "yl-card-sub" });
-    this.applyTabSub();
 
     // 正文滚动区：pane 是它的直接子节点，滚动条归它（setTab 复位滚动读它）
     this.scrollEl = wrap.createDiv({ cls: "yl-v3-body" });
@@ -475,17 +488,39 @@ export class PersonalCenterView extends ItemView {
     setViewTitle(this.leaf, this.containerEl, "洋流 · 个人中心", "个人中心");
   }
 
-  /** 词库 / 存储页签的灰色小字；没配小字的页签把它藏起来（正文回到标题行正下方）。 */
-  private applyTabSub(): void {
-    if (!this.subEl) return;
+  /**
+   * 非「我的」页签的标题行左槽：本页签的名字 + 一行灰色说明。
+   *
+   * 2026-10-17 用户定：标题就是页签的名字（「词库」顶替原来的「个人中心」）——
+   * 翻到哪一页，页头写的就是哪一页，不必再先看页签高亮、再看标题。
+   * 「我的」不走这里：它的左槽是身份块（renderProfile 画），页头不再重复写
+   * 「个人中心」四个字（身份头本身就是答案）。
+   */
+  private renderHeadTitle(): void {
+    const head = this.headEl;
+    if (!head) return;
+    head.empty();
+    this.headCntEl = null;
+    const tab = TAB_DEFS.find((t) => t.key === this.activeTab);
+    head.createDiv({ cls: "yl-pc-head-title", text: tab?.label ?? "" });
     const sub = TAB_SUBS[this.activeTab];
-    this.subEl.setText(sub ?? "");
-    this.subEl.toggleClass("on", Boolean(sub));
+    if (sub) {
+      const subEl = head.createDiv({ cls: "yl-pc-head-sub" });
+      subEl.createSpan({ cls: "yl-pc-head-subtext", text: sub });
+      // 词库的「共 N 词」：页内标题撤了（重复），计数挪到说明行行尾。
+      // 空着时 CSS 让它整颗消失（:empty），不会悬一颗分隔点在那儿。
+      if (this.activeTab === "vocab") {
+        this.headCntEl = subEl.createSpan({ cls: "yl-pc-head-cnt" });
+      }
+    }
   }
 
   private setTab(key: TabKey): void {
     this.activeTab = key;
-    this.applyTabSub();
+    // 标题先换（同步）：正文要等 await，慢半拍时页头已经是新名字了。
+    // 「我的」的清空在这里做，身份块由 renderProfile 紧接着填上。
+    if (key === "profile") this.headEl?.empty();
+    else this.renderHeadTitle();
     this.contentEl.querySelectorAll("[data-tab]").forEach((el) => {
       el.classList.toggle("is-active", (el as HTMLElement).dataset.tab === key);
     });
@@ -502,10 +537,10 @@ export class PersonalCenterView extends ItemView {
     // 未登录也照渲染：学习页显示「—」、账户页显示本机余额、词库读本地记录，
     // 是什么就显示什么（2026-10-02 用户拍板：不遮不挡、不加登录引导位）
     if (key === "profile") this.renderProfile();
-    else if (key === "wallet") this.renderWallet();
-    else if (key === "vocab") await this.renderVocab();
-    else if (key === "sentences") await this.renderSentences();
-    else if (key === "data") await this.renderData();
+    else if (key === "wallet") { this.renderHeadTitle(); this.renderWallet(); }
+    else if (key === "vocab") { this.renderHeadTitle(); await this.renderVocab(); }
+    else if (key === "sentences") { this.renderHeadTitle(); await this.renderSentences(); }
+    else if (key === "data") { this.renderHeadTitle(); await this.renderData(); }
   }
 
   /**
@@ -626,17 +661,24 @@ export class PersonalCenterView extends ItemView {
 
   // ── 资料（我的主页，V3 版式）─────────────────────────────────────────
   //
-  // 版式照 temp/demo/new_space/v3-two-track.html：单栏长滚动，从上往下
-  //   身份头 → 四个小结 → 双轨 → 社区六宫格 → 渐变分享条 → 底部说明。
+  // 版式照 temp/demo/new_space/v3-two-track.html：单栏长滚动
+  //   身份头 → 你的学习 → 渐变分享条 → 底部说明 → 页底动作。
   // 2026-10-04 参照 temp/demo/space/v1-顶部按钮重排.html 重排（用户拍板）：
   //   「编辑资料」收进昵称行、编辑面板在身份头正下方就地展开、退出登录单独放页底、
   //   标题行里「返回」与页签用细分隔线切开。
+  // 2026-10-17 参照 temp/demo/space/v2-页头随页签.html（用户拍板）：
+  //   **身份头整个搬出正文、搬进标题行左槽**（顶替「个人中心」四个字，与右侧药丸
+  //   同一水平线居中）；**整块可点** —— 已登录开编辑面板、未登录走连接流程，
+  //   昵称行那颗小药丸随之取消（它不再是唯一入口，只是块内的一行暗示）。
+  //   正文第一屏因此从「你的学习」开始；身份头在标题行里天然常驻，sticky 已不需要。
 
   private renderProfile(): void {
     const pane = this.panes.profile;
-    if (!pane) return;
+    const head = this.headEl;
+    if (!pane || !head) return;
     const profile = this.plugin.settings.accountProfile;
     pane.empty();
+    head.empty();
     const stack = pane.createDiv({ cls: "yl-pc-stack" });
 
     const exp = this.progressRows.filter((row) => row.completedAt).length;
@@ -645,14 +687,28 @@ export class PersonalCenterView extends ItemView {
     // activeDays 原本只给身份头副行用；副行改成只报 UID 后这里已无人读 → 删掉。
     //「你的学习」节自己另算了一份同名变量（buildLearnSection），那边照旧。
 
-    // ①② 身份头 + 四个小结一起裹进 .yl-v3-hero：这两块是"我是谁 / 学了多少"的
-    //    长期读数，往下翻时钉在正文顶部（滚动只滚下面的内容）—— 见 styles.css。
-    const hero = stack.createDiv({ cls: "yl-v3-hero" });
+    const loggedIn = this.isLoggedIn();
 
-    // ① 身份头（轻）：头像 / 昵称行（昵称 + 等级 + 「编辑资料」）/ 副行
-    const me = hero.createDiv({ cls: "yl-v3-me" });
+    // ① 身份块：占标题行左槽（原「个人中心」的位置）。
+    //    2026-10-17 按 temp/demo/login_card/v3-compact.html 的 **N1 光环版** 落地（用户拍板）：
+    //      · 无底色 —— 静息 / 悬停都不填色块；悬停只让头像亮起 1px 青蓝环 + 5px 柔光。
+    //        （上一版悬停填 `--yl-acc-tint`，那是 `yl-btn` 的按钮写法，一填底卡片就没了。）
+    //      · 紧凑 —— 昵称 17→15、副行 12.5→11.5；头像保持 52（用户后来又要求放大一档），
+    //        块高仍是 56（上下内距收到 1px）。
+    //      · 「连接账号 / 编辑资料」回到昵称行内（紧跟等级徽标），不再占卡片右缘一列。
+    //    整块 role=button —— 键盘 Enter / 空格同效。
+    const me = head.createDiv({ cls: `yl-v3-me${loggedIn ? "" : " is-out"}` });
+    me.setAttr("role", "button");
+    me.setAttr("tabindex", "0");
+    me.setAttr("aria-label", loggedIn ? "编辑资料" : "连接账号");
     const avatar = me.createDiv({ cls: "yl-v3-avatar" });
-    avatar.createSpan({ text: (profile?.nickname || "洋").slice(0, 1) });
+    if (loggedIn) {
+      avatar.createSpan({ text: (profile?.nickname || "洋").slice(0, 1) });
+    } else {
+      // 未登录不放昵称首字：一个灰"洋"读起来像"人已经在那儿了"，人形剪影才是空位
+      const ghost = avatar.createSpan({ cls: "yl-v3-avatar-ph" });
+      setIcon(ghost, "user");
+    }
     const avatarUrl = this.plugin.accountAvatarUrl();
     if (avatarUrl) {
       const img = avatar.createEl("img", { attr: { src: avatarUrl, alt: "" } });
@@ -662,51 +718,47 @@ export class PersonalCenterView extends ItemView {
     const nameRow = meMain.createDiv({ cls: "yl-v3-name" });
     nameRow.createSpan({ cls: "yl-v3-nick", text: profile?.nickname || "未登录" });
     nameRow.createSpan({ cls: "yl-v3-lvl", text: `Lv.${level.level} ${level.name}` });
-    // 「编辑资料」跟在等级徽标后面：编辑的就是身份信息，锚点跟着身份走 ——
-    // 不再被 .yl-v3-id 的 flex:1 顶到最右缘、跟导航叠成一角（2026-10-04）。
-    // 未登录 → 同一位置换「连接账号」（直接开网页连接页）；登录 / 注册在网页完成，
-    // 插件里不再有登录表单（2026-10-02 登录机制改造）。
-    const editBtn = this.isLoggedIn()
-      ? createButton(nameRow, { cls: "yl-v3-edit", icon: "pencil", text: "编辑资料" })
-      : createButton(nameRow, { cls: "yl-v3-edit", icon: "link", text: "连接账号" });
-    // setIcon 把图标追加在文字后面，图标在前才读得顺（「✎ 编辑资料」而不是「编辑资料 ✎」）
-    const editGlyph = editBtn.querySelector("svg");
-    if (editGlyph) editBtn.prepend(editGlyph);
+    // 动作：一块**不是按钮**的暗示 —— 无底无边，前缀一根 11px 细线把它和徽标分开
+    // （否则「Lv.1 港口 连接账号」会连读成一句）。悬停整块时字变青、箭头推 2px。
+    // 右箭头 = 去网页连接（换页）；下箭头 = 就地展开面板（同页），展开后 CSS 转 180°。
+    const act = nameRow.createSpan({ cls: "yl-v3-act" });
+    const actText = act.createSpan({ text: loggedIn ? "编辑资料" : "连接账号" });
+    const actIcon = act.createSpan({
+      cls: `yl-v3-chev yl-v3-chev--${loggedIn ? "down" : "right"}`,
+    });
+    setIcon(actIcon, loggedIn ? "chevron-down" : "chevron-right");
     // 副行：灰色一行只报身份归属 —— 登录后给 UID（用户报障 / 对账要念的号，
     // 不必再切设置页去找）。学习节奏不在这里说，下面「你的学习」的卡片已经写着，
     // 同一件事说两遍只会互相打架。
-    // 未登录沿用原文案，一字不动。
+    // ⚠️ 2026-10-17 用户点出：昵称已经写着「未登录」，副行再以「未登录 · 」开头是重复，
+    //    只留后半句（"登录后可用云同步与内置模型"，一字未改）。
     // uid 为空 = 账号快照还没拉到（节流窗口 60s 内），先留空不显示，
     // 免得出现"UID: "这种半截。
     const uid = (profile?.uid || "").trim();
     meMain.createDiv({
       cls: "yl-v3-sub",
-      text: !this.isLoggedIn()
-        ? "未登录 · 登录后可用云同步与内置模型"
-        : uid
-          ? `UID: ${uid}`
-          : "",
+      text: !loggedIn ? "登录后可用云同步与内置模型" : uid ? `UID: ${uid}` : "",
     });
 
-    // 编辑面板：身份头正下方就地展开（2026-10-04。原来追加在页面最底部，
+    // 编辑面板：身份块点开后就地展开（2026-10-04。原来追加在页面最底部，
     // 点了按钮视觉上毫无反馈）。未登录的「连接账号」不走这块面板
     // （2026-10-05 改成弹窗，见下）。
     //
     // 2026-10-15：三行（头像 / 昵称 / 邮箱）的编辑状态由 `ProfileEditCard` 统一托管 ——
     // 以前它们各自带着自己的保存键、改完任一项都会整页重绘（看着像"改完卡片自己跑了"），
     // 现在卡片右下角只有一对「取消 / 保存」，而关闭这张卡只有三个入口。
-    const editWrap = hero.createDiv({ cls: "yl-v3-editwrap" });
+    const editWrap = stack.createDiv({ cls: "yl-v3-editwrap" });
     const editCard = editWrap.createDiv({ cls: "yl-v3-editclip" }).createDiv({ cls: "yl-pc-card" });
     let card: ProfileEditCard | null = null;
     let editOpen = false;
-    /** 收 / 放折叠壳 + 跟着换按钮图标（这两件事必须一起做，缺一就是形状对不上） */
+    /** 收 / 放折叠壳 + 跟着换提示的字与箭头朝向（三件事必须一起做，缺一就是形状对不上）。
+     *  箭头本身不换图标，只给块挂 `is-open`，由 CSS 把它转 180°。 */
     const setCardOpen = (open: boolean): void => {
       editOpen = open;
       editWrap.toggleClass("on", open);
-      setButtonIcon(editBtn, open ? "chevron-up" : "pencil");
-      // setIcon 替换图标时可能追加到文字后面，补一次 prepend 保住「图标在字前」
-      const glyph = editBtn.querySelector("svg");
-      if (glyph) editBtn.prepend(glyph);
+      me.toggleClass("is-open", open);
+      actText.setText(open ? "收起" : "编辑资料");
+      me.setAttr("aria-label", open ? "收起编辑面板" : "编辑资料");
     };
     /** 关掉这张卡：丢草稿 → 收起。`rerender` = 保存成功后要整页重绘带出新状态。 */
     const closeCard = (rerender: boolean): void => {
@@ -719,7 +771,8 @@ export class PersonalCenterView extends ItemView {
       setCardOpen(false);
       if (rerender) this.renderProfile();
     };
-    editBtn.addEventListener("click", () => {
+
+    const onMe = (): void => {
       if (!this.isLoggedIn()) {
         // 两边同时开（用户拍板）：网页（登录 / 注册 + 授权码）开新标签页，
         // 授权码弹窗在这边候着 —— 网页登录完复制码回来粘上就行，不靠深链跳转。
@@ -730,7 +783,7 @@ export class PersonalCenterView extends ItemView {
         return;
       }
       if (editOpen) {
-        // 展开状态下这个钮已经变成向上的箭头 —— 它就是三个关闭入口之一，
+        // 展开状态下提示已经变成「收起」—— 它就是三个关闭入口之一，
         // 语义等同于「取消」（丢草稿）。
         closeCard(false);
         return;
@@ -745,11 +798,18 @@ export class PersonalCenterView extends ItemView {
       });
       card.render();
       setCardOpen(true);
+    };
+    me.addEventListener("click", onMe);
+    me.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      // 空格默认会滚一屏，这里必须拦住
+      ev.preventDefault();
+      onMe();
     });
 
     // ② 四个小结：2026-10-04 用户叉掉不要了 —— 核心指标改由「你的学习」节的
-    //    四张渐变徽章卡承担（buildLearnSection），这里只剩身份头 + 编辑面板。
-    //    .yl-v3-hero 的吸顶仍保留：身份头还是"我是谁"的长期读数。
+    //    四张渐变徽章卡承担（buildLearnSection）。
+
 
     // ③ 「你的学习」：原「学习」页签的内容整体并入（2026-10-02 用户拍板：
     //    六宫格不要，学习内容放资料页，页签随之少一个）
@@ -1479,18 +1539,17 @@ export class PersonalCenterView extends ItemView {
       const vocab = this.vocab;
       const stack = inner.createDiv({ cls: "yl-pc-stack" });
 
-      const head = stack.createDiv({ cls: "yl-pc-h3" });
-      head.createSpan({ text: "词库" });
-      const countEl = head.createSpan({ cls: "yl-pc-cnt", text: "" });
-
+      // 2026-10-17 用户拍板：页内那颗「词库」标题撤掉 —— 页头写的就是「词库」，
+      // 再来一颗纯属重复；计数改挂页头说明行行尾（headCntEl，见 renderHeadTitle）。
       if (vocab.length === 0) {
-        countEl.setText("还没有词");
         stack.createDiv({
           cls: "yl-pc-loading",
-          text: "还没有词。学完一句，句子里的词会自动进词库。",
+          text: "学完一句，句子里的词会自动进词库。",
         });
         return;
       }
+
+      const countEl = this.headCntEl ?? document.createElement("span");
 
       this.vocabSec = buildVocabSection(stack, {
         scrollRoot: this.scrollEl,
@@ -1848,12 +1907,8 @@ export class PersonalCenterView extends ItemView {
     pane.empty();
     const stack = pane.createDiv({ cls: "yl-pc-stack" });
 
-    // 页内标题（2026-10-10 用户拍板）：与词库页签那颗「词库」同一颗 .yl-pc-h3
-    // ——两个列表页对称，字号/字重/位置都对齐词库那边。摆在灰色小字之下、
-    // 工具行之上（词库页也是这个次序）。
-    const head = stack.createDiv({ cls: "yl-pc-h3" });
-    head.createSpan({ text: "历史" });
-
+    // 页内那颗「历史」标题 2026-10-17 撤掉（用户拍板）：页头写的就是「历史」，
+    // 页内再写一遍是重复。列表直接接在页头下面。
     const groups = this.sentenceGroups ?? [];
     if (groups.length === 0) {
       const card = stack.createDiv({ cls: "yl-pc-card" });

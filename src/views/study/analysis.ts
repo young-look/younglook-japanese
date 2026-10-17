@@ -104,9 +104,13 @@ export interface AnalysisHandle {
    * 解析中：这张卡边缘转起那道弧（2026-10-15）。
    *
    * **只拨开关，不管起止时机** —— 由上层在"这一句真的在解析"的整段里拨上、
-   * 在每条出口拨下（与句子卡压灰/转圈同一个开关，见 `StudyView.setParsingActive`）。
-   * 放这儿而不是 `beginStream` 里自动开：两块（解读 + 词表）都落地才算解析完，
-   * 而 `beginStream` 只管**第一块**的开始、`showExplanation` 只管它的结束。
+   * 在每条出口拨下（与句子卡压灰/转圈共用同一份判定，见 `StudyView.setParsingActive`）。
+   * 放这儿而不是 `beginStream` 里自动开：`beginStream` 只管**第一块**的开始，
+   * 而这次解析成不成立由上层看门控 —— 自动开会在"点了但被门控拦下"时白转一圈。
+   *
+   * 🔥 2026-10-17 用户拍板：**这一块自己结束就自己停**（`beginStream` 与它配对）。
+   * 解读是两块里先落地的那块，弧不该等逐词释义 —— 左下方解读都铺满了还转圈，
+   * 用户只会当成卡死。句子卡那份由 `StudyView` 单独管，与这里无关。
    */
   setParsing(on: boolean): void;
   /**

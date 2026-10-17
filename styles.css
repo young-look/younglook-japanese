@@ -50,6 +50,13 @@
         （早先注释写的「5.6:1」是 --yl-acc-ink 压在白**底**上的值，被抄错到这儿了。） */
   --yl-acc-solid: hsl(193 62% 36%);        /* #237c95 · 白字 4.78:1 */
 
+  /* 身份卡（「我的」页头那块）专用的两道"光"（2026-10-17 N1 光环版）：
+       ring = 头像静息那圈幽灵描边（比 --yl-acc-line 淡一档，只是让它在浅底上有边界）
+       halo = 悬停时头像外面那圈 5px 柔光
+     ⚠️ 用 alpha 而不是实色：浅底 / 暗底都要跟背景融，暗色那组在 .theme-dark 里另给。 */
+  --yl-avatar-ring: rgb(28 112 135 / 0.12);
+  --yl-acc-halo: rgb(35 124 149 / 0.10);
+
   /* （此处原有两个 --yl-acc-solid-hover / --yl-acc-glow，专为"悬停加深"而生。
       2026-09-30 悬停改为全站中性后失去最后一个使用点，已删 ——
       留着只是等着被下一个改样式的人捡起来用回去。） */
@@ -112,6 +119,11 @@
   --yl-acc-line: hsl(193 35% 36%);
   --yl-acc-tint: hsl(193 38% 17%);
   --yl-acc-solid: hsl(193 48% 38%);        /* 白字 4.79:1（40% 只剩 4.40:1）*/
+
+  /* 身份卡的两道光（暗色）：暗底上"淡"要反着调 —— 环稍微亮一点才看得见，
+     柔光比亮色浓一档，否则在黑底上等于没有。 */
+  --yl-avatar-ring: rgb(120 200 220 / 0.16);
+  --yl-acc-halo: rgb(120 200 220 / 0.13);
 
   /* ok 系列**不在这里重复定义** —— 它们是指向 --yl-acc-* 的别名，
      会跟着上面几行自动走暗色。只有 halo 要单独给（alpha 不同）。 */
@@ -790,19 +802,14 @@ button.yl-btn-icon.is-sm svg { width: 14px; height: 14px; }
   font-size: 13.5px;
   font-weight: 500;
 }
-/* 个人中心页签下的灰色小字说明（词库 / 存储，2026-10-04）。
-   站在标题行**外面**、正文**上面**：标题行的几何一个像素不动，
-   被往下挤的是正文。限宽与 .yl-card-header 同一套，左缘跟「个人中心」对齐。 */
-.yl-card-sub {
-  display: none;
-  width: 100%;
-  max-width: var(--yl-content-max, 1280px);
-  margin-inline: auto;
-  margin-bottom: 8px;
-  color: var(--text-faint);
-  font-size: 11.5px;
+/* 个人中心标题行的左槽（.yl-pc-head，见下方个人中心一节）：
+   高度钉死 56px —— 五个页签互切时标题行不跳、正文起点不动。
+   ⚠️ 顶对齐（2026-10-17 用户画图拍板）：身份块（N1 版之后是 48 高）、药丸 30 高，
+      两者**上沿**齐平、块自然向下探出；居中会让块的上下沿都探出药丸，怎么调都不"齐"。 */
+.yl-v3 .yl-card-header {
+  min-height: 56px;
+  align-items: flex-start;
 }
-.yl-card-sub.on { display: block; }
 .yl-card-nav {
   display: flex;
   gap: 6px;
@@ -2895,6 +2902,42 @@ textarea.yl-nd-input:active {
   color: var(--text-normal);
 }
 
+/* ── 首页空态注解（2026-10-17 用户拍板 = temp/demo/home 方案 2）──────────
+   本地一条素材都没有时，示例素材下面那段「还没有导入任何素材…」。
+   ⚠️ 它**不是卡**：无描边、无底色、无按钮，只有一个 ⓘ 和两句灰字，左对齐、
+   12.5px / 11.5px 两档。上面那条示例素材是「点得动的物件」，这里是旁白 ——
+   两者都套虚线小框时，用户会以为下面那张也能点（10-17 的投诉来源）。
+   `.yl-empty` 仍然保留给「正在初始化 / 渲染失败」两个面板，别混用。 */
+.yl-empty-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  /* 与上面那条示例素材的 8px 行距取 max（块级外边距会塌陷），总间距 22px */
+  margin-top: 22px;
+  padding: 0 2px;
+}
+.yl-empty-hint-icon {
+  flex: none;
+  display: flex;
+  margin-top: 1px;
+  color: var(--text-faint);
+}
+.yl-empty-hint-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.yl-empty-hint-copy p {
+  margin: 0;
+  line-height: 1.65;
+}
+.yl-empty-hint-copy > p:first-child {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+.yl-empty-hint-copy > p + p {
+  margin-top: 5px;
+}
+
 .yl-empty {
   padding: var(--size-4-4, 16px);
   border: 1px dashed var(--background-modifier-border);
@@ -4795,9 +4838,12 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
    取值全部走既有变量，不引入第二个色相（原暖橙已在 10-02 归并到青蓝 193°）。
 
    ⚠️ 类名仍是 .yl-v3-*（改名纯属 churn，不改）。
-   ⚠️ 2026-10-04 参照 temp/demo/space/v1-顶部按钮重排.html 重排：编辑资料收进昵称行
-      （button.yl-v3-edit / .yl-v3-editwrap）、退出登录单独一行（.yl-v3-logout-row）、
+   ⚠️ 2026-10-04 参照 temp/demo/space/v1-顶部按钮重排.html 重排：编辑资料收进昵称行、
+      编辑面板就地展开（.yl-v3-editwrap）、退出登录单独一行（.yl-v3-logout-row）、
       标题行返回与页签切开（.yl-card-nav-sep）。
+   ⚠️ 2026-10-17 参照 temp/demo/space/v2-页头随页签.html：标题行左槽改成
+      「本页签的名字 + 说明」（.yl-pc-head-title / -sub），「我的」那一格换成
+      整块可点的身份块（.yl-v3-me，昵称行那颗小药丸 .yl-v3-edit 退役）。
    ⚠️ 根容器沿用容器名 `ylpc`：个人中心各 pane 共用的 .yl-pc-grid2 /
       .yl-pc-stack 等既有规则与断点，靠它才生效。 */
 
@@ -4848,35 +4894,104 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
 .yl-v3-pane.on { display: block; }
 
 /*
- * 资料页顶部的「我是谁 + 学了多少」：身份头 + 四个小结。
+ * 标题行左槽（2026-10-17 用户拍板，设计稿 temp/demo/space/v2-页头随页签.html）：
+ *   「我的」      → 身份块（头像 + 昵称 + 等级 + 副行），整块可点；
+ *   其余四个页签  → 本页签的名字 + 一行灰色说明。
+ * 两种内容都塞进同一个 56px 行（.yl-v3 .yl-card-header），切页签高度不跳。
  *
- * 这一块是长期读数，往下翻时**钉在正文顶部**，滚动的只有它下面的内容
- * （2026-10-02 用户要求：左边这块核心区域固定，不要跟着滚）。
+ * ⚠️⚠️ 对齐方式 = **顶对齐**（2026-10-17 用户画图定的）：
+ *   身份块是多行块（头像 52 + 昵称/副行两行 = 56 高），右侧药丸只有 30 ——
+ *   两者**上沿对齐**、块自然向下探出，这才是用户要的那个"齐"。
+ *   早前试过的两种都不对：① 都在 56 行里垂直居中 → 块上下各探出 13px，看着悬空；
+ *   ② 把块压成一行（头像 34）→ 用户明确否决"我没让你弄成一行"。
+ *   所以：`align-items: flex-start` 挂在标题行上（见上一条规则），块与药丸
+ *   同高起步。
  *
- * ⚠️ 背景必须不透明：它是 .yl-v3-body 的滚动内容，滚上来的卡片会从底下透出来。
- *    用 --background-primary 跟正文表面同色 —— 看不出这是一层"盖上去"的
- *    （2026-10-02 用户：灰底不好看，干掉；灰的是 --background-secondary，别再回去）。
- * ⚠️ z-index 要抬起来，否则被后面卡片的圆角/描边压住。
+ * 为什么不再用 .yl-v3-hero 吸顶：身份头搬到标题行里了 —— 标题行本来就在
+ * 滚动区之外，天然常驻，sticky + 不透明背景 + 底部渐隐这套补丁随之退役。
  */
-.yl-v3-hero {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--background-primary);
+.yl-pc-head {
+  flex: 1;
+  /* 跟旧标题的 min-width 一致（200）：窗口窄到装不下时，让导航换行到第二行，
+     而不是把身份块/标题压成一条缝 */
+  min-width: 200px;
+  /* 页签名 + 说明是一行挨一行的块，从顶上排 */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
-/* 底边一条极短的渐隐：不然内容滑到边界会"齐刷刷断掉"，像渲染坏了 */
-.yl-v3-hero::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  top: 100%;
-  height: 10px;
-  pointer-events: none;
-  background: linear-gradient(to bottom, var(--background-primary), transparent);
+/* 标题就是页签的名字：字号/字重提上来，它现在承担页面身份 */
+.yl-pc-head-title {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.5;
+  color: var(--text-normal);
 }
+.yl-pc-head-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 1px;
+  /* 说明 + 行尾计数是同一行：说明负责截断，计数钉住不缩 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 说明是一句话，窄窗口下宁可截断也不换行 —— 换行会把标题行顶高 */
+.yl-pc-head-subtext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 行尾计数（词库「共 N 词」）：页内那颗「词库」标题撤了，计数挪到这里。
+   空着时整个不显示 —— 否则 ::before 那颗分隔点会悬在那儿。 */
+.yl-pc-head-cnt {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.yl-pc-head-cnt::before {
+  content: "·";
+  margin-right: 6px;
+  opacity: 0.6;
+}
+.yl-pc-head-cnt:empty { display: none; }
 
-/* ① 身份头（轻）：头像 + 昵称/等级 + 副行 + 「编辑资料」 */
-.yl-v3-me { display: flex; align-items: center; gap: 13px; }
+/* ① 身份块（「我的」的左槽内容）：头像 + 昵称行（昵称 / 等级 / 动作）+ 副行。
+   整块是按钮（role=button）—— 2026-10-17 起不再靠昵称行里那颗小药丸。
+
+   🔥 2026-10-17 按 temp/demo/login_card/v3-compact.html 的 **N1 光环版**落地（用户拍板）：
+      · **无底色** —— 静息 / 悬停都不填色块。上一版悬停填 --yl-acc-tint + 描边变色，
+        那正是 `yl-btn` 的按钮语言：底色一填，卡片就没了"面"。现在悬停只让头像
+        亮起 1px 青蓝环 + 5px 柔光（只有环和光，没有面）。
+      · **紧凑** —— 昵称 17→15、副行 12.5→11.5，动作收进昵称行、去掉右缘那一列；
+        块宽 396→约 260。（头像当晚又按用户要求放大 30% 回到 52 —— 高度靠上下
+        内距收到 1px 保住 56，别把 .yl-card-header 的 min-height 往上抬。）
+        「连接账号 / 编辑资料」回到昵称行内（紧跟等级徽标），不再占卡片右缘一列。
+      · 动作**不是按钮**：无底无边，前缀一根 11px 细线把它和徽标分开，悬停才变青。
+   ⚠️ 对齐仍是标题行顶对齐（.yl-v3 .yl-card-header 的 align-items），不靠改尺寸。 */
+.yl-v3-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  /* 左右内距靠负 margin 抵掉：头像仍与正文左缘、页签名左缘对齐。
+     上下各 1px + 52px 头像 + 2px 描边 = 56，正好是标题行的 min-height。
+     ⚠️ 头像 2026-10-17 用户要求放大 30%（40→52）—— 高度靠把上下内距收到 1px 保住 56，
+        块不再比标题行矮，也不用改 .yl-card-header 的 min-height。 */
+  padding: 1px 6px 1px 3px;
+  margin-left: -3px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+.yl-v3-me:focus-visible {
+  outline: 2px solid var(--yl-acc-line);
+  outline-offset: 2px;
+}
 .yl-v3-avatar {
   position: relative;
   width: 52px;
@@ -4885,48 +5000,118 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
   flex: none;
   display: grid;
   place-items: center;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
   color: var(--yl-acc-ink);
   background: linear-gradient(150deg, var(--yl-acc-tint), var(--yl-acc-line));
+  /* 静息一圈幽灵描边：头像在浅底上有个边界，不靠阴影抢戏 */
+  box-shadow: 0 0 0 1px var(--yl-avatar-ring);
   overflow: hidden;
+  transition: box-shadow 200ms ease;
 }
+/* N1 的悬停：1px 青蓝环 + 5px 柔光 —— 只有环和光，没有任何填充 */
+.yl-v3-me:hover .yl-v3-avatar {
+  box-shadow:
+    0 0 0 1px var(--yl-acc-line),
+    0 0 0 5px var(--yl-acc-halo);
+}
+/* 未登录：头像是灰的 —— 没有"那个人"，别用青蓝假装有 */
+.yl-v3-me.is-out .yl-v3-avatar {
+  background: linear-gradient(150deg, var(--background-modifier-hover), var(--background-modifier-border));
+  color: var(--text-faint);
+}
+/* 未登录的人形剪影（不放昵称首字 —— 灰"洋"读起来像人已经在那儿了） */
+.yl-v3-avatar-ph { display: grid; place-items: center; }
+/* 图标跟着头像放大走：17 × 1.3 ≈ 22 */
+.yl-v3-avatar .svg-icon { width: 22px; height: 22px; stroke-width: 1.8; }
 /* 头像图绝对定位铺满盖住字母兜底：容器是 grid，img 若占普通格子会跟
    字母 span 上下各排一行（上半截文字、下半截图的怪相，2026-10-05）。 */
 .yl-v3-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-/* 编辑面板里「头像」行的小号预览圆 */
-.yl-v3-avatar-sm { width: 36px; height: 36px; font-size: 15px; }
-.yl-v3-id { flex: 1; min-width: 0; }
-.yl-v3-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.yl-v3-nick { font-size: 17px; font-weight: 650; }
+/* 编辑面板里「头像」行的小号预览圆（比标题行那颗再小一档，别抢戏） */
+.yl-v3-avatar-sm { width: 36px; height: 36px; font-size: 14px; }
+/* 文字列不再 flex:1 —— 块宽由内容决定（fit-content），动作也不靠右缘 */
+.yl-v3-id { min-width: 0; }
+/* 昵称行：昵称 / 等级 / 动作排一行，不换行（换行会把块顶高、也不紧凑） */
+.yl-v3-name { display: flex; align-items: center; gap: 7px; white-space: nowrap; min-width: 0; }
+.yl-v3-nick {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 180ms ease;
+}
+/* 等级徽标：描边款（实底会跟悬停/头像的青色打架，也不紧凑） */
 .yl-v3-lvl {
-  font-size: 11px;
+  flex: none;
+  font-size: 10px;
   font-weight: 600;
+  line-height: 1.5;
   color: var(--yl-acc-ink);
-  background: var(--yl-acc-tint);
+  background: transparent;
+  border: 1px solid var(--yl-acc-line);
   border-radius: 999px;
-  padding: 2px 9px;
+  padding: 0 6px;
+  transition:
+    color 180ms ease,
+    border-color 180ms ease;
 }
-.yl-v3-sub { font-size: 12.5px; color: var(--text-faint); margin-top: 2px; }
-/* 「编辑资料」/「连接账号」：昵称行内的紧凑小药丸 —— 24px 高，比常规钮矮一档，
-   跟旁边的 Lv 徽标一个量级（2026-10-04 从右上角挪进来）。静息带一圈细描边，
-   表明它是这一页的次要动作。
-   ⚠️ 它带 `yl-btn` 基底（createButton 默认 pill），底/描边/悬停全由基底给；
-      这里只压**形状**（高度/内距/药丸圆角/字号）与**字色**。
-   2026-10-04：字色与投影改成写死的方案二皮肤（原 --text-muted + 宿主 inset 描边）。 */
-button.yl-v3-edit {
-  height: 24px;
-  padding: 0 11px;
-  gap: 5px;
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--yl-btn-muted-fg);
-  box-shadow: var(--yl-btn-shadow);
+/* 未登录：徽标降成中性灰 —— 还没"那个人"，别给它强调色 */
+.yl-v3-me.is-out .yl-v3-lvl {
+  color: var(--text-faint);
+  border-color: var(--background-modifier-border);
 }
-button.yl-v3-edit:hover:not(:disabled) {
-  color: var(--yl-btn-hover-fg);
+.yl-v3-sub {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  /* 2026-10-17 用户：副行跟上面那行拉开一点点（原先紧贴，两行挤成一坨） */
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-button.yl-v3-edit .svg-icon { width: 12px; height: 12px; }
+/* 动作（编辑资料 / 收起 / 连接账号）：昵称行内的一段文字，不是按钮。
+   前缀那根 11px 细线是"分隔"不是"描边" —— 用伪元素才对得准（border 会撑满行高）。
+   右箭头 = 去网页连接（换页）；下箭头 = 就地展开（同页），展开时由 .is-open 转 180°。 */
+.yl-v3-act {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-left: 2px;
+  padding-left: 8px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  transition: color 180ms ease;
+}
+.yl-v3-act::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 11px;
+  background: var(--background-modifier-border);
+}
+.yl-v3-me:hover .yl-v3-act { color: var(--yl-acc-ink); }
+.yl-v3-chev {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.75;
+  transition:
+    transform 200ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    opacity 180ms ease;
+}
+.yl-v3-chev .svg-icon { width: 11px; height: 11px; }
+.yl-v3-me:hover .yl-v3-chev { opacity: 1; }
+.yl-v3-me:hover .yl-v3-chev--right { transform: translateX(2px); }
+.yl-v3-me:hover .yl-v3-chev--down { transform: translateY(1px); }
+/* 展开态：下箭头翻上去（放在悬停规则之后 —— 同特异性，靠顺序压过那 1px 位移） */
+.yl-v3-me.is-open .yl-v3-chev { transform: rotate(180deg); }
 
 /* 「编辑资料」面板：身份头正下方就地展开（2026-10-04。原先是页面最底部的
    一张隐藏卡，点按钮视觉上毫无反馈）。收起时 0fr 裁平，展开时滑出来。 */
@@ -5281,11 +5466,14 @@ a[href^="obsidian://young-look"] {
   color: hsl(193 60% 76%);
 }
 
-/* 「生成学习卡片」弹窗（2026-10-15 重写）：主题是卡片本身 —— 最上是当场
-   画好的学习卡，下面是「分享到手机」的二维码 + 说明；下载图片在底栏。
+/* 「生成学习卡片」弹窗（2026-10-17 改版）：主题是卡片本身 —— 最上是当场
+   画好的学习卡，下面是「分享到手机」= 左小二维码 + 右说明文字（左右结构，
+   2026-10-17 用户定：整个弹窗要矮、一屏装得下，别再回到竖排大二维码）。
    ⚠️ 卡是 5:8 竖版，弹窗整体可能比窗口高，所以只在这个类名下给弹窗封顶、
       让正文自己滚（别的弹窗正文都不滚，别把这两条提出去）。 */
 .modal.yl-dialog.yl-share-modal {
+  width: 400px;
+  max-width: min(400px, calc(100vw - 48px));
   max-height: calc(100vh - 40px);
   display: flex;
   flex-direction: column;
@@ -5300,7 +5488,10 @@ a[href^="obsidian://young-look"] {
   min-height: 0;
   overflow-y: auto;
 }
-/* 卡片预览：白底圆角，宽封顶 320px（5:8 → 高约 512px；再宽弹窗就压不住了）。 */
+/* 卡片预览：白底圆角，宽封顶 280px；高再封一档（随窗口高走，给上下
+   的标题/二维码区/底栏留出位置 —— 目标是整弹窗一屏装下，见节首注释）。
+   ⚠️ 宽高都得是 max-* 且 width/height 用 auto：img 是替换元素，两个 max
+      同时约束时会自动保比例缩（width:100% + max-height 会把图压扁）。 */
 .yl-share-cardbox {
   display: flex;
   align-items: center;
@@ -5311,7 +5502,7 @@ a[href^="obsidian://young-look"] {
   align-items: center;
   justify-content: center;
   width: 100%;
-  max-width: 320px;
+  max-width: 280px;
   aspect-ratio: 5 / 8;
   margin: 0 auto;
   border: 1px dashed var(--background-modifier-border);
@@ -5322,50 +5513,65 @@ a[href^="obsidian://young-look"] {
 }
 .yl-share-card {
   display: block;
-  width: 100%;
-  max-width: 320px;
+  width: auto;
+  max-width: 280px;
+  max-height: max(220px, calc(100vh - 340px));
   height: auto;
   margin: 0 auto;
   border: 1px solid var(--background-modifier-border);
   border-radius: 12px;
   background: #ffffff;
 }
-/* 「分享到手机」分区：一条细线隔开，内容全部居中。 */
+/* 「分享到手机」分区（2026-10-17 用户定）：细线隔开，左边一枚小二维码、
+   右边标题 + 说明 + 复制链接，整块高度 ≈ 二维码那么高 —— 弹窗矮的关键。 */
 .yl-share-phone {
-  margin-top: 16px;
-  padding-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--background-modifier-border);
-  text-align: center;
+}
+.yl-share-info {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .yl-share-phone-t {
-  margin: 0 0 10px;
+  margin: 0 0 4px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-muted);
+  text-align: left;
 }
 .yl-share-phone-d {
-  margin: 10px 0 0;
+  margin: 0;
   font-size: 12.5px;
+  line-height: 1.55;
   color: var(--text-muted);
-  text-align: center;
+  text-align: left;
 }
 /* 二维码必须是白底黑码 —— 扫不出来的一切花活都没有意义。 */
 .yl-share-qr {
   display: flex;
-  justify-content: center;
-  margin: 4px 0 14px;
+  flex: none;
+  width: 104px;
+  height: 104px;
+  margin: 0;
 }
 .yl-share-qr-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  padding: 46px 0;
+  height: 100%;
   text-align: center;
   font-size: 12.5px;
   color: var(--text-faint);
 }
 .yl-share-qr-box {
-  width: 208px;
-  height: 208px;
-  padding: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
   background: #ffffff;
   border: 1px solid var(--background-modifier-border);
   border-radius: 12px;

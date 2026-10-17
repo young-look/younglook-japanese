@@ -741,7 +741,7 @@ export class ImportModal extends DialogModal {
       // 素材没能进库时不吓人：说清还能学、以及补救办法。成功那条才是主口径。
       const tail = result.mediaNote
         ? `\n${result.mediaNote}这一集先按你原来的位置播放；换个能写进去的素材库目录再导入一次就收进去了。`
-        : "\n一句的三步练习做完，那一句就会记进 vault 笔记。";
+        : "\n一句的三步练习做完，这一句的进度就记下了。";
       new Notice(`导入完成：${result.sliceCount} 句台词，视频已对上。${tail}`, 10000);
       await this.plugin.refreshOpenViews();
       this.close();

@@ -52,16 +52,18 @@ export class ShareCardModal extends DialogModal {
     const cardBox = body.createDiv({ cls: "yl-share-cardbox" });
     const cardHint = cardBox.createDiv({ cls: "yl-share-cardhint", text: "正在画卡片…" });
 
-    // ② 「分享到手机」：二维码 + 说明（卡片的下位内容）
+    // ② 「分享到手机」：左小二维码 + 右说明（2026-10-17 用户定：左右结构，
+    //    整个弹窗要矮、一屏装得下 —— 别再回到竖排大二维码那版）
     const phone = body.createDiv({ cls: "yl-share-phone" });
-    phone.createDiv({ cls: "yl-share-phone-t", text: "分享到手机" });
     const qr = phone.createDiv({ cls: "yl-share-qr" });
     qr.createDiv({ cls: "yl-share-qr-slot", text: "正在生成…" });
-    phone.createEl("p", {
+    const info = phone.createDiv({ cls: "yl-share-info" });
+    info.createDiv({ cls: "yl-share-phone-t", text: "分享到手机" });
+    info.createEl("p", {
       cls: "yl-lead yl-share-phone-d",
       text: "用微信「扫一扫」打开这张卡，长按图片就能保存或转发。",
     });
-    createButton(phone, {
+    createButton(info, {
       shape: "text",
       text: "复制链接",
       onClick: () => void this.copyLink(url),

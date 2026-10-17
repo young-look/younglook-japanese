@@ -716,11 +716,17 @@ export class StudyView extends ItemView {
     if (items.length === 0) {
       this.mountDemoPlaceholderRow(list);
       overview.remove();
-      const empty = list.createDiv({ cls: "yl-empty" });
-      empty.createEl("p", {
+      // 空态**不是一张卡**：一段左对齐的注解（图标 + 两句灰字）。
+      // 2026-10-17 用户拍板（temp/demo/home 方案 2 的空态）：上面那条示例素材是
+      // 「点得动的物件」，这里是解释当前状态的旁白 —— 不给它描边/底色，"两张同级的卡"
+      // 的误解就是这么来的。`yl-muted-sm` 负责第二行的 11.5px / faint。
+      const empty = list.createDiv({ cls: "yl-empty-hint" });
+      setIcon(empty.createSpan({ cls: "yl-empty-hint-icon" }), "info");
+      const emptyCopy = empty.createDiv({ cls: "yl-empty-hint-copy" });
+      emptyCopy.createEl("p", {
         text: "还没有导入任何素材。你可以点击右上角“导入视频”或者先试试上方的示例视频。",
       });
-      empty.createEl("p", {
+      emptyCopy.createEl("p", {
         cls: "yl-muted-sm",
         text: "视频和字幕都留在你原来的位置，插件只记路径，不复制、不上传。",
       });
@@ -1954,6 +1960,11 @@ export class StudyView extends ItemView {
    * （用户中途翻走，灰和弧都不能跟着下一条句子走）。漏一条出口就会永久留着 —— 那个
    * 症状（卡片一直转、一直灰）不报错、只是"看着像卡住了"，只能靠这份清单兜住。
    *
+   * 🔥 2026-10-17 用户拍板：两块是**两个请求，结束也各自判断**。左栏解析卡那一块
+   * 在自己的解读落地时就先收（`endAnalysisParsing`），不等词表 —— 原先只有"两块齐了"
+   * 这一个终点，解读都铺满了弧还在转，看着像卡死。这里 `on=false` 仍然是**两块一起撤**
+   * （全清是安全的那一侧：留着谁转过不重要，留着它才是 bug）。
+   *
    * 🔥 2026-10-15：**弧要挂在真被重算的那张卡上**（用户原话："要确保实际被刷新的
    * 有跑马灯"）。重新解析现在可单选一块，所以这里收 `targets`：
    *   · 只刷解读 → 只拨左卡（句子卡一个字都没变，转起来是撒谎）；
@@ -1970,6 +1981,18 @@ export class StudyView extends ItemView {
     this.heroEl?.toggleClass("yl-words-pending", hero);
     this.heroEl?.toggleClass("yl-parsing", hero);
     this.analysis.setParsing(analysis);
+  }
+
+  /**
+   * **只收左栏解析卡**那道弧，句子卡照旧压灰 / 转弧（2026-10-17 用户定）。
+   *
+   * 首次解析的解读一到手就拨这里 —— 两块是并发发出的两个请求，谁落地谁收工。
+   * 不走 `setParsingActive` 是因为那条路按"这一次解析整体"算：拿它当半撤用，
+   * 得写成 `setParsingActive(true, { analysis: false, hero: true })` —— 一句读起来
+   * 像"把解析打开"的代码实际在关东西，下一个人必然看错。
+   */
+  private endAnalysisParsing(): void {
+    this.analysis.setParsing(false);
   }
 
   // ── 注音纠错 ─────────────────────────────────────────────────────────────
@@ -2940,9 +2963,14 @@ export class StudyView extends ItemView {
    *
    * 🔥 整个过程里句子卡的日文**压灰**、**两张被解析的卡边缘转一道弧**（2026-10-15
    * 用户拍板"点了 AI 解析就加个跑马灯，让实际发生解析的那两张卡顺着边缘转"）：
-   * 从点下按钮到两块都落地是一段看不见的等待，这就是"哪张卡正在变"。
+   * 从点下按钮到结果落地是一段看不见的等待，这就是"哪张卡正在变"。
+   *
+   * 🔥 弧**按块各自收**（2026-10-17 用户拍板）：两个请求并发发出，结束也各自判断 ——
+   * 解读一落地，左栏那道弧当场停（`endAnalysisParsing`），句子卡继续压灰转弧到词表
+   * 回来为止。原先只有"两块齐了"一个终点，左下角解读都铺满、提示都写着"正在准备
+   * 逐词释义…"了，弧还在转，只能被理解成卡死。
    * ⚠️ **每条出口都要清掉**（失败 / 翻页 / 拿不到词表），漏一条就会永久留着 ——
-   * 卡片一直转、一直灰，不报错，只是看着像卡死。开关统一在 `setParsingActive`。
+   * 卡片一直转、一直灰，不报错，只是看着像卡死。全清统一在 `setParsingActive`。
    *
    * `refresh` = 这次是「重新解析」触发的（见 `reparseExplanation`）：只影响左侧
    * 解读那块要不要让服务端**跳过缓存**重算，两块并发的骨架不变。
@@ -2971,8 +2999,8 @@ export class StudyView extends ItemView {
     // 到点还没有输出就报错 —— 见 streamExplanation / fetchWords 的说明
     const deadline = Date.now() + AI_FIRST_OUTPUT_MS;
 
-    // 从这一刻起进入"解析中"（句子卡压灰 + 两张卡边缘转弧），直到两块都到齐
-    //（或明确失败）—— 见下方每条 return 前的清态
+    // 从这一刻起进入"解析中"（句子卡压灰 + 两张卡边缘转弧）。两块各自收口：
+    // 解读落地时先收左卡（见正文），词表落地 / 失败时这里全清
     this.setParsingActive(true);
     this.analysis.beginStream();
 
@@ -2982,17 +3010,31 @@ export class StudyView extends ItemView {
     // ── 第一块：解读（流式）。边生成边上屏，不等词表 ────────────────────
     const streamed = await this.streamExplanation(input, settings, controller, slice, refresh, deadline);
     if (streamed.aborted) return; // 翻页了 / 用户掐了 / 余额窗已经弹了
+
+    // 🔥 2026-10-17 用户拍板：两块**并发发出、各自收口** —— 解读这块一到手，
+    // 左栏解析卡那道弧**当场收**，不等逐词释义。
+    //
+    // 原先只有"两块都落地"这一个终点（`setParsingActive(false)` 在末尾），于是
+    // 左下角明明已经把解读铺满、提示也写着"解读已生成，正在准备逐词释义…"，
+    // 边缘那道弧还在转 —— 词表慢一点，用户看到的就是"已经出来了却还在转"，
+    // 只能理解成卡死。两个请求既然各自独立，结束的判据也该各自独立。
+    // 句子卡那一份（压灰 + 弧）**照旧留着**：词表确实还在路上，它才是真在解析的那张。
     if (streamed.partial) {
       // 已经有字上屏、流却断了：留着已显示的部分，只说这次没生成完
       this.analysis.streamFailed(streamed.errorMessage);
+    } else {
+      this.analysis.showExplanation(streamed.explanation, streamed.errorMessage);
+    }
+    this.endAnalysisParsing();
+
+    const explanation = streamed.partial ? null : streamed.explanation;
+    if (!explanation) {
+      // 解读没拿到（断流 / 服务端没给回可用结果）：提示已由上面两条出口给出。
+      // 词表可能还在路上 —— **等它收口再清句子卡**，别让上面那张卡一直灰着转；
+      // 但它到了也没有宿主可落（首次解析要两块齐才算一份完整记录），所以不落库。
+      await wordsTask;
       this.setParsingActive(false);
       return;
-    }
-    this.analysis.showExplanation(streamed.explanation, streamed.errorMessage);
-    if (!streamed.explanation) {
-      // 解析成功但没给回可用的解读：别把灰留在卡上
-      this.setParsingActive(false);
-      return; // 提示已由 showExplanation 给出
     }
 
     // 🔥 解读到手就**立刻单独落一次库**（2026-10-15 用户拍板）。
@@ -3005,16 +3047,16 @@ export class StudyView extends ItemView {
     // 存的是一份**半份**记录（`done:false`，只有解读、没有词表），读侧认它
     //（见 `renderAnalysis` 的 `hasExplanationContent` 分支），所以翻回来照样看得到。
     // 词表若随后到了，下面那份整份解析会把它整个覆盖成完整记录。
-    await this.persistExplanationOnly(slice, streamed.explanation).catch((error: unknown) => {
+    await this.persistExplanationOnly(slice, explanation).catch((error: unknown) => {
       log.warn("解读没能单独存进本地库", error);
     });
 
     // 讲过的东西喂给助手（这一刻还没有词表，词到了会再喂一次）
     this.assistant.setContext({
       analysis: {
-        translation: streamed.explanation.translation,
+        translation: explanation.translation,
         words: [],
-        explanation: renderExplanation(streamed.explanation.sections),
+        explanation: renderExplanation(explanation.sections),
       },
     });
 
@@ -3032,14 +3074,15 @@ export class StudyView extends ItemView {
 
     // 存下来。⚠️ 存失败不弹错：结果是好的，用户已经在看了，
     // 大不了下次再点一次 —— 为了"留档"把这次成功变成失败是划不来的。
-    await this.persistAnalysis(slice, streamed.explanation, wordList).catch((error: unknown) => {
+    await this.persistAnalysis(slice, explanation, wordList).catch((error: unknown) => {
       log.warn("解析结果没能存进本地库", error);
     });
     this.analysis.wordsReady();
     // AI 的句内读音刚落库：原句区的 ruby / 注音行按新读音重铺一遍
     // （此前铺的是词典注音；loadHeroReading 里有 cid 守卫，翻走了就静默丢弃）。
     // 重铺顺带带上 `.yl-analyzed`（青蓝）与可点词数据。
-    // 两块都落地了 ⇒ 撤掉"解析中"（压灰 + 两张卡的边缘弧）。
+    // 词表也落地了 ⇒ 收掉句子卡那份"解析中"（压灰 + 弧）。左卡那道弧早在解读
+    // 落地时就自己收了（2026-10-17，见正文第一段），这里不会再有它。
     // ⚠️ 2026-10-15 起这里**不再闪一下**：原先那道横扫的斜光带与描边脉冲已删，
     //    "哪张卡在动"改由解析期间一直挂着的跑马灯回答。
     await this.loadHeroReading(slice);
