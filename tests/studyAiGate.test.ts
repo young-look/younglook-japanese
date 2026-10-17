@@ -78,6 +78,7 @@ function hostedSettings(overrides: Partial<PluginSettings> = {}): PluginSettings
     byok: { baseUrl: "https://example.com/v1", apiKey: "sk-test", model: "qwen-plus" },
     byokSaved: null,
     byokLocked: false,
+    byokBySpace: {},
     serverEnv: "prod",
     customServerUrl: "",
     serverUrl: "https://younglook.cc",
@@ -1301,6 +1302,27 @@ describe("首输出预算的接线（2026-10-15）", () => {
     expect(body).toContain("this.fetchWords(input, slice, settings, deadline)");
   });
 
+  it("两块各自收口：解读落地就收左卡的弧，不等词表（2026-10-17）", () => {
+    // 🔥 用户原话：「左下角的东西已经加载完了，跑马灯应该停止了，而不是必须右边也
+    //    加载完左边的才停；两个请求虽然是并发的，但判断是否结束应该是分别的。」
+    //    原先 handleExplain 只有末尾那一次 setParsingActive(false)（= 两块齐了才收），
+    //    于是解读铺满、提示都写着"正在准备逐词释义…"了，左卡还在转 —— 看着像卡死。
+    const body = cut(read("../src/views/StudyView.ts"), "private async handleExplain");
+    expect(body).toContain("this.endAnalysisParsing();");
+    // 顺序必须是"铺开解读 → 收左卡 → 再等词表"：收在 await wordsTask 之后等于没改
+    const stopAt = body.indexOf("this.endAnalysisParsing();");
+    expect(stopAt).toBeGreaterThan(body.indexOf("this.analysis.showExplanation("));
+    expect(stopAt).toBeGreaterThan(body.indexOf("this.analysis.streamFailed("));
+    expect(stopAt).toBeLessThan(body.indexOf("await wordsTask"));
+    // 半撤只许走那个专用出口：拿总开关写成 `true + analysis:false`（读起来是"打开"、
+    // 实际在关东西）是这份代码里最容易看错的一行
+    expect(cut(read("../src/views/StudyView.ts"), "private async handleExplain")).not.toContain(
+      "{ analysis: false, hero: true }",
+    );
+    // 全清仍然只有一处收尾：句子卡那份（压灰 + 弧）得留到词表落地或失败
+    expect(body).toContain("this.setParsingActive(false)");
+  });
+
   it("仿写核对：流式那一趟有看门狗，非流式那一趟套预算", () => {
     const body = cut(read("../src/views/StudyView.ts"), "private async handleVerifyImitation");
     expect(body).toContain("watchFirstOutput(controller.signal, AI_FIRST_OUTPUT_MS)");
@@ -1371,7 +1393,9 @@ describe("解析分块落库与读回（2026-10-15）", () => {
   it("写：解读到手立刻单独落库，不等词表那一块", () => {
     const src = read("../src/views/StudyView.ts");
     // 落库那一句必须排在 wordsTask 收口**之前** —— 排在后面就等于又回到"两块齐了才落"
-    const persistAt = src.indexOf("this.persistExplanationOnly(slice, streamed.explanation)");
+    //（2026-10-17 起解读在方法里叫 `explanation`：partial / 没拿到时它被显式判空、
+    //  早退出口在落库之前，所以这里等的仍是"解读到手那一刻"）
+    const persistAt = src.indexOf("this.persistExplanationOnly(slice, explanation)");
     const wordsAt = src.indexOf("const wordList = await wordsTask;");
     expect(persistAt).toBeGreaterThan(-1);
     expect(wordsAt).toBeGreaterThan(-1);

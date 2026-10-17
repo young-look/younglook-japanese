@@ -2,6 +2,7 @@ import { FileSystemAdapter, MarkdownView, Modal, Notice, Plugin, Setting, TFile,
 import path from "node:path";
 import { rmSync } from "node:fs";
 import { fillDefaults } from "./settings/defaults";
+import { renameSpace, stashBundle, switchSpace } from "./settings/aiSpace";
 import { appDataDir } from "./services/appData";
 import { SettingsTab } from "./settings/tab";
 import type { AccountProfile, LocalSpace, PluginSettings } from "./settings/types";
@@ -556,6 +557,10 @@ export default class YoungLookPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
+    // AI 配置先归档进**当前空间**的桶再落盘（2026-10-17 方案 B）：账户页/设置页
+    // 改完都走这条路，所以它们不必各自记得归档；漏了这一步，下次切空间就会拿
+    // 桶里的旧值把改动盖掉（见 settings/aiSpace.ts 顶部的不变量）。
+    stashBundle(this.settings);
     // 每次落盘都抬偏好时间戳：本地永远是最新事实，云端偏好只在换机/重装时能落进来
     this.settings.prefsUpdatedAt = new Date().toISOString();
     await this.saveData(this.settings);
@@ -656,8 +661,11 @@ export default class YoungLookPlugin extends Plugin {
     if (outcome.adoptedKey) {
       // 认回来的是**当前这个空间**的库：把空间的 id 指过去即可。
       // ⚠️ 不能改 vaultLocalId —— 那个是"这个 vault 的底号"，还要用来给新空间起名。
+      const previousId = this.activeSpace.id;
       this.activeSpace.id = outcome.adoptedKey;
       this.settings.activeSpaceId = outcome.adoptedKey;
+      // AI 配置的桶是按空间 id 存的 → id 换了，桶也得搬过去，否则这份配置就丢了
+      renameSpace(this.settings, previousId, outcome.adoptedKey);
       log.info("认回本地学习库", {
         key: outcome.adoptedKey,
         merged: outcome.mergedKeys.length,
@@ -1104,6 +1112,9 @@ export default class YoungLookPlugin extends Plugin {
       currentId: this.settings.activeSpaceId,
     });
     if (wantId === this.settings.activeSpaceId) return;
+    // 换空间之前先把 AI 配置换过来：它跟着空间走（见 settings/aiSpace.ts）。
+    // 不切的话，新账号会继续拿着上一个账号的 Key 发请求、付费。
+    switchSpace(this.settings, this.settings.activeSpaceId, wantId);
     this.settings.activeSpaceId = wantId;
     await this.saveSettings();
   }
@@ -1125,6 +1136,9 @@ export default class YoungLookPlugin extends Plugin {
     const previous = this.db;
     this.db = next;
     previous?.close();
+    // AI 配置跟着空间换（2026-10-17 方案 B）：新空间的桶是空的，页面上那份
+    // 自定义模型配置就跟着空掉 —— 换账号不会再看到/用到上一个人的 Key。
+    switchSpace(this.settings, this.settings.activeSpaceId, id);
     this.settings.activeSpaceId = id;
     await this.saveSettings();
     await this.tagVaultPath();

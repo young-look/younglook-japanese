@@ -1,4 +1,5 @@
 import type { ServerEnv } from "../config/env";
+import type { AiConfigBundle } from "./aiSpace";
 
 export type AiMode = "off" | "byok" | "hosted";
 /**
@@ -70,7 +71,22 @@ export interface PluginSettings {
    * OneDrive 一起搬走。想放到外接硬盘或 NAS 上，把绝对路径填在这儿就行。
    */
   mediaDir: string;
+  /**
+   * 每个**本机空间**一份的 AI 配置（2026-10-17 方案 B，见 settings/aiSpace.ts）。
+   *
+   * 为什么分桶：换账号登录 = 换本机空间，但 AI 配置原来整个 vault 只有一份，
+   * 于是新账号看得见、也用得上上一个账号的 Key（费用记在上一个人头上）。
+   * 现在匿名空间一份、每个账号一份，切空间自动切配置；Key 仍然只落本机
+   * （`PREF_KEYS` 不含它），所以不跨设备。
+   *
+   * 🔥 **这里才是权威**：下面的 `aiMode` / `byok` / `byokSaved` / `byokLocked`
+   * 只是当前 `activeSpaceId` 那份的工作副本，由 `main.ts::saveSettings()`
+   * 落盘前 stash、切空间时 load。别直接改桶而忘了同步，也别绕过这两个入口。
+   */
+  byokBySpace: Record<string, AiConfigBundle>;
+  /** 当前空间的 AI 轨道（工作副本，权威见 `byokBySpace`） */
   aiMode: AiMode;
+  /** 当前空间的自定义模型草稿（工作副本，权威见 `byokBySpace`） */
   byok: ByokConfig;
   /**
    * 「已保存生效」的自定义模型配置（2026-10-10 用户拍板）。

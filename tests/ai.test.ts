@@ -43,6 +43,8 @@ function settings(overrides: Partial<PluginSettings> = {}): PluginSettings {
     // 的稳态（快照=草稿、锁定），要测别的状态在用例里显式覆盖。
     byokSaved: { baseUrl: "https://example.com/v1/", apiKey: "sk-test", model: "qwen-plus" },
     byokLocked: true,
+    // 分桶表只在落盘/切空间时参与；client 只读顶层那份工作副本（2026-10-17）
+    byokBySpace: {},
     serverEnv: "prod",
     customServerUrl: "",
     serverUrl: "https://younglook.cc",

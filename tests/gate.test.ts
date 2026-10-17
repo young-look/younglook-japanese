@@ -19,6 +19,8 @@ function settings(overrides: Partial<PluginSettings> = {}): PluginSettings {
     byok: { baseUrl: "https://example.com/v1", apiKey: "sk-test", model: "qwen-plus" },
     byokSaved: null,
     byokLocked: false,
+    // 分桶表只管落盘/切空间，门控只读顶层那四个工作副本（2026-10-17）
+    byokBySpace: {},
     serverEnv: "prod",
     customServerUrl: "",
     serverUrl: "https://younglook.cc",

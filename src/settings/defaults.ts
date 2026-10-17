@@ -9,6 +9,13 @@ import {
 } from "../config/env";
 import type { LocalSpace, PluginSettings } from "./types";
 import { nextSpaceId } from "../services/localSpace";
+import {
+  DEFAULT_AI_MODE,
+  DEFAULT_BYOK,
+  bundleOf,
+  migrateAiSpaces,
+  normalizeAiMode,
+} from "./aiSpace";
 
 /** vault 里放学习资料的目录名。笔记、截图、数据都在它下面（见 markdown/studyNote.ts）。 */
 export const DEFAULT_VAULT_FOLDER = "young_look";
@@ -24,16 +31,15 @@ export function defaultSettings(): PluginSettings {
     mediaDir: "",
     // 默认「内置模型」（2026-10-12 拍板：从未选择过 = 内置）。老配置里存的旧默认
     // "off" 由 fillDefaults 里的 migrateAiMode 升级，见那边注释。
-    aiMode: "hosted",
-    byok: {
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      apiKey: "",
-      model: "qwen-plus",
-    },
+    aiMode: DEFAULT_AI_MODE,
+    byok: { ...DEFAULT_BYOK },
     // 「已保存生效」的自定义模型配置快照：新用户从没保存过 = null。
     // 草稿在 byok 里，只有快照参与生效判定（见 services/ai/gate.ts）。
     byokSaved: null,
     byokLocked: false,
+    // 按本机空间分桶的 AI 配置（2026-10-17 方案 B）。空表 = 还没有任何空间存过，
+    // 由 fillDefaults 的 migrateAiSpaces 按活跃空间补上第一条（见 settings/aiSpace.ts）。
+    byokBySpace: {},
     // 默认跟着构建环境走：开发构建连本机，生产构建连线上
     serverEnv: "auto",
     customServerUrl: "",
@@ -178,7 +184,7 @@ export function migrateSpaces(
  *  off + 没余额的用户则从"什么都用不了"变成"选了内置、差余额"，弹窗会给出路。）
  */
 export function migrateAiMode(given: Partial<PluginSettings>): PluginSettings["aiMode"] {
-  return given.aiMode === "byok" || given.aiMode === "hosted" ? given.aiMode : "hosted";
+  return normalizeAiMode(given.aiMode);
 }
 
 /** 旧版本缺字段时的补齐。settings 只增不删，这里统一补默认。 */
@@ -188,21 +194,27 @@ export function fillDefaults(raw: unknown, buildEnv: BuildEnv = BUILD_ENV): Plug
   const { env, customUrl } = migrateServerEnv(given, buildEnv);
   const vaultLocalId = given.vaultLocalId?.trim() ? given.vaultLocalId : base.vaultLocalId;
   const { spaces, activeSpaceId } = migrateSpaces(given, vaultLocalId);
+  // AI 配置按本机空间分桶（2026-10-17 方案 B）：老配置只有顶层那一份，归到
+  // 活跃空间；已经有分桶的，就以活跃空间那份为准回填下面四个工作副本 ——
+  // 顶层字段是镜像、桶才是权威（见 settings/aiSpace.ts 的"不变量"一节）。
+  const byokBySpace = migrateAiSpaces(given, activeSpaceId);
+  const aiBundle = bundleOf(byokBySpace, activeSpaceId);
   return {
     ...base,
     ...given,
     vaultLocalId,
     spaces,
     activeSpaceId,
-    // AI 模式：存的正好是旧默认 "off"（= 从没自己挑过）升到「内置模型」
-    aiMode: migrateAiMode(given),
+    byokBySpace,
+    // AI 模式：旧默认 "off" = 从没自己挑过，升到「内置模型」（见 migrateAiMode）
+    aiMode: aiBundle.aiMode,
     // 资料目录：存的值正好是老默认值时当作"没自定义过"，升到新默认
     vaultFolder: migrateVaultFolder(given),
-    byok: { ...base.byok, ...(given.byok ?? {}) },
-    // 老版本没有这几个字段（草稿/快照分离是 2026-10-10 才引入的），补成
-    // "从没保存过 / 编辑态" —— 老用户在账户页点一次「保存」就进入新机制
-    byokSaved: given.byokSaved ?? null,
-    byokLocked: given.byokLocked ?? false,
+    // 草稿/快照/锁定：老版本没有这几个字段（2026-10-10 才引入的），
+    // 由 migrateAiSpaces 补成"从没保存过 / 编辑态"
+    byok: aiBundle.byok,
+    byokSaved: aiBundle.byokSaved,
+    byokLocked: aiBundle.byokLocked,
     aiBalanceMillis: Number.isFinite(given.aiBalanceMillis) ? Number(given.aiBalanceMillis) : 0,
     accountProfile: given.accountProfile ?? null,
     // 老版本没有这几个字段，补成"未登录 / 没同步过"
