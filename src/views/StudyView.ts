@@ -88,6 +88,8 @@ import { DEMO_WORK_TITLE } from "../services/demo";
 import { fetchDemoManifest } from "../services/demoPack";
 import { resolveMediaDir } from "../services/mediaStore";
 import { DemoDownloadModal } from "./DemoDownloadModal";
+// 装成功之后报一次（后端 OPS「安装与下载」页的唯一数据来源，见 services/installReport.ts）
+import { reportAssetInstall } from "../services/installReport";
 import { explainTargets, tokenize } from "../services/jaTokenize";
 import { onClickOutside } from "../core/onClickOutside";
 import { blockAnchor, episodeLabel } from "../markdown/templates";
@@ -873,7 +875,16 @@ export class StudyView extends ItemView {
       db: this.db,
       // 与用户导入同一个落点：本机空间的素材库（演示素材没有单独的目录）
       mediaDir: resolveMediaDir(this.plugin.settings.mediaDir, this.plugin.settings.activeSpaceId),
-      onImported: (recordCid) => void this.openEpisode(recordCid),
+      onImported: (recordCid) => {
+        // 下载 + 导入都成功 = 这个用户真的用上了示例素材（点过按钮不算）
+        reportAssetInstall({
+          settings: this.plugin.settings,
+          kind: "demo",
+          assetVersion: manifest.version,
+          pluginVersion: this.plugin.manifest.version,
+        });
+        void this.openEpisode(recordCid);
+      },
     }).open();
   }
 
@@ -2775,6 +2786,13 @@ export class StudyView extends ItemView {
       pluginDir: dir,
       reason,
       onInstalled: () => {
+        // 词典换目录成功 = 装成功（弹窗只在 installDict 正常返回后才调这里）
+        reportAssetInstall({
+          settings: this.plugin.settings,
+          kind: "dict",
+          assetVersion: manifest.version,
+          pluginVersion: this.plugin.manifest.version,
+        });
         this.onDictInstalled();
         // 用户是在"要罗马音"的那一刻被拦下来的 —— 装完直接把那行补上，
         // 让他再点一次「提示」是把刚做完的事退回去。

@@ -94,7 +94,6 @@ function hostedSettings(overrides: Partial<PluginSettings> = {}): PluginSettings
     activeSpaceId: "test",
     autoOpenPage: false,
     lastView: "",
-    lastUpdateCheckAt: 0,
     dictPromptSeen: false,
     micQualityPromptSeen: false,
   prefsUpdatedAt: "",

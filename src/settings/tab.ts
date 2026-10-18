@@ -190,46 +190,27 @@ export class SettingsTab extends PluginSettingTab {
         }),
       );
 
-    this.buildUpdateSetting(containerEl);
+    this.buildVersionInfo(containerEl);
   }
 
   /**
-   * 「版本与更新」。
+   * 「版本」—— 一块**只读**信息。
    *
-   * 开发构建显示只读信息（跟着仓库走，不走线上更新）；生产构建提供
-   * 手动检查 + 一键更新。启动时的自动检查有 6 小时节流，这里手动点不受限。
+   * ⚠️ 这里**没有「检查更新 / 一键更新」按钮，而且不该再加回来**：
+   *    Obsidian 社区目录的开发者政策把「Install or update themselves or their
+   *    dependencies」列为禁止项（2026-10-18 摘掉了整条自更新链路）。更新只走
+   *    BRAT / 社区商店，由用户自己触发；插件既不检查也不下载新版本。
    */
-  private buildUpdateSetting(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: "版本与更新" });
-
-    if (IS_DEV_BUILD) {
-      new Setting(containerEl)
-        .setName(`当前版本 ${this.plugin.manifest.version}`)
-        .setDesc(`开发构建（分支 ${BUILD_BRANCH || "?"}）：重新构建即更新，不走线上更新。`);
-      return;
-    }
-
-    const release = this.plugin.availableUpdate;
-    const setting = new Setting(containerEl).setName(`当前版本 ${this.plugin.manifest.version}`);
-    if (release) {
-      setting.setDesc(
-        release.notes ? `新版本 ${release.version}：${release.notes}` : `新版本 ${release.version} 可用。`,
+  private buildVersionInfo(containerEl: HTMLElement): void {
+    containerEl.createEl("h2", { text: "版本" });
+    const branchLabel = BUILD_BRANCH ? `（${BUILD_BRANCH} 分支构建）` : "";
+    new Setting(containerEl)
+      .setName(`当前版本 ${this.plugin.manifest.version}`)
+      .setDesc(
+        IS_DEV_BUILD
+          ? `开发构建${branchLabel}：重新构建即更新。`
+          : `更新请在 Obsidian 里自己操作（BRAT 或社区插件商店），插件不会自行更新。`,
       );
-      setting.addButton((button) =>
-        button
-          .setButtonText(`一键更新到 ${release.version}`)
-          .setCta()
-          .onClick(() => void this.plugin.applyPluginUpdate(release)),
-      );
-    } else {
-      setting.setDesc("启动时会自动检查更新（约每 6 小时一次）；也可以在这里手动检查。");
-      setting.addButton((button) =>
-        button.setButtonText("检查更新").onClick(async () => {
-          await this.plugin.checkForPluginUpdate(true);
-          this.display();
-        }),
-      );
-    }
   }
 
   /**

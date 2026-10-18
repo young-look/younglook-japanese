@@ -10,9 +10,9 @@ import { join } from "path";
 /**
  * 插件自己的目录（绝对路径）。移动端 / 拿不到文件系统时返回 null。
  *
- * 与 `main.ts` 里 applyPluginUpdate 的算法是同一个（`getBasePath()` + `manifest.dir`），
- * 这里走 `getFullPath(configDir/plugins/<id>)` —— 两条都指向同一个目录，用哪个都行；
- * 合并成一处是为了让「词典装到哪」只有一个答案。
+ * 这里走 `getFullPath(configDir/plugins/<id>)` —— 与 `main.ts` 里
+ * `basePath()` 那套（`getBasePath()` + `manifest.dir`）指向同一个目录，
+ * 用哪个都行；合并成一处是为了让「词典装到哪」只有一个答案。
  */
 export function pluginDirPath(app: App, pluginId: string): string | null {
   const adapter = app.vault.adapter;

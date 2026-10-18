@@ -60,7 +60,6 @@ function settings(overrides: Partial<PluginSettings> = {}): PluginSettings {
     activeSpaceId: "test",
     autoOpenPage: true,
     lastView: "",
-    lastUpdateCheckAt: 0,
     dictPromptSeen: false,
     micQualityPromptSeen: false,
   prefsUpdatedAt: "",

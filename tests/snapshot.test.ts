@@ -37,7 +37,6 @@ function settings(over: Partial<PluginSettings> = {}): PluginSettings {
     vaultLocalId: "testvault",
     autoOpenPage: true,
     lastView: "",
-    lastUpdateCheckAt: 0,
     prefsUpdatedAt: "",
     ...over,
   } as PluginSettings;

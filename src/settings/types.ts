@@ -196,11 +196,6 @@ export interface PluginSettings {
    */
   micQualityPromptSeen: boolean;
   /**
-   * 上次自动检查插件更新的时间戳（ms）。0 = 从未检查过。
-   * 自动检查按 6 小时节流；设置页里的手动检查不受限。
-   */
-  lastUpdateCheckAt: number;
-  /**
    * 偏好同步（统一快照的 settings 集合）的 LWW 时间戳。
    * 每次落盘都抬——本地永远是最新事实，云端偏好只在换机/重装
    * （本地还没有偏好时间戳）时能落进来。见 services/sync/snapshot.ts。

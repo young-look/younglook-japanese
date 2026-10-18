@@ -65,7 +65,6 @@ export function defaultSettings(): PluginSettings {
     dictPromptSeen: false,
     // 「这个麦克风采音会差一些」还没提醒过
     micQualityPromptSeen: false,
-    lastUpdateCheckAt: 0,
     prefsUpdatedAt: "",
     // 每日校验跑到哪天了（"YYYY-MM-DD"）；空串 = 从没校验过
     lastVerifyDay: "",
@@ -220,7 +219,6 @@ export function fillDefaults(raw: unknown, buildEnv: BuildEnv = BUILD_ENV): Plug
     // 老版本没有这几个字段，补成"未登录 / 没同步过"
     refreshToken: typeof given.refreshToken === "string" ? given.refreshToken : "",
     lastStatsSyncAt: Number.isFinite(given.lastStatsSyncAt) ? Number(given.lastStatsSyncAt) : 0,
-    lastUpdateCheckAt: Number.isFinite(given.lastUpdateCheckAt) ? Number(given.lastUpdateCheckAt) : 0,
     // 老版本没有这一项：补成"还没提醒过"。老用户第一次进学习页会看到一次
     // —— 他们多半本来就有 dict/（软链装法），弹窗前会先判磁盘，有就不弹。
     dictPromptSeen: given.dictPromptSeen === true,

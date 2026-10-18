@@ -1,5 +1,4 @@
 import { FileSystemAdapter, MarkdownView, Modal, Notice, Plugin, Setting, TFile, WorkspaceLeaf, setIcon } from "obsidian";
-import path from "node:path";
 import { rmSync } from "node:fs";
 import { fillDefaults } from "./settings/defaults";
 import { renameSpace, stashBundle, switchSpace } from "./settings/aiSpace";
@@ -39,7 +38,6 @@ import {
   reportVerify,
   type SnapshotPushResult,
 } from "./services/sync/client";
-import { applyRelease, compareVersions, fetchLatestRelease, type RemoteRelease } from "./services/update";
 import { healLegacyImitationRows } from "./services/study";
 import { claimLocalNotes, invalidateNoteCache } from "./services/notes/mine";
 import { dayKey } from "./services/studyDays";
@@ -77,8 +75,6 @@ export default class YoungLookPlugin extends Plugin {
    * 只有「被服务端挡回来」置 true、成功同步一趟置 false（充值后下一趟自动清）。
    */
   private syncPaused = false;
-  /** 检查到的可更新版本；null = 没检查过或已是最新。设置页的「一键更新」按钮读它 */
-  availableUpdate: RemoteRelease | null = null;
   /** 个人中心的来路：退出时按它回到原位（列表页 / 学习页第 N 句）。 */
   private personalOrigin: PersonalOrigin = { from: "list" };
   /**
@@ -283,8 +279,8 @@ export default class YoungLookPlugin extends Plugin {
     this.startAutoSync();
     window.setTimeout(() => void this.syncStats(), 10_000);
 
-    // 插件更新检查（仅生产构建，内部有 6 小时节流）：有新版本才提示一次
-    void this.checkForPluginUpdate();
+    // 插件更新**不在插件里做**：Obsidian 社区目录明确禁止「Install or update
+    // themselves」，用户走 BRAT / 社区商店自己更新（见 README「联网与数据」）。
 
     // 「打开插件就是完整的工作台页面」：启动时把上次的页面开回来。
     // 布局本身也会被 Obsidian 恢复（restore 过的实例已存在，这里会跳过）；
@@ -1385,77 +1381,6 @@ export default class YoungLookPlugin extends Plugin {
     new Notice(notice);
     await this.updateStatusBar();
     await this.refreshOpenViews();
-  }
-
-  // ── 插件自更新 ──────────────────────────────────────────────────────────
-
-  /**
-   * 检查线上有没有新版本（**仅生产构建**；dev 包跟着仓库走，不走线上更新）。
-   *
-   * 自动检查按 6 小时节流（后台跑，失败静默）；`manual = true` 是设置页点的，
-   * 不节流且无论结果如何都给一句反馈。
-   */
-  async checkForPluginUpdate(manual = false): Promise<void> {
-    if (IS_DEV_BUILD) return;
-    const now = Date.now();
-    if (!manual && now - this.settings.lastUpdateCheckAt < 6 * 3_600_000) return;
-    this.settings.lastUpdateCheckAt = now;
-    await this.saveSettings();
-
-    const release = await fetchLatestRelease(this.settings.serverUrl);
-    if (!release) {
-      if (manual) new Notice("检查更新失败：暂时连不上服务端。");
-      return;
-    }
-    if (compareVersions(release.version, this.manifest.version) <= 0) {
-      this.availableUpdate = null;
-      if (manual) new Notice(`已经是最新版本（${this.manifest.version}）。`);
-      return;
-    }
-
-    this.availableUpdate = release;
-    if (manual) {
-      new Notice(`发现新版本 ${release.version}，到设置里点「一键更新」。`);
-      return;
-    }
-    // 启动时的被动提示：带一个可以直接点的按钮，点完就地下载替换
-    const fragment = document.createDocumentFragment();
-    fragment.appendText(`洋流日语有新版本 ${release.version} `);
-    const button = document.createElement("button");
-    button.textContent = "更新";
-    button.addEventListener("click", () => void this.applyPluginUpdate(release));
-    fragment.appendChild(button);
-    new Notice(fragment, 15_000);
-  }
-
-  /**
-   * 执行更新：下载三件套 → sha256 校验 → 原子替换（旧文件留 .bak）→ 重载插件。
-   * 任何一步失败都保留旧版本，用户最多看到一条失败提示，绝不会变砖。
-   */
-  async applyPluginUpdate(release: RemoteRelease): Promise<void> {
-    try {
-      new Notice("正在下载更新…", 5000);
-      const pluginDir = path.join(
-        (this.app.vault.adapter as FileSystemAdapter).getBasePath(),
-        // manifest.dir 在 typings 里可选，运行时一定有（Obsidian 加载插件时必填）
-        this.manifest.dir ?? ".",
-      );
-      await applyRelease(pluginDir, release);
-      new Notice(`已更新到 ${release.version}，正在重载插件…`, 8000);
-      // app.plugins 不在公开 typings 里，但运行时一直存在（热重载类插件同款做法）：
-      // 禁用再启用 = 用新 main.js 重建实例，不用重启 Obsidian
-      const plugins = (this.app as unknown as {
-        plugins: { disablePlugin(id: string): Promise<void>; enablePlugin(id: string): Promise<void> };
-      }).plugins;
-      await plugins.disablePlugin(this.manifest.id);
-      await plugins.enablePlugin(this.manifest.id);
-    } catch (error) {
-      log.warn("插件更新失败，保留旧版本", error);
-      new Notice(
-        `更新失败，仍是旧版本。${error instanceof Error ? error.message : ""}`,
-        10_000,
-      );
-    }
   }
 
   /**
