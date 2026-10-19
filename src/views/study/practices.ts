@@ -30,6 +30,7 @@ import type { ProgressRow, StudySentence } from "../../types/entities";
 import { normalizeForCopy, type CopyResult } from "../../services/copyCheck";
 import { cleanSuggestion } from "../../services/verdictSuggestion";
 import { inspectMicInput, micConstraints } from "../../services/micCapture";
+import { playRecordingCue } from "../../services/audioCues";
 import { trimRecording } from "../../services/audioTrim";
 import { effectiveJa } from "../../services/study";
 import type { AiGate } from "../../services/ai/gate";
@@ -807,7 +808,7 @@ export function buildReadAloud(
       // 期间卡片停在 requesting 那一档（录音钮置灰、文案仍是短的那句，别加长），点不动。
       return;
     }
-    beginRecording();
+    void beginRecording();
   }
 
   /**
@@ -817,7 +818,17 @@ export function buildReadAloud(
    * `abort()`**，它会 `cleanup()` 把流停掉；如果用户在那之后才点「就用它录」，
    * 这里拿到的就已经是 `null` 了 —— 不挡一下会在 `new MediaRecorder(null)` 上炸。
    */
-  function beginRecording(): void {
+  async function beginRecording(): Promise<void> {
+    if (!stream) {
+      setPhase("idle");
+      return;
+    }
+    // 🔒 **开场提示音响完才开录**（口径见 services/audioCues.ts 文件头）：
+    // 提示音要是和录音同时进行，它就会被录进这一遍里、正好落在**第一个词头上**，
+    // 而发音评估最容易判歪的就是那儿（真机数据：整句 88 分，只有首词被压到 34）。
+    // 这一下同时也告诉人"现在才真的开始录"，他听到才开口 —— 头就不会丢。
+    await playRecordingCue("start");
+    // 等这一下的工夫里可能换了句 / 取消了（abort 会把麦克风流停掉）—— 那就别开了
     if (!stream) {
       setPhase("idle");
       return;
@@ -884,6 +895,9 @@ export function buildReadAloud(
   function stop(): void {
     if (phase !== "recording") return;
     recorder?.stop();
+    // 收场提示音（下行，与开场的上行相反）：点「停止」那一下就响，
+    // 人听到就知道这一遍到这儿为止了。它已经在录音之后，录不进去。
+    void playRecordingCue("stop");
   }
 
   /** 换句/销毁时放弃进行中的录音：不收音、不记一笔，省得算到新句子头上。 */

@@ -2461,16 +2461,25 @@ button.yl-fb-shot-del:focus-visible { opacity: 1; }
   background: rgba(210, 153, 34, 0.15);
 }
 
-/* 跟读核对：原句上按词标色。
-   读对用完成态字色（不张扬），读错才加底 —— 这个功能只挑"确定读错"的，
-   视觉上就得红的字比绿的字显眼，否则看着像在给整句打分。
-   ⚠️ 全对时这两个类都会被撤掉，句子回到默认色，不留一整句绿。 */
+/* 跟读核对：原句上按词标色（三态，见 services/readAloudCheck 的 ReadAloudMark）。
+   读对用完成态字色（不张扬），没读准才加底 —— **红 = 这一遍未通过**，
+   **黄 = 整句分够高、这一遍照过**，只是这个词提醒一下。
+   ⚠️ 一个标记都没有时才撤色，句子回到默认色，不留一整句绿。 */
 .yl-read-ok {
   color: var(--yl-ok-ink);
 }
 .yl-read-bad {
   color: var(--color-red, #e5534b);
   background: rgba(229, 83, 75, 0.14);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+/* 黄 ＝ 整句分够高、这一遍照样判过，但这个词没读准（2026-10-19）。
+   与上面红字的区别就是"这一遍算不算过"：红＝未通过，黄＝过了、只是提醒一句。
+   用全站警告色 --yl-warn-*（琥珀），不另造一种黄。 */
+.yl-read-warn {
+  color: var(--yl-warn-ink);
+  background: var(--yl-warn-tint);
   border-radius: 3px;
   padding: 0 1px;
 }

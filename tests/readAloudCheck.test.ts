@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   LOCAL_OK_LINK,
   LOCAL_OK_MESSAGE,
+  READ_ALMOST_OK_MESSAGE,
   READ_OK_MESSAGE,
   alignVerdict,
   encodeWav16kMono,
@@ -52,10 +53,11 @@ describe("跟读 · 服务端结果对账", () => {
       ],
       words,
     );
-    expect(verdict.marks.get(0)).toBe(true);
-    expect(verdict.marks.get(1)).toBe(false);
-    expect(verdict.marks.get(2)).toBe(true);
+    expect(verdict.marks.get(0)).toBe("ok");
+    expect(verdict.marks.get(1)).toBe("bad");
+    expect(verdict.marks.get(2)).toBe("ok");
     expect(verdict.allCorrect).toBe(false);
+    expect(verdict.hasWarn).toBe(false);
   });
 
   it("词面对不上就整条丢弃 —— 宁可少标，不可标错位", () => {
@@ -79,8 +81,83 @@ describe("跟读 · 服务端结果对账", () => {
 
   it("缺 correct 字段按读对处理（拿不准算对）", () => {
     const verdict = alignVerdict([{ index: 0, surface: "明日" }], words);
-    expect(verdict.marks.get(0)).toBe(true);
+    expect(verdict.marks.get(0)).toBe("ok");
     expect(verdict.allCorrect).toBe(true);
+  });
+});
+
+/**
+ * 黄档（2026-10-19 用户口径）：**整句分够高 → 这一遍判过**，没读准的词降级成
+ * 黄色提醒，既不判未通过、也不骗人说"每个词都读对了"。
+ *
+ * 钉这几条是因为它们坏了是**静默的**：分是对的、过也过了，只有一个词的颜色
+ * 不对 —— 用户照着红字去改一个本来读对的词，正是这个功能最贵的那种错。
+ */
+describe("跟读 · 整句够高时的黄档（过了，但词照标）", () => {
+  const words: ReadAloudWord[] = [
+    { index: 0, surface: "やら", reading: "やら" },
+    { index: 1, surface: "ない", reading: "ない" },
+  ];
+
+  it("整句够高 + 一个词没读准 → 判过、那个词标**黄**不是标红", () => {
+    const verdict = alignVerdict(
+      [
+        { index: 0, surface: "やら", correct: false, warn: true, score: 0.34 },
+        { index: 1, surface: "ない", correct: true, score: 0.95 },
+      ],
+      words,
+      true, // 服务端说这一遍过了
+    );
+    // 整句 88 分却判未通过 —— 那是自相矛盾的结论
+    expect(verdict.allCorrect).toBe(true);
+    expect(verdict.hasWarn).toBe(true);
+    expect(verdict.marks.get(0)).toBe("warn");
+    expect(verdict.marks.get(1)).toBe("ok");
+    // 黄词的分照记，但不进夸奖档的最低分（根本走不到夸奖那句）
+    expect(verdict.minScore).toBe(0.95);
+  });
+
+  it("服务端说过了却漏给 warn → 仍然降级成黄：通过就不许再标红", () => {
+    const verdict = alignVerdict(
+      [{ index: 0, surface: "やら", correct: false, score: 0.34 }],
+      words,
+      true,
+    );
+    expect(verdict.marks.get(0)).toBe("warn");
+    expect(verdict.allCorrect).toBe(true);
+  });
+
+  it("整句不够高 → 照旧红字、判未通过", () => {
+    const verdict = alignVerdict(
+      [
+        { index: 0, surface: "やら", correct: false, score: 0.34 },
+        { index: 1, surface: "ない", correct: true, score: 0.95 },
+      ],
+      words,
+      false,
+    );
+    expect(verdict.marks.get(0)).toBe("bad");
+    expect(verdict.allCorrect).toBe(false);
+    expect(verdict.hasWarn).toBe(false);
+  });
+
+  it("老服务端不给 all_correct 时退回「一个红词都没有」", () => {
+    const passed = alignVerdict(
+      [{ index: 0, surface: "やら", correct: true, score: 0.95 }],
+      words,
+    );
+    expect(passed.allCorrect).toBe(true);
+    const failed = alignVerdict(
+      [{ index: 0, surface: "やら", correct: false, score: 0.34 }],
+      words,
+    );
+    expect(failed.allCorrect).toBe(false);
+    expect(failed.marks.get(0)).toBe("bad");
+  });
+
+  it("有黄词时那句话是「基本都读对了。」—— 不能说成「每个词都读对了」", () => {
+    expect(READ_ALMOST_OK_MESSAGE).toBe("基本都读对了。");
+    expect(READ_ALMOST_OK_MESSAGE).not.toBe(READ_OK_MESSAGE);
   });
 });
 

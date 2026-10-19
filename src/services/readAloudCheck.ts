@@ -105,12 +105,33 @@ export interface ReadAloudWord {
   reading: string;
 }
 
-/** 核对结果：`index → 读对了没`。**只包含能对上账的词**，对不上的整条丢弃。 */
+/**
+ * 一个词在核对后长什么样（2026-10-19 起三态，原先只有对/错两态）。
+ *
+ *   ok    读准了 → 绿（完成态字色）
+ *   warn  没读准，**但整句分够高、这一遍照样算过** → **黄色提醒**，不是红字错处
+ *   bad   没读准，且整句分也不够高 → 红字错处，这一遍判未通过
+ *
+ * 多出 `warn` 这一档的原因：真机实测同一个词的分能在 34~97 之间来回跳
+ * （同一句、同一个人、同一支麦），而整句分稳定在 88~92 —— 逐词分本身
+ * 分不开"读对"和"读错"（34 是读对、33 是读错），只有整句分分得开。
+ * 所以整句够高时**这一遍判过**，但**不抹掉那个词**：降级成黄，照旧标出来。
+ * 用户要的是"别拦我"，不是"别告诉我哪儿可能没读准"。
+ */
+export type ReadAloudMark = "ok" | "warn" | "bad";
+
+/** 核对结果：`index → 这个词什么样`。**只包含能对上账的词**，对不上的整条丢弃。 */
 export interface ReadAloudVerdict {
   /** key = 词在本地分词里的下标 */
-  marks: Map<number, boolean>;
-  /** 服务端返回的词里有错的没（没有可标的词时按"全对"处理） */
+  marks: Map<number, ReadAloudMark>;
+  /**
+   * **这一遍过没过**（服务端口径，不是"一个红词都没有"）：
+   * 逐词全读准，或整句分够高（见服务端 pronunciation.SENTENCE_PASS_AT）。
+   * 服务端没给这个字段时（老版本）退回"一个红词都没有"。
+   */
   allCorrect: boolean;
+  /** 有没有降级成黄色的词 —— 有就是"过了，但有几个词可能没读准" */
+  hasWarn: boolean;
   /**
    * 对上账且带分数的词里**最低**的那个分（0~1，服务端 Azure 百分制 ÷100）。
    * 没评上分的词（对不上账 / 服务端没给）不参与 —— 拿不准的不拉低档位。
@@ -120,7 +141,14 @@ export interface ReadAloudVerdict {
 }
 
 interface ReadAloudData {
-  words?: Array<{ index?: number; surface?: string; correct?: boolean; score?: number }>;
+  words?: Array<{
+    index?: number;
+    surface?: string;
+    correct?: boolean;
+    /** 没读准但这一遍照样过 → 黄色提醒（服务端 SENTENCE_PASS_AT 那条判据给的） */
+    warn?: boolean;
+    score?: number;
+  }>;
   all_correct?: boolean;
 }
 
@@ -241,7 +269,8 @@ export async function requestReadAloudCheck(
   form.append("reference_ms", String(Math.round(params.referenceMs)));
 
   const { data } = await hostedRequest<ReadAloudData>(settings, "read-aloud", form);
-  return alignVerdict(data.words ?? [], params.words);
+  // "这一遍过没过"由服务端给（整句分够高也算过），客户端不再自己数红词
+  return alignVerdict(data.words ?? [], params.words, data.all_correct);
 }
 
 /**
@@ -253,26 +282,40 @@ export async function requestReadAloudCheck(
  * 一个本来读对的词。**对不上就整条丢弃，宁可少标。**
  */
 export function alignVerdict(
-  raw: Array<{ index?: number; surface?: string; correct?: boolean; score?: number }>,
+  raw: Array<{
+    index?: number;
+    surface?: string;
+    correct?: boolean;
+    warn?: boolean;
+    score?: number;
+  }>,
   expected: ReadAloudWord[],
+  /** 服务端给的"这一遍过没过"；缺席（老服务端）退回"一个红词都没有" */
+  passed?: boolean,
 ): ReadAloudVerdict {
-  const marks = new Map<number, boolean>();
-  let wrong = 0;
+  const marks = new Map<number, ReadAloudMark>();
+  const serverPassed = passed === true;
+  let bad = 0;
+  let warned = 0;
   let minScore: number | null = null;
   for (const item of raw) {
     if (typeof item.index !== "number") continue;
     const target = expected.find((word) => word.index === item.index);
     if (!target || target.surface !== (item.surface ?? "")) continue;
     const correct = item.correct !== false;
-    marks.set(item.index, correct);
-    if (!correct) wrong += 1;
-    // 最低分只统计**读对且带分**的词 —— 标红的词再低也不影响夸奖档位
-    // （那条路在调用方已经被 allCorrect 拦下了），null 分不参与。
+    // 服务端说这一遍过了，那这个词就**只能是黄，不能是红** ——
+    // "通过"却标一红字是自相矛盾的展示（降级不改写分数，分照记）
+    const mark: ReadAloudMark = correct ? "ok" : serverPassed || item.warn === true ? "warn" : "bad";
+    marks.set(item.index, mark);
+    if (mark === "bad") bad += 1;
+    if (mark === "warn") warned += 1;
+    // 最低分只统计**读对且带分**的词 —— 标红/标黄的词再低也不影响夸奖档位
+    // （有黄词时走「基本都读对了。」，根本不到夸奖档），null 分不参与。
     if (correct && typeof item.score === "number" && Number.isFinite(item.score)) {
       minScore = minScore === null ? item.score : Math.min(minScore, item.score);
     }
   }
-  return { marks, allCorrect: wrong === 0, minScore };
+  return { marks, allCorrect: passed ?? bad === 0, hasWarn: warned > 0, minScore };
 }
 
 // ── 全对时的夸奖档位（2026-10-11 用户拍板，逐词最低分三档）──────────────
@@ -283,6 +326,15 @@ const PRAISE_GOOD = 0.7;
 
 /** 默认档那句话（2026-10-08 定稿，逐字别改）。 */
 export const READ_OK_MESSAGE = "每个词都读对了。";
+
+/**
+ * 「过了，但有几个词可能没读准」那句话（2026-10-19 用户定稿，逐字别改）。
+ *
+ * 与上面那句的分工：整句分够高 → 这一遍**判过（正解）**，但没读准的词标成黄色
+ * 提醒。这时候不能说「每个词都读对了」—— 那是假话；也不能判未通过 —— 那是
+ * 跟整句 88 分自相矛盾。所以是这一句。
+ */
+export const READ_ALMOST_OK_MESSAGE = "基本都读对了。";
 
 /**
  * 全对时卡片上的灰字：按逐词最低分给三档夸奖。

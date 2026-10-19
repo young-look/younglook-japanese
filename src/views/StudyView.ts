@@ -41,7 +41,15 @@ import { deleteRecording, loadRecording, saveRecording } from "../services/recor
 import { loadDraft, saveDraft } from "../services/studyDrafts";
 import { openNotesDrawer, type NotesDrawerHandle } from "./notesDrawer";
 import { loadMyNotes, myNoteFor } from "../services/notes/mine";
-import { checkRecordingLocally, LOCAL_OK_LINK, LOCAL_OK_MESSAGE, readAloudPraise, requestReadAloudCheck } from "../services/readAloudCheck";
+import {
+  checkRecordingLocally,
+  LOCAL_OK_LINK,
+  LOCAL_OK_MESSAGE,
+  readAloudPraise,
+  READ_ALMOST_OK_MESSAGE,
+  requestReadAloudCheck,
+} from "../services/readAloudCheck";
+import type { ReadAloudMark } from "../services/readAloudCheck";
 import {
   appendChatTurn,
   effectiveJa,
@@ -2602,6 +2610,14 @@ export class StudyView extends ItemView {
         this.paintReadAloud(verdict.marks);
         return { status: "wrong", message: "原句上标红的词读得不太准，重录一遍再试试。" };
       }
+      // 整句分够高 → 这一遍**判过（正解）**，但没读准的词**照旧标出来**，
+      // 只是降级成黄色提醒（2026-10-19 用户口径）：既不自相矛盾地判未通过，
+      // 也不骗人说"每个词都读对了"。
+      if (verdict.hasWarn) {
+        this.paintReadAloud(verdict.marks);
+        await this.markReadAloudDone(slice, payload.seconds, true);
+        return { status: "ok", verified: true, message: READ_ALMOST_OK_MESSAGE };
+      }
       this.clearReadAloudPaint();
       await this.markReadAloudDone(slice, payload.seconds, true);
       // 全对后的灰字按逐词最低分给三档夸奖（2026-10-11 拍板）：
@@ -2627,14 +2643,16 @@ export class StudyView extends ItemView {
    * 只标服务端**回了对账通过**的词（surface 与本地分词一致），
    * 其余一律不标 —— 标错位比不标更坑。
    */
-  private paintReadAloud(marks: Map<number, boolean>): void {
+  private paintReadAloud(marks: Map<number, ReadAloudMark>): void {
     this.clearReadAloudPaint();
     if (!this.heroJaEl) return;
     this.heroJaEl.querySelectorAll<HTMLElement>("[data-token-index]").forEach((span) => {
       const index = Number(span.getAttr("data-token-index"));
-      const correct = marks.get(index);
-      if (correct === true) span.addClass("yl-read-ok");
-      else if (correct === false) span.addClass("yl-read-bad");
+      const mark = marks.get(index);
+      if (mark === "ok") span.addClass("yl-read-ok");
+      // 整句够高、这一遍照样过了，但这个词没读准 → 黄，不是红（见 ReadAloudMark）
+      else if (mark === "warn") span.addClass("yl-read-warn");
+      else if (mark === "bad") span.addClass("yl-read-bad");
     });
   }
 
@@ -2643,7 +2661,7 @@ export class StudyView extends ItemView {
     if (!this.heroJaEl) return;
     this.heroJaEl
       .querySelectorAll<HTMLElement>("[data-token-index]")
-      .forEach((span) => span.removeClass("yl-read-ok", "yl-read-bad"));
+      .forEach((span) => span.removeClass("yl-read-ok", "yl-read-warn", "yl-read-bad"));
   }
 
   private async handleManualConfirm(sliceCid: string): Promise<void> {
