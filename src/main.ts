@@ -1523,6 +1523,20 @@ export default class YoungLookPlugin extends Plugin {
   openConnectPage(): void {
     window.open(`${this.webBase()}/plugin/connect`, "_blank");
   }
+
+  /**
+   * 打开网页设置页（`/settings`）：改头像 / 昵称 / 邮箱 / 密码、填邀请码。
+   *
+   * 🔥 2026-10-20 用户拍板：**插件里不再改资料**。个人中心点身份卡就走这里，
+   * 插件内那张就地展开的「资料编辑卡」连同头像裁剪器一起删了 —— 同一份资料
+   * 两套界面、两套话术，改完还得靠快照节流才在另一边生效，不值当。
+   *
+   * ⚠️ 路径 `/settings` 是**外部契约**（网页路由表里的同名路由），改它要连网页一起发版。
+   * ⚠️ 仍然拼 `webBase()` 而不是 `serverUrl`：本机前后端是两个端口，理由同上面那条。
+   */
+  openSettingsPage(): void {
+    window.open(`${this.webBase()}/settings`, "_blank");
+  }
 }
 
 /** 拉账号快照的节流窗口 */
@@ -1541,6 +1555,9 @@ interface MePayload {
   avatar?: string;
   email?: string;
   ai_balance_millis?: number;
+  /** 受邀状态：填了谁的邀请码（空串 = 没填过）。服务端权威，插件不自己记 */
+  invite_code?: string;
+  invite_bound_at?: string | null;
 }
 
 interface ExchangePayload extends MePayload {
@@ -1557,6 +1574,8 @@ function profileFromMe(data: MePayload): AccountProfile {
     nickname: data.nickname || data.username || "",
     email: data.email ?? "",
     avatarUrl: data.avatar ?? "",
+    inviteCode: data.invite_code ?? "",
+    inviteBoundAt: data.invite_bound_at ?? "",
     fetchedAt: new Date().toISOString(),
   };
 }

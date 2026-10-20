@@ -28,6 +28,16 @@ export interface AccountProfile {
   avatarUrl: string;
   /** 抓取时间（ISO）。离线时用缓存，界面按这个标注「数据可能过期」 */
   fetchedAt: string;
+  /**
+   * 受邀状态：自己填的邀请码与绑定时间。
+   * 空串 = 没填过；有值 = 已绑定（一用户一码，不能再改）。
+   * 🔥 **权威在服务端**（`/users/me/` 与换码响应），本地只是快照 ——
+   *    换设备、重装插件靠重新连接恢复，不要在本地另存一个 bound 布尔。
+   * ⚠️ 2026-10-20 起插件内**没有**填码入口：个人中心点身份卡打开网页 `/settings`，
+   *    那边填。这两个字段只作快照保留（要显示/校验时仍以服务端为准）。
+   */
+  inviteCode?: string;
+  inviteBoundAt?: string;
   // 昵称审核三件套（nicknamePending / nicknameStatus / nicknameNextChangeAt）
   // 已随 2026-10-16「提交即生效」口径退役 —— 没有审核与冷却可解释了。
 }

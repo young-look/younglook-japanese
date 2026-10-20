@@ -38,7 +38,6 @@ import type {
 import { loadMyNotes, peekMyNotes } from "../services/notes/mine";
 import { ShareCardModal } from "./ShareCardModal";
 import { FeedbackModal } from "./FeedbackModal";
-import { ProfileEditCard } from "./ProfileEditCard";
 import { submitFeedback } from "../services/feedbackApi";
 import { log } from "../core/logger";
 import { createButton } from "../ui/button";
@@ -664,13 +663,16 @@ export class PersonalCenterView extends ItemView {
   // 版式照 temp/demo/new_space/v3-two-track.html：单栏长滚动
   //   身份头 → 你的学习 → 渐变分享条 → 底部说明 → 页底动作。
   // 2026-10-04 参照 temp/demo/space/v1-顶部按钮重排.html 重排（用户拍板）：
-  //   「编辑资料」收进昵称行、编辑面板在身份头正下方就地展开、退出登录单独放页底、
-  //   标题行里「返回」与页签用细分隔线切开。
+  //   「编辑资料」收进昵称行、退出登录单独放页底、标题行里「返回」与页签用细分隔线切开。
   // 2026-10-17 参照 temp/demo/space/v2-页头随页签.html（用户拍板）：
   //   **身份头整个搬出正文、搬进标题行左槽**（顶替「个人中心」四个字，与右侧药丸
   //   同一水平线居中）；**整块可点** —— 已登录开编辑面板、未登录走连接流程，
   //   昵称行那颗小药丸随之取消（它不再是唯一入口，只是块内的一行暗示）。
   //   正文第一屏因此从「你的学习」开始；身份头在标题行里天然常驻，sticky 已不需要。
+  // 🔥 2026-10-20（用户拍板）：**插件内不再改资料**。已登录点身份头 → 浏览器打开
+  //   网页 `/settings`（头像 / 昵称 / 邮箱 / 密码 / 邀请码全在那边改）；就地展开的
+  //   那张「资料编辑卡」（ProfileEditCard + AvatarCropModal）连同 authApi 一起删了。
+  //   理由：同一份资料两套界面、两套话术，改完还得靠快照节流才在另一边生效。
 
   private renderProfile(): void {
     const pane = this.panes.profile;
@@ -695,12 +697,12 @@ export class PersonalCenterView extends ItemView {
     //        （上一版悬停填 `--yl-acc-tint`，那是 `yl-btn` 的按钮写法，一填底卡片就没了。）
     //      · 紧凑 —— 昵称 17→15、副行 12.5→11.5；头像保持 52（用户后来又要求放大一档），
     //        块高仍是 56（上下内距收到 1px）。
-    //      · 「连接账号 / 编辑资料」回到昵称行内（紧跟等级徽标），不再占卡片右缘一列。
+    //      · 「连接账号 / 账号设置」回到昵称行内（紧跟等级徽标），不再占卡片右缘一列。
     //    整块 role=button —— 键盘 Enter / 空格同效。
     const me = head.createDiv({ cls: `yl-v3-me${loggedIn ? "" : " is-out"}` });
     me.setAttr("role", "button");
     me.setAttr("tabindex", "0");
-    me.setAttr("aria-label", loggedIn ? "编辑资料" : "连接账号");
+    me.setAttr("aria-label", loggedIn ? "账号设置（在浏览器里打开）" : "连接账号");
     const avatar = me.createDiv({ cls: "yl-v3-avatar" });
     if (loggedIn) {
       avatar.createSpan({ text: (profile?.nickname || "洋").slice(0, 1) });
@@ -720,13 +722,11 @@ export class PersonalCenterView extends ItemView {
     nameRow.createSpan({ cls: "yl-v3-lvl", text: `Lv.${level.level} ${level.name}` });
     // 动作：一块**不是按钮**的暗示 —— 无底无边，前缀一根 11px 细线把它和徽标分开
     // （否则「Lv.1 港口 连接账号」会连读成一句）。悬停整块时字变青、箭头推 2px。
-    // 右箭头 = 去网页连接（换页）；下箭头 = 就地展开面板（同页），展开后 CSS 转 180°。
+    // 两个状态现在都是**换页**（右箭头）：未登录去网页连接、已登录去网页设置。
     const act = nameRow.createSpan({ cls: "yl-v3-act" });
-    const actText = act.createSpan({ text: loggedIn ? "编辑资料" : "连接账号" });
-    const actIcon = act.createSpan({
-      cls: `yl-v3-chev yl-v3-chev--${loggedIn ? "down" : "right"}`,
-    });
-    setIcon(actIcon, loggedIn ? "chevron-down" : "chevron-right");
+    act.createSpan({ text: loggedIn ? "账号设置" : "连接账号" });
+    const actIcon = act.createSpan({ cls: "yl-v3-chev yl-v3-chev--right" });
+    setIcon(actIcon, "chevron-right");
     // 副行：灰色一行只报身份归属 —— 登录后给 UID（用户报障 / 对账要念的号，
     // 不必再切设置页去找）。学习节奏不在这里说，下面「你的学习」的卡片已经写着，
     // 同一件事说两遍只会互相打架。
@@ -740,38 +740,6 @@ export class PersonalCenterView extends ItemView {
       text: !loggedIn ? "登录后可用云同步与内置模型" : uid ? `UID: ${uid}` : "",
     });
 
-    // 编辑面板：身份块点开后就地展开（2026-10-04。原来追加在页面最底部，
-    // 点了按钮视觉上毫无反馈）。未登录的「连接账号」不走这块面板
-    // （2026-10-05 改成弹窗，见下）。
-    //
-    // 2026-10-15：三行（头像 / 昵称 / 邮箱）的编辑状态由 `ProfileEditCard` 统一托管 ——
-    // 以前它们各自带着自己的保存键、改完任一项都会整页重绘（看着像"改完卡片自己跑了"），
-    // 现在卡片右下角只有一对「取消 / 保存」，而关闭这张卡只有三个入口。
-    const editWrap = stack.createDiv({ cls: "yl-v3-editwrap" });
-    const editCard = editWrap.createDiv({ cls: "yl-v3-editclip" }).createDiv({ cls: "yl-pc-card" });
-    let card: ProfileEditCard | null = null;
-    let editOpen = false;
-    /** 收 / 放折叠壳 + 跟着换提示的字与箭头朝向（三件事必须一起做，缺一就是形状对不上）。
-     *  箭头本身不换图标，只给块挂 `is-open`，由 CSS 把它转 180°。 */
-    const setCardOpen = (open: boolean): void => {
-      editOpen = open;
-      editWrap.toggleClass("on", open);
-      me.toggleClass("is-open", open);
-      actText.setText(open ? "收起" : "编辑资料");
-      me.setAttr("aria-label", open ? "收起编辑面板" : "编辑资料");
-    };
-    /** 关掉这张卡：丢草稿 → 收起。`rerender` = 保存成功后要整页重绘带出新状态。 */
-    const closeCard = (rerender: boolean): void => {
-      if (card) {
-        card.dispose();
-        card = null;
-      } else {
-        editCard.empty();
-      }
-      setCardOpen(false);
-      if (rerender) this.renderProfile();
-    };
-
     const onMe = (): void => {
       if (!this.isLoggedIn()) {
         // 两边同时开（用户拍板）：网页（登录 / 注册 + 授权码）开新标签页，
@@ -782,22 +750,9 @@ export class PersonalCenterView extends ItemView {
         }).open();
         return;
       }
-      if (editOpen) {
-        // 展开状态下提示已经变成「收起」—— 它就是三个关闭入口之一，
-        // 语义等同于「取消」（丢草稿）。
-        closeCard(false);
-        return;
-      }
-      // 每次展开都是一张新卡：草稿不跨开关保留（保留的话上一次没保存的改动
-      // 会阴魂不散地出现在几天后的某次编辑里）。
-      editCard.empty();
-      card = new ProfileEditCard(editCard, {
-        plugin: this.plugin,
-        heroAvatar: avatar,
-        close: (rerender: boolean) => closeCard(rerender),
-      });
-      card.render();
-      setCardOpen(true);
+      // 已登录：资料修改一律去网页设置页（2026-10-20 用户拍板）。
+      // 这里**不再有任何就地编辑** —— 插件里改不了资料是有意为之，不是缺功能。
+      this.plugin.openSettingsPage();
     };
     me.addEventListener("click", onMe);
     me.addEventListener("keydown", (ev: KeyboardEvent) => {

@@ -4230,22 +4230,9 @@ button.yl-locked:hover:not(:disabled) {
 .yl-pc-cnt { font-size: 11.5px; color: var(--text-faint); font-weight: 400; margin-left: auto; }
 .yl-pc-loading { font-size: 12.5px; color: var(--text-faint); padding: 12px 2px; }
 
-/* 就地编辑行（资料页）：名称 | 说明 | 右侧操作 —— 点「修改」当场在行内展开，
-   不再弹窗、不跳页。行的高度和字号跟词库/历史列表的行保持一致，混排时齐平。 */
-.yl-pc-wrow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 2px;
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-.yl-pc-wrow:last-child { border-bottom: none; }
-.yl-pc-wlabel { width: 74px; flex-shrink: 0; font-size: 13px; font-weight: 600; }
-.yl-pc-wvalue { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-muted); }
-.yl-pc-wvalue > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 展开态：输入框顶替住原来的值 + 操作按钮，三者一行排开 */
-.yl-pc-wrow.is-editing { flex-wrap: wrap; padding-bottom: 12px; }
-.yl-pc-wrow.is-editing .yl-pc-wlabel { width: 100%; }
+/* 资料编辑行（.yl-pc-wrow / .yl-pc-rows / .yl-pc-code / .yl-pc-invite-line）与
+   头像裁剪器（.yl-crop-*）的样式随 2026-10-20「资料修改收归网页 /settings」一起删了：
+   插件里不再有就地编辑，这些类没有任何引用。 */
 
 .yl-pc-grow { flex: 1; min-width: 0; }
 .yl-pc-bal-row { display: flex; align-items: center; gap: 10px; }
@@ -4848,8 +4835,9 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
 
    ⚠️ 类名仍是 .yl-v3-*（改名纯属 churn，不改）。
    ⚠️ 2026-10-04 参照 temp/demo/space/v1-顶部按钮重排.html 重排：编辑资料收进昵称行、
-      编辑面板就地展开（.yl-v3-editwrap）、退出登录单独一行（.yl-v3-logout-row）、
-      标题行返回与页签切开（.yl-card-nav-sep）。
+      退出登录单独一行（.yl-v3-logout-row）、标题行返回与页签切开（.yl-card-nav-sep）。
+      （当时的「编辑面板就地展开」.yl-v3-editwrap 已于 2026-10-20 删除 ——
+      资料修改全部收归网页 /settings，插件里点身份卡就是换页。）
    ⚠️ 2026-10-17 参照 temp/demo/space/v2-页头随页签.html：标题行左槽改成
       「本页签的名字 + 说明」（.yl-pc-head-title / -sub），「我的」那一格换成
       整块可点的身份块（.yl-v3-me，昵称行那颗小药丸 .yl-v3-edit 退役）。
@@ -5036,8 +5024,7 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
 /* 头像图绝对定位铺满盖住字母兜底：容器是 grid，img 若占普通格子会跟
    字母 span 上下各排一行（上半截文字、下半截图的怪相，2026-10-05）。 */
 .yl-v3-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-/* 编辑面板里「头像」行的小号预览圆（比标题行那颗再小一档，别抢戏） */
-.yl-v3-avatar-sm { width: 36px; height: 36px; font-size: 14px; }
+/* （编辑面板里那颗 36px 小预览圆 .yl-v3-avatar-sm 已随资料编辑卡删除，2026-10-20） */
 /* 文字列不再 flex:1 —— 块宽由内容决定（fit-content），动作也不靠右缘 */
 .yl-v3-id { min-width: 0; }
 /* 昵称行：昵称 / 等级 / 动作排一行，不换行（换行会把块顶高、也不紧凑） */
@@ -5081,9 +5068,10 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 动作（编辑资料 / 收起 / 连接账号）：昵称行内的一段文字，不是按钮。
+/* 动作（连接账号 / 账号设置）：昵称行内的一段文字，不是按钮。
    前缀那根 11px 细线是"分隔"不是"描边" —— 用伪元素才对得准（border 会撑满行高）。
-   右箭头 = 去网页连接（换页）；下箭头 = 就地展开（同页），展开时由 .is-open 转 180°。 */
+   ⚠️ 2026-10-20 起两个状态都只有一个箭头**向右**：点下去都是换页（未登录去网页连接、
+   已登录去网页 /settings）。原来的「下箭头 + 就地展开 + 转 180°」随资料编辑卡一起删了。 */
 .yl-v3-act {
   position: relative;
   display: inline-flex;
@@ -5118,29 +5106,6 @@ button.yl-pc-select-item.is-active { font-weight: 600; color: var(--yl-acc-ink);
 .yl-v3-chev .svg-icon { width: 11px; height: 11px; }
 .yl-v3-me:hover .yl-v3-chev { opacity: 1; }
 .yl-v3-me:hover .yl-v3-chev--right { transform: translateX(2px); }
-.yl-v3-me:hover .yl-v3-chev--down { transform: translateY(1px); }
-/* 展开态：下箭头翻上去（放在悬停规则之后 —— 同特异性，靠顺序压过那 1px 位移） */
-.yl-v3-me.is-open .yl-v3-chev { transform: rotate(180deg); }
-
-/* 「编辑资料」面板：身份头正下方就地展开（2026-10-04。原先是页面最底部的
-   一张隐藏卡，点按钮视觉上毫无反馈）。收起时 0fr 裁平，展开时滑出来。 */
-.yl-v3-editwrap {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition:
-    grid-template-rows 240ms cubic-bezier(0.2, 0.7, 0.3, 1),
-    opacity 180ms ease,
-    transform 240ms cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-.yl-v3-editwrap.on {
-  grid-template-rows: 1fr;
-  opacity: 1;
-  transform: none;
-}
-.yl-v3-editclip { overflow: hidden; min-height: 0; }
-.yl-v3-editclip .yl-pc-card { margin-top: 14px; }
 
 /* ② 四个小结已删（2026-10-04 用户叉掉）：核心指标改由「你的学习」节的
    四张渐变徽章卡承担（.yl-pc-grid4 / .yl-pc-stat，见上面共用段）。 */
@@ -5624,76 +5589,3 @@ input.yl-vb-search:focus {
 /* 滚动哨兵：历史 / 词库两页签共用（消费记录有自己的 .yl-pc-spend-sentinel）。
    触发器盯着它进视口就再拉一页，它本身什么都不显示 */
 .yl-pc-pagesentinel { height: 1px; }
-
-/* ══ 头像裁剪（2026-10-15）══════════════════════════════════════════════
-    visuals 全在 canvas 里画（图 + 框外遮罩 + 实线框 + 内切圆虚线），
-    CSS 只管排布和光标 —— 不碰颜色，所以明暗主题不用各写一份。
-   为什么要画进 canvas：DOM 叠加层要在 CSS 里处理 pointer-events、
-   跟图的缩放同步，还得给两种主题各配一套边框色；画布里一次 evenodd
-   挖洞 + 描边两遍（深色垫底 / 浅色压上）就都解决了。 */
-
-.yl-crop-stage {
-  display: flex;
-  justify-content: center;
-  padding: 2px 0 10px;
-}
-canvas.yl-crop-canvas {
-  /* 尺寸由 AvatarCropModal 按 devicePixelRatio 写在 width/height 上，
-     这里给 touch-action 是为了让 Pointer Events 拿到竖向拖动而不是滚页面 */
-  display: block;
-  border-radius: 10px;
-  background: var(--background-secondary);
-  cursor: grab;
-  touch-action: none;
-}
-canvas.yl-crop-canvas:active,
-canvas.yl-crop-canvas.is-dragging { cursor: grabbing; }
-canvas.yl-crop-canvas:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
-}
-/* 缩放条：减号 / 滑杆 / 加号一行，跟画布同宽地居中 */
-.yl-crop-zoom {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  max-width: 320px;
-  margin: 0 auto;
-}
-.yl-crop-zoom-icon {
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-faint);
-  flex: none;
-}
-.yl-crop-zoom-icon svg { width: 14px; height: 14px; }
-.yl-crop-slider {
-  flex: 1;
-  min-width: 0;
-  accent-color: var(--interactive-accent);
-}
-
-/* 资料编辑卡右下角的「取消 / 保存」—— 2026-10-15：三行不再各自带着保存键，
-   统一落到这里，卡片也因此不再因为改了某一项而被关掉。 */
-.yl-pc-editfoot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--background-modifier-border);
-}
-/* 「头像 / 昵称 / 邮箱」行下方的提示小字：审核中、冷却中、已改邮箱。
-   三种文案长短不一，所以不设死宽度，让它自然折行。 */
-.yl-pc-hint {
-  margin-top: 6px;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--text-faint);
-  /* `.yl-pc-wvalue > div` 给所有子 div 上了 ellipsis + nowrap（那是为了让长的
-     展示值缩成一行）；提示语反过来要能正常折行，这里显式让开。 */
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-}
-.yl-pc-hint.is-warn { color: var(--text-warning); }
