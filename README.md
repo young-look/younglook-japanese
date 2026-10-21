@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>洋流日语 · YoungLook</h1>
+  <h1>YoungLook Japanese · 洋流日语</h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.png">
     <img src="docs/img/logo.png" width="120" alt="洋流日语 logo">
