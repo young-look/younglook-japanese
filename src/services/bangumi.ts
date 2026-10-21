@@ -40,7 +40,23 @@ interface BgmEpisodeItem {
 }
 
 const BGM_BASE = "https://api.bgm.tv";
-const UA = "young-look-obsidian/0.2.1 (https://younglook.cc)";
+
+/**
+ * UA 里的插件版本由 `main.ts` 启动时注入（`manifest.version`）。
+ *
+ * ⚠️ **不许在这里写死版本号**：写死一次就等于埋一次「UA 说 0.2.1、manifest 说 0.1.3」的
+ * 错位（2026-10-21 上架复核时就是这么发现的）。Bangumi 拿 UA 认人，版本不对会误导对方限流排查。
+ */
+let uaVersion = "0.0.0";
+
+export function setBgmVersion(version: string): void {
+  const trimmed = (version ?? "").trim();
+  if (trimmed) uaVersion = trimmed;
+}
+
+function userAgent(): string {
+  return `young-look-obsidian/${uaVersion} (https://younglook.cc)`;
+}
 const REQUEST_TIMEOUT_MS = 6000;
 
 const SUBJECT_TTL_MS = 180 * 24 * 60 * 60 * 1000; // 收录信息基本不变，缓半年
@@ -216,7 +232,7 @@ async function bgmRequest<T>(path: string, init?: { method?: string; body?: stri
     const request = requestUrl({
       url: `${BGM_BASE}${path}`,
       method: init?.method ?? "GET",
-      headers: { "User-Agent": UA, "Content-Type": "application/json", Accept: "application/json" },
+      headers: { "User-Agent": userAgent(), "Content-Type": "application/json", Accept: "application/json" },
       body: init?.body,
       throw: false,
     });

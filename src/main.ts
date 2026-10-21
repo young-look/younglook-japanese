@@ -17,6 +17,7 @@ import { VIEW_TYPE_STUDY, StudyView, type CardOrigin } from "./views/StudyView";
 import { VIEW_TYPE_PERSONAL, PersonalCenterView } from "./views/PersonalCenterView";
 import { LEGACY_VIEW_TYPES } from "./views/legacy";
 import { guessFromFilename, VIDEO_EXTENSIONS } from "./services/guess";
+import { setBgmVersion } from "./services/bangumi";
 import { detectFormat } from "./services/subtitle/parse";
 import { setAccessTokenProvider, setBillingSink } from "./services/ai/hosted";
 import { setByokUsageSink } from "./services/ai/client";
@@ -166,20 +167,24 @@ export default class YoungLookPlugin extends Plugin {
       }),
     );
 
+    // 🔒 命令 ID **不许带插件 ID 前缀**：Obsidian 会自动加（`young-look:open-study`），
+    // 自己再写一遍就变成 `young-look:young-look-open-study`（官方提交要求明文禁止）。
+    // 命令名同理不重复插件名 —— 命令面板显示的是「洋流日语: 打开学习页」。
+    // ⚠️ 改 ID = 用户已绑的热键失效，所以只能在首次上架前动一次。
     this.addCommand({
-      id: "young-look-open-study",
-      name: "打开洋流日语",
+      id: "open-study",
+      name: "打开学习页",
       callback: () => void this.activateLeaf(VIEW_TYPE_STUDY, true),
     });
 
     this.addCommand({
-      id: "young-look-refresh",
+      id: "refresh-stats",
       name: "刷新本地统计",
       callback: () => void this.refreshOpenViews(),
     });
 
     this.addCommand({
-      id: "young-look-import",
+      id: "import-subtitle",
       name: "导入字幕（填写本机路径）",
       callback: () => {
         new ImportModal(this.app, this, "").open();
@@ -187,7 +192,7 @@ export default class YoungLookPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "young-look-sync-now",
+      id: "sync-now",
       name: "立即同步学习记录到网页端",
       callback: () => void this.syncStats(true),
     });
@@ -234,6 +239,9 @@ export default class YoungLookPlugin extends Plugin {
         });
       }
     });
+
+    // Bangumi 的 User-Agent 里要带插件版本，版本从 manifest 现拿（不许在模块里写死）
+    setBgmVersion(this.manifest.version);
 
     // 余额上报：内置模型每次扣费后，把最新余额写到设置里（设置页要显示）
     setBillingSink((billing) => {
