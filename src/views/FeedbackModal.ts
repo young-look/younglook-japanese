@@ -183,7 +183,7 @@ export class FeedbackModal extends DialogModal {
       return;
     }
     if (file.size > FEEDBACK_MAX_IMAGE_BYTES) {
-      new Notice("单张截图不能超过 5MB");
+      new Notice("单张截图不能超过 5 兆");
       return;
     }
     this.shots.push({ file, url: URL.createObjectURL(file) });

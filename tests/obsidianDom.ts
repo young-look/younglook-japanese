@@ -97,6 +97,17 @@ export function installObsidianDomHelpers(): void {
   proto.hasClass = function (this: HTMLElement, cls: string) {
     return this.classList.contains(cls);
   };
+  // 社区目录要求别直接写 el.style.xxx，改走 setCssStyles（普通样式）/ setCssProps
+  // （CSS 变量）。这里补上，语义对齐 Obsidian：camelCase 的 key 转成 kebab 再写。
+  proto.setCssStyles = function (this: HTMLElement, styles: Record<string, string | undefined>) {
+    for (const [name, value] of Object.entries(styles)) {
+      const prop = name.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+      this.style.setProperty(prop, value ?? "");
+    }
+  };
+  proto.setCssProps = function (this: HTMLElement, props: Record<string, string>) {
+    for (const [name, value] of Object.entries(props)) this.style.setProperty(name, value);
+  };
   proto.setAttr = function (this: HTMLElement, name: string, value: string) {
     this.setAttribute(name, value);
   };
@@ -108,7 +119,8 @@ export function installObsidianDomHelpers(): void {
   };
 
   // practices / analysis 顶部用的**全局** createDiv("cls")（Obsidian 的 window 级助手）
-  const globals = globalThis as unknown as Record<string, unknown>;
+  const globals = window as unknown as Record<string, unknown>;
+  globals.createEl = (tag: string, opts?: CreateOpts | string) => make(tag, opts);
   globals.createDiv = (opts?: CreateOpts | string) => make("div", opts);
   globals.createSpan = (opts?: CreateOpts | string) => make("span", opts);
 }

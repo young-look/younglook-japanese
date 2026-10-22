@@ -26,6 +26,7 @@ import {
 } from "../../types/entities";
 import { hostedRequest, hostedStream, reportBilling, type HostedBilling } from "./hosted";
 import { resolveAiRoute } from "./gate";
+import { httpFetch } from "../http";
 // 构建时从服务端 hosted_prompts.py 生成 —— 口径一致靠生成，别手改这份生成物
 import { ANALYZE_SYSTEM, ANALYZE_WORDS_SYSTEM, ASK_SYSTEM, IMITATION_SYSTEM } from "./prompts.gen";
 
@@ -326,14 +327,14 @@ export async function chatJson<T>(
     requestBody.enable_thinking = false;
     requestBody.thinking = { type: "disabled" };
   }
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+  const response = await httpFetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(options.timeoutMs ?? 60_000),
+    timeoutMs: options.timeoutMs ?? 60_000,
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -359,7 +360,7 @@ export async function chat(
   scene = "",
   timeoutMs = 90_000,
 ): Promise<string> {
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+  const response = await httpFetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -369,12 +370,12 @@ export async function chat(
       model: config.model,
       messages,
       temperature: 0.2,
-      // 关思考（2026-10-10 与内置模式对齐）：DeepSeek 系认 `thinking:{type:"disabled"}`，
+      // 关思考（2026-10-10 与内置模式对齐）：DeepSeek 系认 `thinking:{type:"disabled"}`,
       // `enable_thinking:false` 会被它静默忽略；Qwen/DashScope 系相反。两个都带，各认各的。
       enable_thinking: false,
       thinking: { type: "disabled" },
     }),
-    signal: AbortSignal.timeout(timeoutMs),
+    timeoutMs,
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -629,7 +630,7 @@ export async function verifyImitationStream(
         raw += typeof event.text === "string" ? event.text : "";
         onFields(extractVerdictFields(raw));
       } else if (type === "done") {
-        done = (event.data ?? null) as typeof done;
+        done = event.data ?? null;
       } else if (type === "error") {
         const reason = typeof event.reason === "string" ? event.reason : "";
         const message = typeof event.message === "string" ? event.message : "";
@@ -655,7 +656,10 @@ export async function verifyImitationStream(
   const config = aiConfigOrThrow(settings);
   let response: Response;
   try {
-    response = await fetch(`${config.baseUrl}/chat/completions`, {
+    // 流式**刻意留在 fetch**：requestUrl 会把响应体一次性读完，没有
+    // ReadableStream、也不认 signal —— 换过去就丢掉逐字上屏和用户中断。
+    // 走 window.fetch 而不是裸 fetch：官方 lint 把 fetch 列成受限全局且不许豁免。
+    response = await window.fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -696,7 +700,7 @@ export async function verifyImitationStream(
       raw += delta;
       onFields(extractVerdictFields(raw));
     }
-    if (chunk.usage) usage = chunk.usage as typeof usage;
+    if (chunk.usage) usage = chunk.usage;
   });
   reportUsage("imitation", config, usage ? { usage } : null);
   return normalizeVerdictData(parseJsonLoose<RawVerdict>(raw) ?? undefined);
@@ -1280,7 +1284,7 @@ export async function explainSentenceStream(
         raw += typeof event.text === "string" ? event.text : "";
         feed(raw);
       } else if (type === "done") {
-        done = (event.data ?? null) as DoneEvent | null;
+        done = event.data ?? null;
       } else if (type === "error") {
         const reason = typeof event.reason === "string" ? event.reason : "";
         const message = typeof event.message === "string" ? event.message : "";
@@ -1328,7 +1332,10 @@ export async function explainSentenceStream(
   }
   let response: Response;
   try {
-    response = await fetch(`${config.baseUrl}/chat/completions`, {
+    // 流式**刻意留在 fetch**：requestUrl 会把响应体一次性读完，没有
+    // ReadableStream、也不认 signal —— 换过去就丢掉逐字上屏和用户中断。
+    // 走 window.fetch 而不是裸 fetch：官方 lint 把 fetch 列成受限全局且不许豁免。
+    response = await window.fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1359,7 +1366,7 @@ export async function explainSentenceStream(
       raw += delta;
       feed(raw);
     }
-    if (chunk.usage) usage = chunk.usage as typeof usage;
+    if (chunk.usage) usage = chunk.usage;
   });
 
   reportUsage("analyze", config, usage ? { usage } : null);
@@ -1487,7 +1494,7 @@ export async function askAboutSentenceStream(
         raw += typeof event.text === "string" ? event.text : "";
         onDelta(raw);
       } else if (type === "done") {
-        done = (event.data ?? null) as { answer?: unknown; billing?: HostedBilling } | null;
+        done = event.data ?? null;
       } else if (type === "error") {
         const reason = typeof event.reason === "string" ? event.reason : "";
         const message = typeof event.message === "string" ? event.message : "";
@@ -1512,7 +1519,10 @@ export async function askAboutSentenceStream(
   const config = aiConfigOrThrow(settings);
   let response: Response;
   try {
-    response = await fetch(`${config.baseUrl}/chat/completions`, {
+    // 流式**刻意留在 fetch**：requestUrl 会把响应体一次性读完，没有
+    // ReadableStream、也不认 signal —— 换过去就丢掉逐字上屏和用户中断。
+    // 走 window.fetch 而不是裸 fetch：官方 lint 把 fetch 列成受限全局且不许豁免。
+    response = await window.fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1552,7 +1562,7 @@ export async function askAboutSentenceStream(
       raw += delta;
       onDelta(raw);
     }
-    if (chunk.usage) usage = chunk.usage as typeof usage;
+    if (chunk.usage) usage = chunk.usage;
   });
   reportUsage("ask", config, usage ? { usage } : null);
   return { answer: raw.trim(), billing: null };

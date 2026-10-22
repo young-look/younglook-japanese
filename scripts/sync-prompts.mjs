@@ -14,23 +14,33 @@
  * 生成物进版本库（不像 dict/）：它是几 KB 的文本，进 git 让 diff 可审。
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// 两种仓库布局都要能跑：
+//  · monorepo（本仓库）：scripts/..  = plugin/，再往上一级才是根，core/ 在根下；
+//  · 公开仓库 young-look/younglook-japanese：**plugin/ 就是仓库根**，没有 core/。
+// 所以路径一律先按 plugin 目录锚定，core/ 再去探测 —— 写死的 `../../core` 在公开仓库里
+// 会指到仓库外面（`npm run build` 直接退出 1，社区目录的 Build verification 就是这么挂的）。
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..", "..");
-const pyPath = join(root, "core", "learning", "services", "hosted_prompts.py");
-const outPath = join(root, "plugin", "src", "services", "ai", "prompts.gen.ts");
+const pluginDir = join(here, "..");
+const pyPath = join(pluginDir, "..", "core", "learning", "services", "hosted_prompts.py");
+const outPath = join(pluginDir, "src", "services", "ai", "prompts.gen.ts");
 
 const PROMPTS = ["ANALYZE_SYSTEM", "ANALYZE_WORDS_SYSTEM", "IMITATION_SYSTEM", "ASK_SYSTEM"];
 
-let py;
-try {
+let py = "";
+if (existsSync(pyPath)) {
   py = readFileSync(pyPath, "utf8");
-} catch {
-  console.error("[sync-prompts] 读不到 core/learning/services/hosted_prompts.py —— 要在仓库根下构建");
+} else if (existsSync(outPath)) {
+  // 公开仓库里没有 Django 端（core/ 不随插件发版）。生成物已在版本库里，
+  // 直接用它 —— 单一来源在 monorepo 内仍然强制（那边 core/ 一定在，会走正常同步）。
+  console.log("[sync-prompts] 找不到提示词源头（公开仓库布局），沿用已提交的 prompts.gen.ts");
+  process.exit(0);
+} else {
+  console.error("[sync-prompts] 既找不到 core/learning/services/hosted_prompts.py，也没有已生成的 prompts.gen.ts");
   process.exit(1);
 }
 

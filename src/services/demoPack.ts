@@ -55,7 +55,7 @@ export interface DemoManifest {
   files: DemoFile[];
 }
 
-export type FetchLike = (input: string) => Promise<Response>;
+import { httpFetch, type FetchLike } from "./http";
 
 /** 清单里的文件名只允许纯文件名 —— 带路径分隔符 / `..` 的一律拒收（不许写到目录外）。 */
 function isSafeName(name: string): boolean {
@@ -68,7 +68,7 @@ function isSafeName(name: string): boolean {
  */
 export async function fetchDemoManifest(
   serverUrl: string,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = httpFetch,
 ): Promise<DemoManifest | null> {
   const base = serverUrl.trim().replace(/\/+$/u, "");
   if (!base) return null;
@@ -167,7 +167,7 @@ const isSubtitleName = (name: string): boolean => /\.(srt|ass|ssa|vtt|lrc)$/iu.t
  * 不用从头再来。导入失败（例如重名）时库里还是空的，首页的「示例」占位行会继续挂着。
  */
 export async function installDemoPack(opts: InstallDemoPackOptions): Promise<InstallDemoPackResult> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = opts.fetchImpl ?? httpFetch;
   const staging = opts.stagingDir ?? ensureAppDataSubdir(DEMO_STAGING_DIR_NAME);
   fs.mkdirSync(staging, { recursive: true });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { reportAssetInstall } from "../src/services/installReport";
 import type { PluginSettings } from "../src/settings/types";
+import type { FetchLike } from "../src/services/http";
 
 /**
  * 安装上报（2026-10-18，2026-10-18 晚改按 IP 去重）。
@@ -21,7 +22,7 @@ function settingsOf(over: Partial<PluginSettings> = {}): PluginSettings {
 
 describe("reportAssetInstall", () => {
   it("未登录也上报：POST 到 /api/v1/installs/report/，只带三样东西", async () => {
-    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as FetchLike;
 
     reportAssetInstall({
       settings: settingsOf(),
@@ -45,7 +46,7 @@ describe("reportAssetInstall", () => {
   });
 
   it("登录了也不带令牌（账号与这条统计无关）", async () => {
-    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as FetchLike;
     reportAssetInstall({
       settings: settingsOf({ authToken: "tok-123" }),
       kind: "demo",
@@ -59,7 +60,7 @@ describe("reportAssetInstall", () => {
   });
 
   it("没配服务端：一个请求都不发", async () => {
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const fetchImpl = vi.fn() as unknown as FetchLike;
     reportAssetInstall({
       settings: settingsOf({ serverUrl: "  " }),
       kind: "demo",
@@ -74,7 +75,7 @@ describe("reportAssetInstall", () => {
   it("网络挂了 / 服务端 500：静默返回，不抛异常", async () => {
     const boom = vi.fn(async () => {
       throw new Error("offline");
-    }) as unknown as typeof fetch;
+    }) as unknown as FetchLike;
     expect(() =>
       reportAssetInstall({
         settings: settingsOf(),
@@ -86,7 +87,7 @@ describe("reportAssetInstall", () => {
     ).not.toThrow();
     await vi.waitFor(() => expect(boom).toHaveBeenCalled());
 
-    const fiveHundred = vi.fn(async () => new Response("", { status: 500 })) as unknown as typeof fetch;
+    const fiveHundred = vi.fn(async () => new Response("", { status: 500 })) as unknown as FetchLike;
     expect(() =>
       reportAssetInstall({
         settings: settingsOf(),

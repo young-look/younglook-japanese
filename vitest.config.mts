@@ -28,5 +28,7 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: ["tests/**/*.test.ts"],
+    // 把 httpFetch 接到全局 fetch 上（见 tests/setup-http.ts）
+    setupFiles: ["./tests/setup-http.ts"],
   },
 });

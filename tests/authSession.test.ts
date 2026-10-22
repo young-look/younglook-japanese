@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { type FetchLike, refreshSession } from "../src/services/auth/session";
+import { refreshSession } from "../src/services/auth/session";
+import { type FetchLike } from "../src/services/http";
 
 function jsonResponse(status: number, body: unknown): Response {
   return {

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { cueSeconds, cueTones, playRecordingCue } from "../src/services/audioCues";
 
@@ -81,12 +82,12 @@ function installFakeAudioContext(): FakeOsc[] {
       return Promise.resolve();
     }
   }
-  (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  (window as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
   return oscs;
 }
 
 afterEach(() => {
-  delete (globalThis as unknown as Record<string, unknown>).AudioContext;
+  delete (window as unknown as Record<string, unknown>).AudioContext;
 });
 
 describe("录音提示音 · 播放契约", () => {

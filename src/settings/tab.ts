@@ -32,7 +32,7 @@ export class SettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("资料目录")
-      .setDesc("vault 里放学习资料的文件夹：笔记在 notes/、截图在 assets/、数据在 data/")
+      .setDesc("Vault 里放学习资料的文件夹：笔记在 notes/、截图在 assets/、数据在 data/")
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_VAULT_FOLDER)
@@ -59,17 +59,17 @@ export class SettingsTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl("h2", { text: "AI 解析" });
+    new Setting(containerEl).setName("AI 解析").setHeading();
 
     new Setting(containerEl)
       .setName("AI 模式")
       // 「关闭」档已撤（2026-10-12）：默认内置模型，双轨二选一 —— 留着关闭档，
       // 选了关闭的用户会在下次加载被 migrateAiMode 迁回内置，自相矛盾。
-      .setDesc("内置模型 = 走服务端并按量扣余额；BYOK = 用你自己的 API Key 直连。与个人中心「账户」页的双卡选择互通，选谁用谁，默认内置模型")
+      .setDesc("内置模型 = 走服务端并按量扣余额；自定义模型 = 用你自己的密钥直连。与个人中心「账户」页的双卡选择互通，选谁用谁，默认内置模型")
       .addDropdown((dropdown) =>
         dropdown
           .addOption("hosted", "内置模型（扣余额）")
-          .addOption("byok", "自定义模型（自己的 Key）")
+          .addOption("byok", "自定义模型（自己的密钥）")
           .setValue(settings.aiMode)
           .onChange(async (value) => {
             // 选谁用谁（2026-10-12 拍板，见 gate.ts resolveAiRoute）：这里选的
@@ -126,7 +126,7 @@ export class SettingsTab extends PluginSettingTab {
       const balance = `内置模型余额 ${yuanMilli(settings.aiBalanceMillis)}`;
       const balanceSetting = new Setting(containerEl)
         .setName(balance)
-        .setDesc("按实际用量扣费（另每月 ¥2 服务费）。BYOK 不扣这里的钱，本地功能也不需要它。");
+        .setDesc("按实际用量扣费（另每月 ¥2 服务费）。自定义模型不扣这里的钱，本地功能也不需要它。");
       if (!settings.authToken) {
         balanceSetting.setDesc("连接账号后才能用内置模型。登录 / 注册在网页完成，点一下去网页连接。");
         balanceSetting.addButton((button) =>
@@ -143,7 +143,7 @@ export class SettingsTab extends PluginSettingTab {
       }
     }
 
-    containerEl.createEl("h2", { text: "本机数据" });
+    new Setting(containerEl).setName("本机数据").setHeading();
 
     new Setting(containerEl)
       .setName("启动时打开上次的页面")
@@ -164,7 +164,7 @@ export class SettingsTab extends PluginSettingTab {
         }),
       );
 
-    containerEl.createEl("h2", { text: "云同步" });
+    new Setting(containerEl).setName("云同步").setHeading();
 
     // 生产构建不给切服务端的入口，但**要显示连的是哪台** ——
     // 用户报"同步不上"时第一件事就是确认这个地址。顺带亮出构建分支，
@@ -202,7 +202,7 @@ export class SettingsTab extends PluginSettingTab {
    *    BRAT / 社区商店，由用户自己触发；插件既不检查也不下载新版本。
    */
   private buildVersionInfo(containerEl: HTMLElement): void {
-    containerEl.createEl("h2", { text: "版本" });
+    new Setting(containerEl).setName("版本").setHeading();
     const branchLabel = BUILD_BRANCH ? `（${BUILD_BRANCH} 分支构建）` : "";
     new Setting(containerEl)
       .setName(`当前版本 ${this.plugin.manifest.version}`)

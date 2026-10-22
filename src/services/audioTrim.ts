@@ -300,6 +300,32 @@ export async function trimRecording(blob: Blob): Promise<TrimResult> {
   }
 }
 
+/** WebCodecs 的最小类型面：只声明这条编码路径用到的成员（见 encodeWebm 里的说明）。 */
+interface AudioEncoderLike {
+  configure(config: { codec: string; sampleRate: number; numberOfChannels: number; bitrate: number }): void;
+  encode(data: unknown): void;
+  flush(): Promise<void>;
+  close(): void;
+}
+
+interface AudioEncoderInit {
+  output: (chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata) => void;
+  error: (error: unknown) => void;
+}
+
+type AudioEncoderFactory = new (init: AudioEncoderInit) => AudioEncoderLike;
+
+interface AudioDataInit {
+  format: string;
+  sampleRate: number;
+  numberOfFrames: number;
+  numberOfChannels: number;
+  timestamp: number;
+  data: Float32Array;
+}
+
+type AudioDataFactory = new (init: AudioDataInit) => { close?(): void };
+
 /**
  * 把 `buffer` 的 `[from, to)` 这一段重编码成 opus 并封成 webm。
  *
@@ -326,15 +352,19 @@ async function encodeWebm(buffer: AudioBuffer, from: number, to: number): Promis
   // ⚠️ 两个回调里的异常**不会**冒到 `await encoder.flush()` 上 —— 直接 throw 只会变成
   // 一个没人接的全局错误，而主流程拿着半截数据一路走下去。先攒起来，编码完再抛。
   let failure: unknown = null;
-  const encoder = new AudioEncoder({
-    output: (chunk, meta) => {
+  // WebCodecs 的构造器从 window 上取：lib.dom 里那两个全局在官方 lint 的类型
+  // 视角下解析不了（整条链退化成 any），静态规则会把 new AudioEncoder 全标红。
+  const encoderCtor = (window as unknown as { AudioEncoder?: AudioEncoderFactory }).AudioEncoder;
+  if (!encoderCtor) throw new Error("当前环境不支持 WebCodecs AudioEncoder。");
+  const encoder = new encoderCtor({
+    output: (chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata) => {
       try {
         muxer.addAudioChunk(chunk, meta);
       } catch (error) {
         failure = failure ?? error;
       }
     },
-    error: (error) => {
+    error: (error: unknown) => {
       failure = failure ?? error;
     },
   });
@@ -357,8 +387,10 @@ async function encodeWebm(buffer: AudioBuffer, from: number, to: number): Promis
         interleaved[i * channels + c] = src[from + offset + i];
       }
     }
+    const dataCtor = (window as unknown as { AudioData?: AudioDataFactory }).AudioData;
+    if (!dataCtor) throw new Error("当前环境不支持 WebCodecs AudioData。");
     encoder.encode(
-      new AudioData({
+      new dataCtor({
         format: "f32",
         sampleRate: rate,
         numberOfFrames: chunkFrames,
@@ -379,7 +411,7 @@ async function encodeWebm(buffer: AudioBuffer, from: number, to: number): Promis
   } catch {
     // 已经关了，无所谓
   }
-  if (failure) throw failure instanceof Error ? failure : new Error(String(failure));
+  if (failure) throw failure instanceof Error ? failure : new Error(typeof failure === "string" ? failure : JSON.stringify(failure));
   muxer.finalize();
   return new Blob([target.buffer], { type: "audio/webm" });
 }

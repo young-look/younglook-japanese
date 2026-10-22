@@ -21,6 +21,7 @@
  */
 import type { PluginSettings } from "../settings/types";
 import { log } from "../core/logger";
+import { httpFetch, type FetchLike } from "./http";
 
 /** 目前只有两类按需资源，与服务端 `AssetInstall.KIND_CHOICES` 一一对应 */
 export type InstallKind = "dict" | "demo";
@@ -32,8 +33,8 @@ export interface InstallReportOptions {
   assetVersion: string;
   /** 插件自己的版本（`manifest.version`），用来排查「老版本装不上」 */
   pluginVersion: string;
-  /** 仅供测试注入；生产不传，走全局 fetch */
-  fetchImpl?: typeof fetch;
+  /** 仅供测试注入；生产不传，走 `httpFetch` */
+  fetchImpl?: FetchLike;
 }
 
 /**
@@ -44,7 +45,7 @@ export function reportAssetInstall(opts: InstallReportOptions): void {
   // 没配服务端就没地方报（自建/离线场景），静默跳过
   if (!base) return;
 
-  const doFetch = opts.fetchImpl ?? fetch;
+  const doFetch = opts.fetchImpl ?? httpFetch;
   void (async () => {
     try {
       const response = await doFetch(`${base}/api/v1/installs/report/`, {
@@ -55,7 +56,7 @@ export function reportAssetInstall(opts: InstallReportOptions): void {
           version: opts.assetVersion,
           plugin_version: opts.pluginVersion,
         }),
-        signal: AbortSignal.timeout(10_000),
+        timeoutMs: 10_000,
       });
       if (!response.ok) {
         // 404（服务端还是旧版）不该打扰用户：下次装东西再报

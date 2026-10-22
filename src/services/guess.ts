@@ -31,9 +31,9 @@ export const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set([
 
 // ── 正则族（与 parsing.py 同源；.test()/.exec() 用的都不带 g，免受 lastIndex 干扰）──
 
-const BRACKET_RE = /[\[【（(]([^\[\]【】()（）]{1,90})[\]】）)]/gu;
+const BRACKET_RE = /[[【（(]([^[\]【】()（）]{1,90})[\]】）)]/gu;
 /** 标题开头的 `[发布组]` 段。 */
-const PREFIX_GROUP_RE = /^\s*[\[【]\s*([^\]】]{1,64}?)\s*[\]】]\s*/u;
+const PREFIX_GROUP_RE = /^\s*[[【]\s*([^\]】]{1,64}?)\s*[\]】]\s*/u;
 
 const RESOLUTION_RE = /(?<!\d)(2160|1440|1080|720|576|480)\s*[pi](?![a-z])/i;
 const UHD_RE = /(?<![0-9A-Za-z])(?:4K|8K|UHD)(?![0-9A-Za-z])/i;

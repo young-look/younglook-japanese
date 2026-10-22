@@ -142,15 +142,14 @@ async function prefixed(prefix: string, parts: readonly string[]): Promise<strin
 // @fence-end: plugin.cid-prefix
 
 export function randomUuid(): string {
-  // 不能直接写 `typeof crypto !== "undefined"`：lib.dom 下 crypto 恒为真，
-  // 取反会把类型收窄成 never，赋值 go branch 就编译不过了。
-  const webcrypto: Crypto = globalThis.crypto;
-  if (typeof webcrypto?.randomUUID === "function") {
-    return webcrypto.randomUUID();
+  // 裸 `crypto` 而不是 `globalThis.crypto`：弹窗里 globalThis 指的不是那扇窗，
+  // 而 crypto 在 Electron 与 node 里都直接挂在当前作用域能看见的全局上。
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
   }
-  // 兜底：任何环境下都能出一个 v4 形状的 id
+  // 兜底：randomUUID 不可用时也能出一个 v4 形状的 id
   const bytes = new Uint8Array(16);
-  webcrypto.getRandomValues(bytes);
+  crypto.getRandomValues(bytes);
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = Array.from(bytes)

@@ -1,4 +1,4 @@
-import { ItemView, Menu, Notice, setIcon, TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, Menu, Notice, setIcon, type WorkspaceLeaf } from "obsidian";
 // 品牌 logo：海獭线稿（与网页 web/src/assets/otter-black.png 同一素材），
 // esbuild dataurl 内联进 main.js。深色主题下用 CSS filter 反白，见 .yl-brand-mark。
 import otterMark from "../assets/otter-black.png";
@@ -56,7 +56,6 @@ import {
   effectiveZh,
   hasExplanationContent,
   loadRecordList,
-  loadProgress,
   loadStudySentences,
   recordReadAloud,
   resetPracticeRecord,
@@ -100,7 +99,7 @@ import { DemoDownloadModal } from "./DemoDownloadModal";
 import { reportAssetInstall } from "../services/installReport";
 import { explainTargets, tokenize } from "../services/jaTokenize";
 import { onClickOutside } from "../core/onClickOutside";
-import { blockAnchor, episodeLabel } from "../markdown/templates";
+import { episodeLabel } from "../markdown/templates";
 import {
   AI_FIRST_OUTPUT_MS,
   AiUnavailableError,
@@ -694,7 +693,7 @@ export class StudyView extends ItemView {
     brandLink.createEl("img", { cls: "yl-brand-mark", attr: { src: otterMark, alt: "" } });
     const brandText = brandLink.createDiv({ cls: "yl-brand-text" });
     brandText.createDiv({ cls: "yl-brand-cn" }).setText("洋流日语");
-    brandText.createDiv({ cls: "yl-brand-en" }).setText("YOUNG LOOK");
+    brandText.createDiv({ cls: "yl-brand-en" }).setText("Young look");
     // 点击落点 = logo + 附近文字。地址一律走 webBase()：dev 构建落本机 vite
     // （127.0.0.1:5173），发版落 younglook.cc —— 别自己拼 settings.serverUrl，
     // 本机前后端是两个端口（见 config/env.ts）。
@@ -810,7 +809,7 @@ export class StudyView extends ItemView {
     if (entry.completed > 0) {
       const bar = info.createDiv({ cls: "yl-mini-progress" });
       const fill = bar.createDiv({ cls: "yl-mini-progress-fill" });
-      fill.style.width = `${Math.round((entry.completed / entry.total) * 100)}%`;
+      fill.setCssStyles({ width: `${Math.round((entry.completed / entry.total) * 100)}%` });
     }
 
     if (opts.unbound) {
@@ -1179,13 +1178,13 @@ export class StudyView extends ItemView {
 
     this.videoMetaEl = videoPanel.createDiv({ cls: "yl-video-meta" });
 
-    const view = this;
+    const plugin = this.plugin;
     this.analysis = buildAnalysis({
       // 花谁的钱要在按钮下面写清楚，别让用户点了才知道扣费（按**实际生效**的轨道，
       // 双轨自由选后 = 用户自己选的那条，见 gate.ts resolveAiRoute）。用 getter：
       // 账户页切轨/充值到账后轨道会变，refreshGate 重算提示语时不能还拿着建卡时的旧值
       get aiMode() {
-        return resolveAiRoute(view.plugin.settings);
+        return resolveAiRoute(plugin.settings);
       },
       getGate: () => this.getAiGate(),
       // 点击时的核实口：缓存拦人的先向服务器核实一次真余额（见 checkAiGate）
@@ -1209,7 +1208,7 @@ export class StudyView extends ItemView {
     this.imitationPractice = buildImitation({
       onVerify: (text, sliceCid, onFields) => this.handleVerifyImitation(text, sliceCid, onFields),
       onPassUnverified: (text, sliceCid) => this.handleUnverifiedImitation(text, sliceCid),
-      onHint: () => this.handleImitationHint(),
+      onHint: () => void this.handleImitationHint(),
       onReset: () => this.handleReset("imitation"),
       getGate: () => this.getAiGate(),
       // 点击/检查时的核实口：缓存拦人的先向服务器核实一次真余额（见 checkAiGate）
@@ -1940,8 +1939,7 @@ export class StudyView extends ItemView {
     // 水平居中，并夹到视口内
     let left = rect.left + rect.width / 2 - width / 2;
     left = Math.max(gap, Math.min(left, window.innerWidth - width - gap));
-    pop.style.top = `${Math.round(top)}px`;
-    pop.style.left = `${Math.round(left)}px`;
+    pop.setCssStyles({ top: `${Math.round(top)}px`, left: `${Math.round(left)}px` });
 
     const stopOutside = onClickOutside(pop, () => this.closeHeroPopover(), [anchor]);
     // 卡片 sticky、右栏还会滚：滚动 / 改窗口就关掉，省得弹卡飘在错位的词旁边
@@ -2098,7 +2096,6 @@ export class StudyView extends ItemView {
   ): Promise<void> {
     // 先乐观更新内存行：保存成功后要靠它重铺原句与注音
     const nextJa = fixes.textFixes?.ja;
-    const nextZh = fixes.textFixes?.zh;
     slice.textFixes = fixes.textFixes;
     slice.readingFixes = fixes.readingFixes;
 
@@ -2243,7 +2240,7 @@ export class StudyView extends ItemView {
     const half = this.progressTipEl.offsetWidth / 2;
     // 窗口极窄时 row 可能比气泡还窄：先把下限兜住，免得 max/min 打起来算出负数
     const right = Math.max(half, rowRect.width - half);
-    this.progressTipEl.style.left = `${Math.min(Math.max(center, half), right)}px`;
+    this.progressTipEl.setCssStyles({ left: `${Math.min(Math.max(center, half), right)}px` });
   }
 
   /**
@@ -2280,12 +2277,12 @@ export class StudyView extends ItemView {
     if (!el || total === 0) return;
     // 横向：格中心 = (index-0.5)/总句数，百分比相对条宽；居中交给 CSS 的 translateX(-50%)。
     // 纵向：CSS 已给 top:0;bottom:0，天然与条等高，无需干预。
-    el.style.left = `${((index - 0.5) / total) * 100}%`;
+    el.setCssStyles({ left: `${((index - 0.5) / total) * 100}%` });
     // 宽度：一格的宽（100/总句数 %），但最小 5px。用 `max()` 表达 —— 句数少时
     // 跟着格宽变宽（不设上限，用户明确要），句数多时垫到 5px 好点。
     // ⚠️ 必须用 max() 而不是先在 JS 里算 px 再写死：写成 px 后窗口拖宽变窄
     //    就不会跟着变（游标每次 refresh 会重摆，但回标/悬停段不刷新）。
-    el.style.width = `max(${PROGRESS_MARK_MIN_PX}px, ${100 / total}%)`;
+    el.setCssStyles({ width: `max(${PROGRESS_MARK_MIN_PX}px, ${100 / total}%)` });
   }
 
   private refreshProgressBar(): void {
@@ -2303,7 +2300,7 @@ export class StudyView extends ItemView {
     }
     for (const run of runs) {
       const segment = track.createDiv({ cls: run.done ? "yl-progress-run yl-progress-done" : "yl-progress-run" });
-      segment.style.flexGrow = String(run.count);
+      segment.setCssStyles({ flexGrow: String(run.count) });
     }
     const total = this.slices.length;
     // 游标挪到当前句；没有句子时藏起来（否则会停在 left:0 像个"第 0 句"）
@@ -2751,7 +2748,7 @@ export class StudyView extends ItemView {
         void this.plugin.saveSettings();
         payload.onContinue();
       },
-      onCancel: payload.onCancel,
+      onCancel: () => payload.onCancel(),
     }).open();
     return true;
   }
@@ -3169,7 +3166,7 @@ export class StudyView extends ItemView {
     // 失败时（半份记录只有解读、或压根没记录）不该一律按首次解析办：半份记录是有
     // 宿主的，合并进去就行，别让用户为已经拿到的解读再付一次钱。
     if (!slice.analysis || slice.analysis.engine !== ANALYSIS_ENGINE) {
-      log.info("[yl-reparse] 这一句还没有落档记录，按首次解析走（两块一起）", { cid: slice.cid });
+      log.debug("[yl-reparse] 这一句还没有落档记录，按首次解析走（两块一起）", { cid: slice.cid });
       await this.handleExplain(input.words, true);
       return;
     }
@@ -3254,7 +3251,7 @@ export class StudyView extends ItemView {
     // 🔥 2026-10-15：判据是"记录在不在"，**不再要求 `done`** —— 半份记录（解读已单独
     // 存下、词表那次失败）正是这条路的主要服务对象，它是有宿主的，补上就成完整记录。
     if (!slice.analysis || slice.analysis.engine !== ANALYSIS_ENGINE) {
-      log.info("[yl-reparse] 这一句还没有落档记录，按首次解析走（两块一起）", { cid: slice.cid });
+      log.debug("[yl-reparse] 这一句还没有落档记录，按首次解析走（两块一起）", { cid: slice.cid });
       await this.handleExplain(words, true);
       return;
     }
@@ -3360,7 +3357,7 @@ export class StudyView extends ItemView {
    */
   private confirmReparse(): void {
     const slice = this.currentSlice();
-    log.info("[yl-reparse] 弹确认窗", { cid: slice?.cid ?? null, mode: this.mode, tokens: this.currentTokens.length });
+    log.debug("[yl-reparse] 弹确认窗", { cid: slice?.cid ?? null, mode: this.mode, tokens: this.currentTokens.length });
     const states = this.reparseBlockStates(slice);
     new ReparseConfirmModal(this.app, {
       // 建窗这一刻的实际轨道（不是 settings.aiMode 的原值）：文案说错比不说更糟
@@ -3385,7 +3382,7 @@ export class StudyView extends ItemView {
           this.analysis.wordsFailed("这一句没能分出词来，没法重新解析。");
           return;
         }
-        log.info("[yl-reparse] 确认，发请求", {
+        log.debug("[yl-reparse] 确认，发请求", {
           cid: this.currentSlice()?.cid ?? null,
           words: words.length,
           explain: selection.explain,
@@ -3592,7 +3589,7 @@ export class StudyView extends ItemView {
         },
         (error: unknown) => {
           window.clearTimeout(timer);
-          reject(error);
+          reject(error instanceof Error ? error : new Error(String(error)));
         },
       );
     });

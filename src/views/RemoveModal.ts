@@ -107,7 +107,7 @@ export class RemoveModal extends DialogModal {
       cls: "yl-lead",
     });
 
-    this.optionsEl = body.createEl("div", { cls: "yl-opts" });
+    this.optionsEl = body.createDiv({ cls: "yl-opts" });
     this.renderFacts();
 
     // 用户最怕误伤的东西，独立一块说在明面上
@@ -221,9 +221,4 @@ function humanSize(bytes: number): string {
   if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
   if (bytes >= 1 << 20) return `${Math.round(bytes / (1 << 20))} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
-/** 取路径最后一段当文件名。 */
-function basenameOf(path: string): string {
-  return path.split(/[\\/]/u).pop() ?? path;
 }

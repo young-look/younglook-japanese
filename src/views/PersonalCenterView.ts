@@ -1,4 +1,4 @@
-import { ItemView, Notice, setIcon, TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, setIcon, type WorkspaceLeaf } from "obsidian";
 import type YoungLookPlugin from "../main";
 import { chat } from "../services/ai/client";
 import { byokUiState } from "../services/ai/gate";
@@ -23,7 +23,6 @@ import {
 } from "../services/vocabLibrary";
 import { ORPHAN_PATCH_PREFIX, type OrphanPatch } from "../services/sync/snapshot";
 import { assetShaCid } from "../core/ids";
-import { blockAnchor } from "../markdown/templates";
 import { fileExists } from "../storage/files";
 import { STORE } from "../storage/db";
 import type {
@@ -41,6 +40,7 @@ import { FeedbackModal } from "./FeedbackModal";
 import { submitFeedback } from "../services/feedbackApi";
 import { log } from "../core/logger";
 import { createButton } from "../ui/button";
+import { insertMarkup, setMarkup } from "../ui/safeHtml";
 import { signedYuanMilli as signedYuan, yuanMilli as yuan } from "../ui/money";
 import { setViewTitle } from "../ui/viewTitle";
 import {
@@ -385,9 +385,11 @@ export class PersonalCenterView extends ItemView {
       window.innerWidth - half - 8,
     );
     const roomAbove = rect.top > tip.offsetHeight + 12;
-    tip.style.left = `${left}px`;
-    tip.style.top = roomAbove ? `${rect.top - 6}px` : `${rect.bottom + 6}px`;
-    tip.style.transform = roomAbove ? "translate(-50%, -100%)" : "translate(-50%, 0)";
+    tip.setCssStyles({
+      left: `${left}px`,
+      top: roomAbove ? `${rect.top - 6}px` : `${rect.bottom + 6}px`,
+      transform: roomAbove ? "translate(-50%, -100%)" : "translate(-50%, 0)",
+    });
   }
 
   private hideHoverTip(): void {
@@ -537,7 +539,7 @@ export class PersonalCenterView extends ItemView {
     // 是什么就显示什么（2026-10-02 用户拍板：不遮不挡、不加登录引导位）
     if (key === "profile") this.renderProfile();
     else if (key === "wallet") { this.renderHeadTitle(); this.renderWallet(); }
-    else if (key === "vocab") { this.renderHeadTitle(); await this.renderVocab(); }
+    else if (key === "vocab") { this.renderHeadTitle(); this.renderVocab(); }
     else if (key === "sentences") { this.renderHeadTitle(); await this.renderSentences(); }
     else if (key === "data") { this.renderHeadTitle(); await this.renderData(); }
   }
@@ -859,9 +861,9 @@ export class PersonalCenterView extends ItemView {
         streak.state === "active" ? "t-fire" : streak.state === "grace" ? "t-ice" : "t-ash"
       }`,
     });
-    flameTile.innerHTML = ICON_FLAME;
+    setMarkup(flameTile, ICON_FLAME);
     if (streak.state === "grace") {
-      flameTile.createDiv({ cls: "yl-pc-flake" }).innerHTML = ICON_FLAKE;
+      setMarkup(flameTile.createDiv({ cls: "yl-pc-flake" }), ICON_FLAKE);
     }
     streakCard.createDiv({ cls: "yl-pc-stat-label", text: "连续学习" });
     const streakNum = streakCard.createDiv({ cls: "yl-pc-stat-num yl-pc-num" });
@@ -881,7 +883,7 @@ export class PersonalCenterView extends ItemView {
 
     // ② 累计学习：有学习记录的天数（与热力图同口径），2026-10-15 由「总句子数」改名换数并移到「连续学习」右侧
     const daysCard = grid.createDiv({ cls: "yl-pc-stat" });
-    daysCard.createDiv({ cls: "yl-pc-tile t-sent" }).innerHTML = ICON_TOTAL;
+    setMarkup(daysCard.createDiv({ cls: "yl-pc-tile t-sent" }), ICON_TOTAL);
     daysCard.createDiv({ cls: "yl-pc-stat-label", text: "累计学习" });
     const daysNum = daysCard.createDiv({ cls: "yl-pc-stat-num yl-pc-num" });
     daysNum.createSpan({ text: activeDays.toLocaleString() });
@@ -893,14 +895,16 @@ export class PersonalCenterView extends ItemView {
     const RING_R = 37;
     const ringC = 2 * Math.PI * RING_R;
     const lvWrap = lvCard.createDiv({ cls: "yl-pc-ring" });
-    lvWrap.innerHTML =
+    setMarkup(
+      lvWrap,
       `<svg viewBox="0 0 80 80" aria-hidden="true">` +
-      `<circle class="yl-pc-ring-bg" cx="40" cy="40" r="${RING_R}"></circle>` +
-      `<circle class="yl-pc-ring-fg" cx="40" cy="40" r="${RING_R}" ` +
-      `stroke-dasharray="${ringC.toFixed(2)}" ` +
-      `stroke-dashoffset="${(ringC * (1 - level.progress)).toFixed(2)}"></circle></svg>`;
+        `<circle class="yl-pc-ring-bg" cx="40" cy="40" r="${RING_R}"></circle>` +
+        `<circle class="yl-pc-ring-fg" cx="40" cy="40" r="${RING_R}" ` +
+        `stroke-dasharray="${ringC.toFixed(2)}" ` +
+        `stroke-dashoffset="${(ringC * (1 - level.progress)).toFixed(2)}"></circle></svg>`,
+    );
     const lvTile = lvWrap.createDiv({ cls: "yl-pc-tile t-acc" });
-    lvTile.innerHTML = LEVEL_ICONS[level.level - 1] ?? LEVEL_ICONS[0];
+    setMarkup(lvTile, LEVEL_ICONS[level.level - 1] ?? LEVEL_ICONS[0]);
     lvCard.createDiv({ cls: "yl-pc-stat-label", text: "等级" });
     const lvNum = lvCard.createDiv({ cls: "yl-pc-stat-num yl-pc-num" });
     lvNum.createSpan({ text: `Lv.${level.level}` });
@@ -912,7 +916,7 @@ export class PersonalCenterView extends ItemView {
 
     // ④ 总词汇量：学过的句子里出现过的所有单词（词库整库去重总数）
     const vocabCard = grid.createDiv({ cls: "yl-pc-stat" });
-    vocabCard.createDiv({ cls: "yl-pc-tile t-voc" }).innerHTML = ICON_VOCAB;
+    setMarkup(vocabCard.createDiv({ cls: "yl-pc-tile t-voc" }), ICON_VOCAB);
     vocabCard.createDiv({ cls: "yl-pc-stat-label", text: "总词汇量" });
     const vocabNum = vocabCard.createDiv({ cls: "yl-pc-stat-num yl-pc-num" });
     vocabNum.createSpan({ text: vocabTotal === undefined ? "—" : vocabTotal.toLocaleString() });
@@ -1041,7 +1045,7 @@ export class PersonalCenterView extends ItemView {
       if (opts.secret) {
         const eye = holder.createEl("button", {
           cls: "yl-pc-eye",
-          attr: { type: "button", "aria-label": "显示或隐藏 API Key" },
+          attr: { type: "button", "aria-label": "显示或隐藏密钥" },
         });
         const paintEye = (): void => {
           setIcon(eye, input.type === "password" ? "eye" : "eye-off");
@@ -1055,12 +1059,12 @@ export class PersonalCenterView extends ItemView {
       }
       // 锁定态下输入框 disabled，change 不会 fire；编辑态照旧只写**草稿**，
       // 不碰 byokSaved 快照 —— 改动要过「保存」才生效（见下方保存按钮）。
-      input.addEventListener("change", async () => {
+      input.addEventListener("change", () => {
         // 清空 gesture：快照里还有值时框不许摆成空 —— 「空」必须真的代表没存
         const savedVal = settings.byokSaved?.[key] ?? "";
         if (!input.value.trim() && savedVal) input.value = savedVal;
         settings.byok[key] = input.value.trim();
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings();
       });
       return { field, input };
     };
@@ -1105,7 +1109,7 @@ export class PersonalCenterView extends ItemView {
       cls: "yl-pc-faint yl-pc-xs",
       text: byokUi.locked ? "配置已锁定，点「编辑」才能修改" : "保存前会先测一次连接，测通才生效",
     });
-    saveBtn.addEventListener("click", async () => {
+    const saveByokClick = async (): Promise<void> => {
       if (byokUi.locked) {
         settings.byokLocked = false;
         await this.plugin.saveSettings();
@@ -1119,7 +1123,7 @@ export class PersonalCenterView extends ItemView {
         model: effByokValue("model"),
       };
       if (!draft.baseUrl || !draft.apiKey || !draft.model) {
-        new Notice("接口地址、API Key、模型名要先填全，再点保存。");
+        new Notice("接口地址、API 密钥、模型名要先填全，再点保存。");
         return;
       }
       saveBtn.disabled = true;
@@ -1144,8 +1148,9 @@ export class PersonalCenterView extends ItemView {
         saveBtn.disabled = false;
         saveBtn.setText("保存");
       }
-    });
-    testBtn.addEventListener("click", async () => {
+    };
+    saveBtn.addEventListener("click", () => void saveByokClick());
+    const testByokClick = async (): Promise<void> => {
       testBtn.disabled = true;
       testBtn.setText("测试中…");
       try {
@@ -1166,7 +1171,8 @@ export class PersonalCenterView extends ItemView {
         testBtn.disabled = false;
         testBtn.setText("测试连接");
       }
-    });
+    };
+    testBtn.addEventListener("click", () => void testByokClick());
     // 锁定态落地：输入框、供应商下拉触发器、测试连接一起只读
     if (byokUi.locked) {
       for (const input of byokInputs) input.disabled = true;
@@ -1504,7 +1510,7 @@ export class PersonalCenterView extends ItemView {
         return;
       }
 
-      const countEl = this.headCntEl ?? document.createElement("span");
+      const countEl = this.headCntEl ?? createSpan();
 
       this.vocabSec = buildVocabSection(stack, {
         scrollRoot: this.scrollEl,
@@ -1560,7 +1566,8 @@ export class PersonalCenterView extends ItemView {
       const chip = createButton(row, { text: label, cls: "yl-vb-sort" });
       // 表头排序指示符同款：上下两枚小三角叠在一起。默认都淡显（「默认」形态）；
       // 当前键按方向点亮一枚（升序 / 降序形态），样式见 styles.css .yl-sort-caret。
-      chip.insertAdjacentHTML(
+      insertMarkup(
+        chip,
         "beforeend",
         '<svg class="yl-sort-caret" viewBox="0 0 8 12" aria-hidden="true">' +
           '<path class="up" d="M4 1.2 L7 5.2 H1 Z"></path>' +
@@ -1893,7 +1900,8 @@ export class PersonalCenterView extends ItemView {
     };
     for (const [key, label] of sortDefs) {
       const chip = createButton(sorts, { text: label, cls: "yl-vb-sort" });
-      chip.insertAdjacentHTML(
+      insertMarkup(
+        chip,
         "beforeend",
         '<svg class="yl-sort-caret" viewBox="0 0 8 12" aria-hidden="true">' +
           '<path class="up" d="M4 1.2 L7 5.2 H1 Z"></path>' +
@@ -2084,9 +2092,10 @@ export class PersonalCenterView extends ItemView {
    */
   private sentenceRowEl(group: SentenceGroup, row: SentenceRow): HTMLElement {
     const orphan = row.orphan;
-    const el = document.createElement("div");
     // 灰不灰两层：视频不在（整组置灰）或这行本身就是孤儿（单行置灰）
-    el.className = `yl-sl-item${group.videoOk && !orphan ? "" : " is-missing"}`;
+    const el = createDiv({
+      cls: `yl-sl-item${group.videoOk && !orphan ? "" : " is-missing"}`,
+    });
     const day = el.createDiv({ cls: "yl-sl-tlday" });
     day.createSpan({ text: humanDay(localDayOf(row.completedAt)) });
     const line = el.createDiv({ cls: "yl-sl-line" });

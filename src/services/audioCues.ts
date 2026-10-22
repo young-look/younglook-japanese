@@ -80,11 +80,13 @@ export function cueSeconds(kind: RecordingCue): number {
 
 /**
  * AudioContext 的取法（与 readAloudCheck 里那一份同款）。
- * 走 globalThis 而不是裸 `window`：插件跑在 Obsidian 渲染进程里（有 window），
- * 但纯函数测试跑在 node 里（没有）—— 取不到就返回 null，调用方按"放不出声"处理。
+ *
+ * 走 `window` 而不是 globalThis：插件跑在 Obsidian 的渲染进程里，**弹窗里
+ * globalThis 不是那扇窗**，AudioContext 也就拿不到。取不到返回 null，
+ * 调用方按"放不出声"处理（提示音是锦上添花，挡不住录音这条主流程）。
  */
 function audioContextCtor(): typeof AudioContext | null {
-  const env = globalThis as unknown as {
+  const env = window as unknown as {
     AudioContext?: typeof AudioContext;
     webkitAudioContext?: typeof AudioContext;
   };
@@ -93,7 +95,7 @@ function audioContextCtor(): typeof AudioContext | null {
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    window.setTimeout(resolve, ms);
   });
 }
 

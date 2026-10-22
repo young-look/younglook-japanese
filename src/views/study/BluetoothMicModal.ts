@@ -33,12 +33,12 @@ export interface BluetoothMicModalOpts {
   /** 实际采样率（Hz）；拿不到是 0 */
   sampleRate: number;
   /** 用户选了「就用它录」—— 照常开始这次录音 */
-  onContinue(): void;
+  onContinue: () => void;
   /**
    * 用户选了「先不录」，或**直接把窗关了**（ESC / 点遮罩 / ✕）——
    * 取消这一次录音，并**放开麦克风**（见 practices.releaseStream）。
    */
-  onCancel(): void;
+  onCancel: () => void;
 }
 
 /**

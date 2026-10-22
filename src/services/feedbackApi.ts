@@ -11,6 +11,8 @@
  * 错误统一翻成人话抛 Error，弹窗直接展示。
  */
 import type { PluginSettings } from "../settings/types";
+import { httpFetch } from "./http";
+import { formDataToMultipart } from "./multipart";
 
 /** 反馈分类 —— 与服务端 `UserFeedback.KIND_*` 一一对应，改这里要同步改服务端 */
 export type FeedbackKind = "bug" | "idea" | "other";
@@ -50,12 +52,17 @@ export async function submitFeedback(
   for (const file of input.files) form.append("images", file, file.name || "shot.png");
 
   const base = settings.serverUrl.trim().replace(/\/+$/u, "");
+  // 截图走 multipart：requestUrl 收不了浏览器 FormData，自己拼一遍（boundary 随手生成）
+  const multipart = await formDataToMultipart(form);
   // 60 秒：三张截图 + 服务端压缩可能走几秒，15 秒那档在弱网下会先超时
-  const response = await fetch(`${base}/api/v1/feedback/create/`, {
+  const response = await httpFetch(`${base}/api/v1/feedback/create/`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-    signal: AbortSignal.timeout(60_000),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": multipart.contentType,
+    },
+    body: multipart.body,
+    timeoutMs: 60_000,
   });
 
   let payload: ApiEnvelope | null = null;

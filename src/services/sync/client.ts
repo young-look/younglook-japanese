@@ -9,7 +9,7 @@
  * 这里负责把 HTTP 状态码翻成人话 —— 插件是后台跑的，用户看不到状态码。
  */
 
-import { type FetchLike } from "../auth/session";
+import { httpFetch, type FetchLike, type HttpResponseLike } from "../http";
 import type { ManifestEntry, SnapshotPayload, SnapshotRow } from "./snapshot";
 
 function normalizeUrl(serverUrl: string): string {
@@ -64,9 +64,9 @@ export async function pushSnapshot(options: PushSnapshotOptions): Promise<Snapsh
   if (!base) return failSnapshotPush("还没填服务端地址，到设置里补上。");
   if (!options.accessToken) return failSnapshotPush("还没登录。");
 
-  let response: Response;
+  let response: HttpResponseLike;
   try {
-    response = await (options.fetchImpl ?? (fetch as unknown as FetchLike))(
+    response = await (options.fetchImpl ?? httpFetch)(
       `${base}/api/v1/plugin/sync/push/`,
       {
         method: "POST",
@@ -76,7 +76,7 @@ export async function pushSnapshot(options: PushSnapshotOptions): Promise<Snapsh
         },
         body: JSON.stringify(options.payload),
         // 全量快照（进度+词库+解析…）有几 MB，超时给宽一点
-        signal: AbortSignal.timeout(60_000),
+        timeoutMs: 60_000,
       },
     );
   } catch {
@@ -144,15 +144,15 @@ export async function fetchSnapshotManifest(options: PullSnapshotOptions): Promi
     return { ok: false, rows: [], message: "还没登录。", unauthorized: false, needRecharge: false };
   }
 
-  let response: Response;
+  let response: HttpResponseLike;
   try {
-    response = await (options.fetchImpl ?? (fetch as unknown as FetchLike))(
+    response = await (options.fetchImpl ?? httpFetch)(
       `${base}/api/v1/plugin/sync/manifest/`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${options.accessToken}` },
         body: "{}",
-        signal: AbortSignal.timeout(60_000),
+        timeoutMs: 60_000,
       },
     );
   } catch {
@@ -214,7 +214,7 @@ export async function reportVerify(options: VerifyReportOptions): Promise<Verify
   if (!options.accessToken) return { ok: false, message: "还没登录。" };
 
   try {
-    const response = await (options.fetchImpl ?? (fetch as unknown as FetchLike))(
+    const response = await (options.fetchImpl ?? httpFetch)(
       `${base}/api/v1/plugin/sync/verify/`,
       {
         method: "POST",
@@ -228,7 +228,7 @@ export async function reportVerify(options: VerifyReportOptions): Promise<Verify
           missing: options.missing,
           mismatched: options.mismatched,
         }),
-        signal: AbortSignal.timeout(60_000),
+        timeoutMs: 60_000,
       },
     );
     if (!response.ok) return { ok: false, message: `HTTP ${response.status}` };
@@ -244,15 +244,15 @@ export async function pullSnapshot(options: PullSnapshotOptions): Promise<Snapsh
   if (!base) return failSnapshotPull("还没填服务端地址，到设置里补上。");
   if (!options.accessToken) return failSnapshotPull("还没登录。");
 
-  let response: Response;
+  let response: HttpResponseLike;
   try {
-    response = await (options.fetchImpl ?? (fetch as unknown as FetchLike))(
+    response = await (options.fetchImpl ?? httpFetch)(
       `${base}/api/v1/plugin/sync/pull/`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${options.accessToken}` },
         body: "{}",
-        signal: AbortSignal.timeout(60_000),
+        timeoutMs: 60_000,
       },
     );
   } catch {

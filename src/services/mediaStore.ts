@@ -74,11 +74,17 @@ export interface IngestResult {
 }
 
 /** 文件名里的非法字符。按最严的 Windows 来：冒号、星号、竖线这些 macOS 是允许的。 */
-const ILLEGAL_NAME_CHARS = /[\u0000-\u001f\u007f"*/:<>?\\|]/g;
+const ILLEGAL_NAME_CHARS = /["*/:<>?\\|]/g;
+/** 控制字符（含 0x00–0x1f 与 0x7f）单独一句：写进字符集会被当成"正则里混进了控制字符"。 */
+const CONTROL_CHARS = /\p{Cc}/gu;
 
 /** 作品名当目录名：非法字符换掉、掐掉首尾空白和点、限长、空则给个兜底名。 */
 export function safeSegment(raw: string): string {
-  const cleaned = raw.replace(ILLEGAL_NAME_CHARS, "_").replace(/\s+/gu, " ").trim();
+  const cleaned = raw
+    .replace(CONTROL_CHARS, "_")
+    .replace(ILLEGAL_NAME_CHARS, "_")
+    .replace(/\s+/gu, " ")
+    .trim();
   const trimmed = cleaned.replace(/^[.\s]+|[.\s]+$/gu, "");
   return trimmed.slice(0, 80) || "未命名";
 }

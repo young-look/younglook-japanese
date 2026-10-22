@@ -1,9 +1,9 @@
 {
   "id": "young-look",
   "name": "YoungLook Japanese",
-  "version": "0.1.5",
-  "minAppVersion": "1.5.0",
-  "description": "把本机里的动漫视频和字幕，变成可以拆开、查词、练习、复习的日语学习素材。",
+  "version": "0.1.6",
+  "minAppVersion": "1.7.2",
+  "description": "Turn local Japanese videos and subtitles into study material you can pause, look up, and practice with.",
   "author": "young_look",
   "authorUrl": "https://younglook.cc",
   "isDesktopOnly": true

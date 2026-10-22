@@ -90,9 +90,9 @@ export class EditModal extends DialogModal {
     });
 
     // 名字栏：与导入框同一套类名（.yl-name*），同一份样式
-    const nameBox = body.createEl("div", { cls: "yl-name" });
-    const nameLabel = nameBox.createEl("div", { text: "视频名称", cls: "yl-name-label" });
-    nameLabel.createEl("span", { cls: "yl-req", text: "*" });
+    const nameBox = body.createDiv({ cls: "yl-name" });
+    const nameLabel = nameBox.createDiv({ text: "视频名称", cls: "yl-name-label" });
+    nameLabel.createSpan({ cls: "yl-req", text: "*" });
     const nameInput = nameBox.createEl("input", {
       type: "text",
       cls: "yl-name-input",
@@ -104,11 +104,11 @@ export class EditModal extends DialogModal {
       void this.checkClash();
       this.renderFoot();
     });
-    const nameFoot = nameBox.createEl("div", { cls: "yl-name-foot" });
-    nameFoot.createEl("span", { cls: "yl-tag" });
+    const nameFoot = nameBox.createDiv({ cls: "yl-name-foot" });
+    nameFoot.createSpan({ cls: "yl-tag" });
 
     this.renderKindField(body);
-    this.metaEl = body.createEl("div", { cls: "yl-meta" });
+    this.metaEl = body.createDiv({ cls: "yl-meta" });
     this.renderMetaFields();
 
     this.footEl = foot;
@@ -117,10 +117,10 @@ export class EditModal extends DialogModal {
 
   /** 作品类型：与导入框同一套分段钮（同样两颗、同样文案，见 ImportModal） */
   private renderKindField(parent: HTMLElement): void {
-    const box = parent.createEl("div", { cls: "yl-field" });
-    const label = box.createEl("div", { text: "作品类型", cls: "yl-field-label" });
-    label.createEl("span", { cls: "yl-req", text: "*" });
-    const seg = box.createEl("div", { cls: "yl-seg" });
+    const box = parent.createDiv({ cls: "yl-field" });
+    const label = box.createDiv({ text: "作品类型", cls: "yl-field-label" });
+    label.createSpan({ cls: "yl-req", text: "*" });
+    const seg = box.createDiv({ cls: "yl-seg" });
     this.segEl = seg;
     for (const option of KIND_OPTIONS) {
       const btn = seg.createEl("button", {
@@ -183,11 +183,11 @@ export class EditModal extends DialogModal {
     desc: string,
     required: boolean,
   ): void {
-    const row = parent.createEl("div", { cls: "yl-meta-row" });
-    const info = row.createEl("div", { cls: "yl-meta-info" });
-    const nameEl = info.createEl("div", { text: name, cls: "yl-meta-name" });
-    if (required) nameEl.createEl("span", { cls: "yl-req", text: "*" });
-    if (desc) info.createEl("div", { text: desc, cls: "yl-meta-desc" });
+    const row = parent.createDiv({ cls: "yl-meta-row" });
+    const info = row.createDiv({ cls: "yl-meta-info" });
+    const nameEl = info.createDiv({ text: name, cls: "yl-meta-name" });
+    if (required) nameEl.createSpan({ cls: "yl-req", text: "*" });
+    if (desc) info.createDiv({ text: desc, cls: "yl-meta-desc" });
     const input = row.createEl("input", {
       type: "text",
       cls: "yl-meta-input",

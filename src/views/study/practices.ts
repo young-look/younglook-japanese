@@ -57,9 +57,6 @@ function pickMimeType(): string {
   return candidates.find((mime) => MR.isTypeSupported(mime)) ?? "";
 }
 
-function fmtSeconds(value: number): string {
-  return Number.isFinite(value) && value > 0 ? value.toFixed(1) : "0.0";
-}
 
 // ── 一步的三态（2026-10-09 用户拍板）─────────────────────────────────────
 //
@@ -142,7 +139,7 @@ export interface ReadAloudHandle {
 export interface ReadVerifyLink {
   /** 要在这句话里做成可点的那几个字 */
   keyword: string;
-  onClick(): void;
+  onClick: () => void;
 }
 
 export type ReadVerifyOutcome =
@@ -201,9 +198,9 @@ export function buildReadAloud(
       /** 实际采样率（Hz）；拿不到是 0 */
       sampleRate: number;
       /** 用户选「就用它录」—— 照常开始这次录音 */
-      onContinue(): void;
+      onContinue: () => void;
       /** 用户选「先不录」、或直接把窗关了 —— 取消这次，放开麦克风 */
-      onCancel(): void;
+      onCancel: () => void;
     }): boolean;
   },
 ): ReadAloudHandle {
@@ -796,7 +793,7 @@ export function buildReadAloud(
       opts.onBluetoothMicHint?.({
         deviceName: micInfo.deviceName,
         sampleRate: micInfo.sampleRate,
-        onContinue: () => beginRecording(),
+        onContinue: () => void beginRecording(),
         onCancel: () => {
           // 用户不要这次录音：立刻把麦克风放开（否则指示灯会一直亮着）
           cleanup();
@@ -1532,7 +1529,7 @@ export function buildImitation(opts: {
   /** 「提示」：打开助手面板，自动问一句引导仿写的话 */
   onHint(): void;
   /** 提示语里的「充值」被点时打开充值页 —— 跳转只发生在这一下，不自动跳 */
-  onRecharge(): void;
+  onRecharge: () => void;
   /** AI 现在能不能真判（含登录状态）。每次渲染提示语/按钮说明时用，别缓存 */
   getGate(): AiGate;
   /**

@@ -1,4 +1,13 @@
-import { FileSystemAdapter, MarkdownView, Modal, Notice, Plugin, Setting, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import {
+  FileSystemAdapter,
+  Modal,
+  Notice,
+  Plugin,
+  Setting,
+  TFile,
+  sanitizeHTMLToDom,
+  setIcon,
+} from "obsidian";
 import { rmSync } from "node:fs";
 import { fillDefaults } from "./settings/defaults";
 import { renameSpace, stashBundle, switchSpace } from "./settings/aiSpace";
@@ -23,6 +32,7 @@ import { setAccessTokenProvider, setBillingSink } from "./services/ai/hosted";
 import { setByokUsageSink } from "./services/ai/client";
 import { isAccessExpired } from "./services/auth/tokens";
 import { refreshSession } from "./services/auth/session";
+import { httpFetch } from "./services/http";
 import {
   applySnapshotPull,
   buildSnapshotPayload,
@@ -42,7 +52,8 @@ import {
 import { healLegacyImitationRows } from "./services/study";
 import { claimLocalNotes, invalidateNoteCache } from "./services/notes/mine";
 import { dayKey } from "./services/studyDays";
-import { installBrandIcons, markAsBrandIcon } from "./ui/brandIcon";
+import { markAsBrandIcon } from "./ui/brandIcon";
+import { registerSanitizer } from "./ui/safeHtml";
 import { log } from "./core/logger";
 import { clockTime } from "./core/clock";
 
@@ -86,6 +97,11 @@ export default class YoungLookPlugin extends Plugin {
   personalInitialTab: "profile" | "wallet" | "vocab" | "sentences" | null = null;
 
   async onload(): Promise<void> {
+    // 插 HTML/SVG 的唯一收口（见 ui/safeHtml.ts）：sanitizeHTMLToDom 由 Obsidian
+    // 提供，只有 main.ts 能静态 import obsidian —— service 与 UI 层那样会让
+    // node 侧的单测直接崩。必须在任何 UI 构建之前注册。
+    registerSanitizer(sanitizeHTMLToDom);
+
     // 视图类型必须在任何 await 之前同步注册（官方要求）：启动时布局恢复可能
     // 和插件加载并行，注册晚了恢复出来的 leaf 会拿不到实例。
     this.registerView(VIEW_TYPE_STUDY, (leaf) => new StudyView(leaf, this));
@@ -137,7 +153,7 @@ export default class YoungLookPlugin extends Plugin {
     // 几行数据、一次扫描，同步做完再往下走 —— 让用户第一次打开卡片就是对的。
     try {
       const healed = await healLegacyImitationRows(this.db);
-      if (healed > 0) log.info("已补记历史仿写的核对状态", { rows: healed });
+      if (healed > 0) log.debug("已补记历史仿写的核对状态", { rows: healed });
     } catch (error) {
       log.warn("修补历史仿写记录失败（不影响使用）", error);
     }
@@ -154,13 +170,10 @@ export default class YoungLookPlugin extends Plugin {
       this.app.workspace.detachLeavesOfType(legacy);
     }
 
-    // 图标（ribbon + 学习页标签）换成海獭，细节在 ui/brandIcon.ts。
-    // 必须先装样式再建 ribbon，不然按钮会先以 lucide 的模样画一帧。
-    installBrandIcons([VIEW_TYPE_STUDY]);
-
     // 唯一的 ribbon 入口：个人中心从列表页头像点进去（学习卡片
     // 2026-10-02 起不放账号位），不再单独占一个 ribbon 位（2026-09-30 用户定）。
-    // 图标名仍是 "book-open"：它被 CSS 换成海獭位图，样式没装上时退回书本。
+    // 图标名仍是 "book-open"：它在 styles.css 里被换成海獭位图（ribbon 与学习页
+    // 标签页两处，见 ui/brandIcon.ts 的说明），样式没装上时退回书本。
     markAsBrandIcon(
       this.addRibbonIcon("book-open", "打开洋流日语", () => {
         void this.activateLeaf(VIEW_TYPE_STUDY, true);
@@ -324,7 +337,7 @@ export default class YoungLookPlugin extends Plugin {
       if (!sync?.enabled) return;
       if (typeof internal?.disablePlugin === "function") internal.disablePlugin("sync");
       else sync.disable?.();
-      log.info("已关闭 Obsidian 自带的 Sync 核心插件：它的红色断连图标总被当成洋流同步出了问题");
+      log.debug("已关闭 Obsidian 自带的 Sync 核心插件：它的红色断连图标总被当成洋流同步出了问题");
     } catch (error) {
       log.warn("关闭 Obsidian Sync 核心插件没成功（不影响其它功能）", error);
     }
@@ -405,7 +418,7 @@ export default class YoungLookPlugin extends Plugin {
                 roundFailed = true;
                 break;
               }
-              if (index < chunks.length - 1) log.info("同步分块上传", index + 1, "/", chunks.length);
+              if (index < chunks.length - 1) log.debug("同步分块上传", index + 1, "/", chunks.length);
             }
             if (!roundFailed) break;
             // 只有「包太大」才值得降档重推；其余失败（网络/鉴权/服务端错误）原样上抛
@@ -670,7 +683,7 @@ export default class YoungLookPlugin extends Plugin {
       this.settings.activeSpaceId = outcome.adoptedKey;
       // AI 配置的桶是按空间 id 存的 → id 换了，桶也得搬过去，否则这份配置就丢了
       renameSpace(this.settings, previousId, outcome.adoptedKey);
-      log.info("认回本地学习库", {
+      log.debug("认回本地学习库", {
         key: outcome.adoptedKey,
         merged: outcome.mergedKeys.length,
         skipped: outcome.skippedKeys.length,
@@ -682,7 +695,7 @@ export default class YoungLookPlugin extends Plugin {
         12000,
       );
     } else if (outcome.skippedKeys.length > 0) {
-      log.info("存在归属不明的旧本地库，未自动认领", { skipped: outcome.skippedKeys.length });
+      log.debug("存在归属不明的旧本地库，未自动认领", { skipped: outcome.skippedKeys.length });
     }
 
     // 首次安装 / 认回旧库都要落盘；已经稳定过的就不重复写
@@ -757,7 +770,7 @@ export default class YoungLookPlugin extends Plugin {
         this.app.workspace.detachLeavesOfType(viewType);
       } else {
         const target = inMain ?? existing[0];
-        this.app.workspace.revealLeaf(target);
+        await this.app.workspace.revealLeaf(target);
         const view = target.view;
         if ("render" in view) await (view as unknown as { render(): Promise<void> }).render();
         return;
@@ -767,7 +780,7 @@ export default class YoungLookPlugin extends Plugin {
       ? this.app.workspace.getLeaf("tab")
       : this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: viewType, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   async refreshOpenViews(): Promise<void> {
@@ -848,7 +861,7 @@ export default class YoungLookPlugin extends Plugin {
     }
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_STUDY, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
     const view = leaf.view as unknown as {
       restoreTo?(episodeCid: string, index: number, origin?: CardOrigin): Promise<void>;
     } | undefined;
@@ -1147,7 +1160,7 @@ export default class YoungLookPlugin extends Plugin {
     await this.saveSettings();
     await this.tagVaultPath();
     invalidateNoteCache(); // 换了空间，笔记缓存按新空间重拉
-    log.info("切换到本机空间", { id, owner: accountLabel(this.activeSpace.ownerName, this.activeSpace.owner) });
+    log.debug("切换到本机空间", { id, owner: accountLabel(this.activeSpace.ownerName, this.activeSpace.owner) });
     await this.updateStatusBar();
     await this.refreshOpenViews();
   }
@@ -1293,7 +1306,7 @@ export default class YoungLookPlugin extends Plugin {
     await this.saveSettings();
     // 未登录期间写的笔记属于这个匿名空间，认领时一起交给账号（失败的行留在本机）
     const moved = await claimLocalNotes(this.settings, this.db);
-    if (moved > 0) log.info("已把未登录时写的笔记交给账号", { rows: moved });
+    if (moved > 0) log.debug("已把未登录时写的笔记交给账号", { rows: moved });
     await this.updateStatusBar();
     await this.refreshOpenViews();
   }
@@ -1421,9 +1434,9 @@ export default class YoungLookPlugin extends Plugin {
       const token = await this.ensureAccessToken();
       if (!token) return;
       const base = this.settings.serverUrl.trim().replace(/\/+$/u, "");
-      const response = await fetch(`${base}/api/v1/users/me/`, {
+      const response = await httpFetch(`${base}/api/v1/users/me/`, {
         headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(5_000),
+        timeoutMs: 5_000,
       });
       if (!response.ok) return;
       const body = (await response.json()) as { data?: MePayload };
@@ -1470,11 +1483,11 @@ export default class YoungLookPlugin extends Plugin {
   async exchangeConnectCode(code: string): Promise<{ ok: boolean; message: string }> {
     const base = this.settings.serverUrl.trim().replace(/\/+$/u, "");
     try {
-      const response = await fetch(`${base}/api/v1/auth/plugin-exchange/`, {
+      const response = await httpFetch(`${base}/api/v1/auth/plugin-exchange/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
-        signal: AbortSignal.timeout(15_000),
+        timeoutMs: 15_000,
       });
       const body = (await response.json().catch(() => null)) as {
         data?: ExchangePayload;

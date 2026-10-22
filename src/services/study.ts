@@ -17,7 +17,7 @@
 
 import { rowDigest } from "../core/digest";
 import { assetShaCid, progressCid, sessionCid } from "../core/ids";
-import { STORE, type StoreName, type VaultDb } from "../storage/db";
+import { STORE, type VaultDb } from "../storage/db";
 import { fileExists } from "../storage/files";
 import { hasSections } from "./ai/client";
 import { bumpStudyDay, type StudyDayPatch } from "./studyDays";
@@ -324,7 +324,7 @@ async function persistProgress(
     clientUpdatedAt: new Date().toISOString(),
   };
   next.completedAt = deriveCompleted(next);
-  next.rowDigest = await rowDigest({ ...next, completedAt: next.completedAt } as Record<string, unknown>);
+  next.rowDigest = await rowDigest({ ...next, completedAt: next.completedAt });
   await db.transaction([STORE.progress], "readwrite", (tx) => tx.put(STORE.progress, next));
 
   // 日活埋点。经验值只认「三步齐全」的那一刻 —— 与服务端口径一致，

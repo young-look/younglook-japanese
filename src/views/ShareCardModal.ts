@@ -26,6 +26,7 @@ import {
   type ShareCardPayload,
 } from "../services/shareCard";
 import { DialogModal } from "../ui/dialog";
+import { setMarkup } from "../ui/safeHtml";
 
 export class ShareCardModal extends DialogModal {
   /** 画好的卡片 PNG（data URL）—— 下载钮指着它。没画好就是 null（钮禁掉）。 */
@@ -100,7 +101,7 @@ export class ShareCardModal extends DialogModal {
         const slot = qr.querySelector(".yl-share-qr-slot");
         if (slot) slot.remove();
         const box = qr.createDiv({ cls: "yl-share-qr-box" });
-        box.innerHTML = svg;
+        setMarkup(box, svg);
       })
       .catch(() => {
         const slot = qr.querySelector(".yl-share-qr-slot");

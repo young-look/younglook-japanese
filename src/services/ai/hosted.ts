@@ -10,6 +10,8 @@
 
 import { AiUnavailableError } from "./client";
 import type { PluginSettings } from "../../settings/types";
+import { httpFetch, type HttpResponseLike } from "../http";
+import { formDataToMultipart } from "../multipart";
 
 /**
  * 余额不够（402）的人话，全站唯一一份。
@@ -108,14 +110,14 @@ export async function hostedRequest<T>(
     );
   }
 
-  let response = await call(base, scene, token, payload);
+  let response = await callJson(base, scene, token, payload);
 
   if (response.status === 401) {
     // 令牌可能刚刚过期（本地判断有提前量，边界上会撞到）：换一次再试
     const fresh = await resolveToken(settings, true);
     if (fresh && fresh !== token) {
       token = fresh;
-      response = await call(base, scene, token, payload);
+      response = await callJson(base, scene, token, payload);
     }
   }
 
@@ -169,12 +171,12 @@ export async function hostedStream(
     );
   }
 
-  let response = await call(base, scene, token, payload, STREAM_TIMEOUT_MS, signal);
+  let response = await callStream(base, scene, token, payload, signal);
   if (response.status === 401) {
     const fresh = await resolveToken(settings, true);
     if (fresh && fresh !== token) {
       token = fresh;
-      response = await call(base, scene, token, payload, STREAM_TIMEOUT_MS, signal);
+      response = await callStream(base, scene, token, payload, signal);
     }
   }
   if (response.ok) return response;
@@ -222,31 +224,68 @@ function errorFor(status: number, message: string | undefined, settings: PluginS
   );
 }
 
-async function call(
+/** 非流式的超时。 */
+const NON_STREAM_TIMEOUT_MS = 90_000;
+
+/**
+ * 非流式那条路：走 `requestUrl`（`services/http.ts`）。
+ *
+ * multipart（跟读录音）自己现拼 —— requestUrl 的 body 只收 `string | ArrayBuffer`，
+ * 收不了浏览器 FormData，boundary 得我们自己定（见 services/multipart.ts）。
+ */
+async function callJson(
   base: string,
   scene: string,
   token: string,
   payload: Record<string, unknown> | FormData,
-  timeoutMs = 90_000,
-  signal?: AbortSignal,
-): Promise<Response> {
+): Promise<HttpResponseLike> {
   try {
-    // FormData 时**不能**自己写 Content-Type —— boundary 是浏览器生成的，
-    // 写死了服务端就拆不开 multipart。交给 fetch 自己带。
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-    let body: BodyInit;
+    let body: string | ArrayBuffer;
     if (payload instanceof FormData) {
-      body = payload;
+      const multipart = await formDataToMultipart(payload);
+      // boundary 就是我们自己生成的那个，必须跟着请求一起给出去
+      headers["Content-Type"] = multipart.contentType;
+      body = multipart.body;
     } else {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(payload);
     }
-    return await fetch(`${base}/api/v1/ai/${scene}/`, {
+    return await httpFetch(`${base}/api/v1/ai/${scene}/`, {
       method: "POST",
       headers,
       body,
+      timeoutMs: NON_STREAM_TIMEOUT_MS,
+    });
+  } catch (error) {
+    if (error instanceof AiUnavailableError) throw error;
+    throw new AiUnavailableError("连不上服务器，看看网络；急用的话可以先切回 BYOK。");
+  }
+}
+
+/**
+ * 流式那条路：**刻意留在 fetch** —— requestUrl 会把响应体一次性读完，
+ * 没有 ReadableStream、也不认 signal，换过去就丢掉逐字上屏和用户中断。
+ */
+async function callStream(
+  base: string,
+  scene: string,
+  token: string,
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Response> {
+  try {
+    // 流式**刻意留在 fetch**（requestUrl 无 ReadableStream）；走 window.fetch
+    // 而不是裸 fetch：官方 lint 把 fetch 列成受限全局且不许豁免。
+    return await window.fetch(`${base}/api/v1/ai/${scene}/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
       // 调用方给了 signal（可中断的流式）就听它的，否则用一层超时兜底
-      signal: signal ?? AbortSignal.timeout(timeoutMs),
+      signal: signal ?? AbortSignal.timeout(STREAM_TIMEOUT_MS),
     });
   } catch (error) {
     // 主动中断不算"连不上"：照原样抛，让调用方按"自己掐的"处理

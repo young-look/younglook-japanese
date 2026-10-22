@@ -37,7 +37,7 @@
  * （`prompt()`：展开面板并**代为发出**一句引导语，见 `IMITATION_HINT_QUESTION`）。
  */
 
-import { setIcon } from "obsidian";
+import { setMarkup } from "../../ui/safeHtml";
 import {
   AI_FIRST_OUTPUT_MS,
   AiUnavailableError,
@@ -59,6 +59,21 @@ import otterWhite from "../../assets/otter-white.png";
 
 const MAX_QUESTION = 300;
 const MAX_HISTORY = 6;
+
+/**
+ * 挂海獭 logo 的明暗两版，styles.css 按 `.theme-dark` 切显示
+ * （插件不重渲染也能跟主题走）。
+ *
+ * 这里用 `createEl` 而不是拼 `<img>` 串再塞 innerHTML：后者会被社区目录
+ * 判为「Unsafe assignment to innerHTML」，而这里根本不需要过 HTML 解析器。
+ */
+function addOtterImgs(parent: HTMLElement): void {
+  parent.createEl("img", { cls: "yl-assistant-otter", attr: { src: otterBlack, alt: "" } });
+  parent.createEl("img", {
+    cls: "yl-assistant-otter yl-otter-dark",
+    attr: { src: otterWhite, alt: "" },
+  });
+}
 /** 居中时间条的间隔门槛（微信式）：相邻消息隔了 5 分钟以上才显示一条时间 */
 const TIME_GAP_MS = 5 * 60 * 1000;
 
@@ -116,7 +131,7 @@ export interface AssistantHandle {
 export function buildAssistant(opts: {
   onSettings(): PluginSettings;
   /** 提示语里的「充值」被点时打开充值页 —— 跳转只发生在这一下，不自动跳 */
-  onPricing(): void;
+  onPricing: () => void;
   /** AI 现在能不能问（含登录状态）。每次渲染/重算锁定态时用，别缓存 */
   getGate(): AiGate;
   /**
@@ -136,8 +151,7 @@ export function buildAssistant(opts: {
    */
   getUserAvatar(): { url: string | null; initial: string };
 }): AssistantHandle {
-  const root = document.createElement("div");
-  root.className = "yl-assistant";
+  const root = createDiv({ cls: "yl-assistant" });
 
   // ── 入口：海獭（2026-10-07 用户定稿，替代漂流瓶）─────────────────────
   // 🔥 **面板开着海獭也不消失**：它同时是开关（点它 = 开/关面板），
@@ -148,9 +162,7 @@ export function buildAssistant(opts: {
     // 不挂 aria-label / title（2026-10-09 用户拍板）：Obsidian 会给带 aria-label
     // 的元素弹样式化 tooltip，悬浮球旁边冒「海獭小助手」黑条就是这个 —— 去掉即净。
   });
-  launcher.innerHTML =
-    `<img class="yl-assistant-otter" src="${otterBlack}" alt="">` +
-    `<img class="yl-assistant-otter yl-otter-dark" src="${otterWhite}" alt="">`;
+  addOtterImgs(launcher);
   const badge = launcher.createSpan({ cls: "yl-assistant-badge", text: "?" });
   badge.hide();
 
@@ -182,7 +194,7 @@ export function buildAssistant(opts: {
     ariaLabel: "发送",
     title: "发送",
   });
-  sendButton.innerHTML = SEND_ARROW_SVG;
+  setMarkup(sendButton, SEND_ARROW_SVG);
 
   let slice: StudySentence | null = null;
   let context: AssistantContext = {};
@@ -203,18 +215,14 @@ export function buildAssistant(opts: {
 
   /** AI 侧头像：海獭 logo 圆（明暗两版都挂，CSS 按 .theme-dark 切显示，同 launcher） */
   function aiAvatarEl(): HTMLElement {
-    const av = document.createElement("div");
-    av.className = "yl-assistant-avatar";
-    av.innerHTML =
-      `<img class="yl-assistant-otter" src="${otterBlack}" alt="">` +
-      `<img class="yl-assistant-otter yl-otter-dark" src="${otterWhite}" alt="">`;
+    const av = createDiv({ cls: "yl-assistant-avatar" });
+    addOtterImgs(av);
     return av;
   }
 
   /** 用户侧头像：账号头像图；没图（或图挂了）就用昵称首字的圆形占位 */
   function userAvatarEl(): HTMLElement {
-    const av = document.createElement("div");
-    av.className = "yl-assistant-avatar yl-assistant-avatar-me";
+    const av = createDiv({ cls: "yl-assistant-avatar yl-assistant-avatar-me" });
     const fillInitial = (): void => {
       av.empty();
       av.createSpan({ cls: "yl-assistant-avatar-initial", text: opts.getUserAvatar().initial });
@@ -332,8 +340,9 @@ export function buildAssistant(opts: {
    * 先压回一行再读 scrollHeight，删字后才能缩回来。
    */
   function refreshGrow(): void {
-    input.style.height = "22px";
-    input.style.height = `${Math.min(input.scrollHeight, 42)}px`;
+    // 直接写 el.style 会被社区目录判为静态样式赋值，走 Obsidian 的 setCssStyles
+    input.setCssStyles({ height: "22px" });
+    input.setCssStyles({ height: `${Math.min(input.scrollHeight, 42)}px` });
   }
 
   /**
@@ -497,10 +506,11 @@ export function buildAssistant(opts: {
   input.addEventListener("keydown", (event: KeyboardEvent) => {
     // 回车发送（微信式，2026-10-09 用户拍板）；Shift+回车 = 换行（textarea 默认
     // 行为，放行不拦）。⚠️ IME 守卫必须有：日语输入法里回车是"确定假名"——
-    // isComposing / keyCode 229 时绝不能发送，否则选字选到一半就飘出去了。
-    // Ctrl/Cmd+回车照旧也能发送（旧习惯保留，且恰好不被上面的分支误伤）。
+    // 选字途中绝不能发送，否则半截假名就飘出去了。
+    // 判据只用标准的 `isComposing`（旧的 keyCode 229 那一路写法已废弃，且
+    // Chromium 下 isComposing 覆盖得更全）。Ctrl/Cmd+回车照旧也能发送。
     if (event.key !== "Enter" || event.shiftKey) return;
-    if (event.isComposing || event.keyCode === 229) return;
+    if (event.isComposing) return;
     event.preventDefault();
     void ask();
   });

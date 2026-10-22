@@ -20,6 +20,7 @@
  * 10 段区间），照抄自实测，两端逐字符一致。选它是因为身份只在客户端算，
  * 取客户端现有口径 = 客户端行为零变化。 */
 
+/* eslint-disable no-control-regex -- 豁免留在 fence 外：PUNCT 逐码位列全空白，制表/换行是有意的 */
 // @fence-start: plugin.ja-text
 const PUNCT =
   /[。、，．.,！!？?：:；;「」『』（）()[\]【】〔〕・…‥～〜~"'“”‘’－—―‐\-\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028-\u2029\u202f\u205f\u3000\ufeff]/gu;
@@ -78,3 +79,4 @@ export function normalizeJa(text: string): string {
   );
 }
 // @fence-end: plugin.ja-text
+/* eslint-enable no-control-regex -- fence 到此结束，豁免跟着收起 */

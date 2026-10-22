@@ -3,7 +3,7 @@ import { kanaToRomaji } from "../services/jaTokenize";
 import { normalizeTextFix } from "../services/study";
 import type { StudySentence } from "../types/entities";
 import { DialogModal } from "../ui/dialog";
-import { createButton, setButtonIcon } from "../ui/button";
+import { createButton } from "../ui/button";
 
 /**
  * 纠错弹窗（2026-10-03 用户定；设计稿 `temp/demo/correction-v1.html`）。

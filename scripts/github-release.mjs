@@ -188,7 +188,7 @@ run("gh", [
   "--title",
   VERSION,
   "--notes",
-  `洋流日语 Obsidian 插件 ${VERSION}。安装：Obsidian 装 BRAT → Add beta plugin → ${PUBLIC_REPO}。`,
+  `YoungLook Japanese (洋流日语) Obsidian plugin v${VERSION}. Install from Obsidian Community plugins.`,
 ]);
 
 console.log(`

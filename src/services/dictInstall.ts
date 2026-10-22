@@ -56,7 +56,7 @@ export interface DictManifest {
   files: DictFile[];
 }
 
-export type FetchLike = (input: string) => Promise<Response>;
+import { httpFetch, type FetchLike } from "./http";
 
 /** 词典目录（安装目标）。 */
 export function dictDirOf(pluginDir: string): string {
@@ -83,7 +83,7 @@ function isSafeName(name: string): boolean {
  */
 export async function fetchDictManifest(
   serverUrl: string,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike = httpFetch,
 ): Promise<DictManifest | null> {
   const base = serverUrl.trim().replace(/\/+$/u, "");
   if (!base) return null;
@@ -177,7 +177,7 @@ export async function installDict(
   manifest: DictManifest,
   opts: InstallDictOptions = {},
 ): Promise<InstallDictResult> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = opts.fetchImpl ?? httpFetch;
   const staging = path.join(pluginDir, `${DICT_DIR_NAME}.staging`);
   // 🔥 暂存目录**不清空** —— 上次断在半路时里面躺着的都是校验过的成品，重来直接跳过。
   //    只把「这次清单里没有的」清掉（清单换了版本时留着的旧文件不该混进正式目录）。
@@ -192,52 +192,48 @@ export async function installDict(
   let bytes = 0;
   let downloaded = 0;
 
-  try {
-    for (let index = 0; index < total; index += 1) {
-      const file = manifest.files[index];
-      const target = path.join(staging, file.name);
+  // 🔥 暂存目录**故意留着**（出错也不删）：里面每个文件都是「下完且校验过」
+  //    才写进去的（下载落在内存里、校验过了才 writeFileSync），不会出现半个文件。
+  //    断网 / 关 Obsidian 之后重来，`alreadyStaged` 会把下好的那些按 sha 跳过 ——
+  //    "下到 11/12 断了"不用从头再来。校验不过的那一个在上面已经删掉了，
+  //    下一趟会重下它，不会把坏文件当好文件。
+  for (let index = 0; index < total; index += 1) {
+    const file = manifest.files[index];
+    const target = path.join(staging, file.name);
 
-      if (!alreadyStaged(target, file.sha256)) {
-        const response = await fetchImpl(file.url);
-        if (!response.ok) throw new Error(`下载 ${file.name} 失败（HTTP ${response.status}）`);
-        const buffer = Buffer.from(await response.arrayBuffer());
-        const digest = createHash("sha256").update(buffer).digest("hex");
-        if (digest !== file.sha256) {
-          // 校验不过 = 这个文件不能留：留着下一趟会被 alreadyStaged 当成"下好了"
-          fs.rmSync(target, { force: true });
-          throw new Error(`${file.name} 校验失败，已放弃安装`);
-        }
-        fs.writeFileSync(target, buffer);
-        downloaded += 1;
-        bytes += buffer.length;
-      } else {
-        bytes += fs.statSync(target).size;
+    if (!alreadyStaged(target, file.sha256)) {
+      const response = await fetchImpl(file.url);
+      if (!response.ok) throw new Error(`下载 ${file.name} 失败（HTTP ${response.status}）`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const digest = createHash("sha256").update(buffer).digest("hex");
+      if (digest !== file.sha256) {
+        // 校验不过 = 这个文件不能留：留着下一趟会被 alreadyStaged 当成"下好了"
+        fs.rmSync(target, { force: true });
+        throw new Error(`${file.name} 校验失败，已放弃安装`);
       }
-
-      opts.onProgress?.({ done: index + 1, total, bytes, bytesTotal, name: file.name });
+      fs.writeFileSync(target, buffer);
+      downloaded += 1;
+      bytes += buffer.length;
+    } else {
+      bytes += fs.statSync(target).size;
     }
 
-    // ── 到这一步才算"下载完成"：换目录 ────────────────────────────────
-    const dir = dictDirOf(pluginDir);
-    const backup = `${dir}.bak`;
-    fs.rmSync(backup, { recursive: true, force: true });
-    const hadOld = fs.existsSync(dir);
-    if (hadOld) fs.renameSync(dir, backup);
-    try {
-      fs.renameSync(staging, dir);
-    } catch (error) {
-      // rename 半路失败：把旧词典还原回去，别让插件目录里一本词典都没有
-      if (hadOld && !fs.existsSync(dir)) fs.renameSync(backup, dir);
-      throw error;
-    }
-    fs.rmSync(backup, { recursive: true, force: true });
-    return { dir, bytes, downloaded };
+    opts.onProgress?.({ done: index + 1, total, bytes, bytesTotal, name: file.name });
+  }
+
+  // ── 到这一步才算"下载完成"：换目录 ────────────────────────────────
+  const dir = dictDirOf(pluginDir);
+  const backup = `${dir}.bak`;
+  fs.rmSync(backup, { recursive: true, force: true });
+  const hadOld = fs.existsSync(dir);
+  if (hadOld) fs.renameSync(dir, backup);
+  try {
+    fs.renameSync(staging, dir);
   } catch (error) {
-    // 🔥 暂存目录**故意留着**：里面每个文件都是「下完且校验过」才写进去的
-    //    （下载落在内存里、校验过了才 writeFileSync），所以不会出现半个文件。
-    //    断网 / 关 Obsidian 之后重来，`alreadyStaged` 会把下好的那些按 sha 跳过 ——
-    //    "下到 11/12 断了"不用从头再来。校验不过的那一个文件在上面已经删掉了，
-    //    下一趟会重下它，不会把坏文件当好文件。
+    // rename 半路失败：把旧词典还原回去，别让插件目录里一本词典都没有
+    if (hadOld && !fs.existsSync(dir)) fs.renameSync(backup, dir);
     throw error;
   }
+  fs.rmSync(backup, { recursive: true, force: true });
+  return { dir, bytes, downloaded };
 }

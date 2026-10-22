@@ -199,7 +199,7 @@ export async function drawShareCard(
   data: ShareCardPayload,
   opts: { otterSrc: string; qrText: string },
 ): Promise<string> {
-  const canvas = document.createElement("canvas");
+  const canvas = createEl("canvas");
   canvas.width = CARD_W * SCALE;
   canvas.height = CARD_H * SCALE;
   const ctx = canvas.getContext("2d");

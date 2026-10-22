@@ -8,14 +8,12 @@ import { fileSize, readTextFile } from "../storage/files";
 import {
   containsLanguages,
   detectFormat,
-  hasCjk,
-  hasKana,
   parseRawLines,
-  splitBilingual,
   type RawLine,
 } from "../services/subtitle/parse";
 import { VIEW_TYPE_STUDY } from "./StudyView";
 import { createButton } from "../ui/button";
+import { setMarkup } from "../ui/safeHtml";
 import { DialogModal } from "../ui/dialog";
 
 /**
@@ -171,16 +169,16 @@ export class ImportModal extends DialogModal {
       width: "wide",
     });
 
-    const pair = body.createEl("div", { cls: "yl-pair" });
-    this.videoTileEl = pair.createEl("div", { cls: "yl-tile" });
-    this.subsTileEl = pair.createEl("div", { cls: "yl-tile" });
+    const pair = body.createDiv({ cls: "yl-pair" });
+    this.videoTileEl = pair.createDiv({ cls: "yl-tile" });
+    this.subsTileEl = pair.createDiv({ cls: "yl-tile" });
     bindDropTarget(this.videoTileEl, () => this.pickVideo(), (path) => void this.setVideoPath(path));
     bindDropTarget(this.subsTileEl, () => this.pickSubtitle(), (path) => this.addSubtitle(path));
 
-    this.alertEl = body.createEl("div", { cls: "yl-alert-slot" });
+    this.alertEl = body.createDiv({ cls: "yl-alert-slot" });
     this.renderNameField(body);
     this.renderKindField(body);
-    this.metaEl = body.createEl("div", { cls: "yl-meta" });
+    this.metaEl = body.createDiv({ cls: "yl-meta" });
     this.renderMetaFields();
     this.footEl = foot;
 
@@ -203,19 +201,19 @@ export class ImportModal extends DialogModal {
 
     if (!path) {
       el.removeClass("is-done");
-      el.createEl("div", { cls: "yl-tile-ico" }).innerHTML = ICON_VIDEO;
-      el.createEl("div", { text: "选择视频", cls: "yl-tile-title" });
-      el.createEl("div", { text: "点一下选，或拖进来", cls: "yl-tile-hint" });
+      setMarkup(el.createDiv({ cls: "yl-tile-ico" }), ICON_VIDEO);
+      el.createDiv({ text: "选择视频", cls: "yl-tile-title" });
+      el.createDiv({ text: "点一下选，或拖进来", cls: "yl-tile-hint" });
       return;
     }
 
     el.addClass("is-done");
-    el.createEl("div", { cls: "yl-tile-check" }).innerHTML = ICON_CHECK;
-    const head = el.createEl("div", { cls: "yl-tile-head" });
-    head.createEl("span", { cls: "yl-tile-ico" }).innerHTML = ICON_VIDEO;
-    head.createEl("span", { text: basenameOf(path), cls: "yl-tile-title" });
+    setMarkup(el.createDiv({ cls: "yl-tile-check" }), ICON_CHECK);
+    const head = el.createDiv({ cls: "yl-tile-head" });
+    setMarkup(head.createSpan({ cls: "yl-tile-ico" }), ICON_VIDEO);
+    head.createSpan({ text: basenameOf(path), cls: "yl-tile-title" });
     const hint = this.videoSize != null ? `${humanSize(this.videoSize)} · 点一下换一个` : "点一下换一个";
-    el.createEl("div", { text: hint, cls: "yl-tile-hint" });
+    el.createDiv({ text: hint, cls: "yl-tile-hint" });
   }
 
   private renderSubsTile(): void {
@@ -225,25 +223,25 @@ export class ImportModal extends DialogModal {
 
     if (this.subs.length === 0) {
       el.removeClass("is-done");
-      el.createEl("div", { cls: "yl-tile-ico" }).innerHTML = ICON_SUBS;
-      el.createEl("div", { text: "选择字幕", cls: "yl-tile-title" });
-      el.createEl("div", { text: "中日可分开给，最多两份", cls: "yl-tile-hint" });
+      setMarkup(el.createDiv({ cls: "yl-tile-ico" }), ICON_SUBS);
+      el.createDiv({ text: "选择字幕", cls: "yl-tile-title" });
+      el.createDiv({ text: "中日可分开给，最多两份", cls: "yl-tile-hint" });
       return;
     }
 
     el.addClass("is-done");
-    el.createEl("div", { cls: "yl-tile-count", text: `${this.subs.length} 份` });
-    const head = el.createEl("div", { cls: "yl-tile-head" });
-    head.createEl("span", { cls: "yl-tile-ico" }).innerHTML = ICON_SUBS;
-    head.createEl("span", { text: "字幕", cls: "yl-tile-title" });
+    el.createDiv({ cls: "yl-tile-count", text: `${this.subs.length} 份` });
+    const head = el.createDiv({ cls: "yl-tile-head" });
+    setMarkup(head.createSpan({ cls: "yl-tile-ico" }), ICON_SUBS);
+    head.createSpan({ text: "字幕", cls: "yl-tile-title" });
 
-    const list = el.createEl("div", { cls: "yl-sub-list" });
+    const list = el.createDiv({ cls: "yl-sub-list" });
     for (const entry of this.subs) {
-      const item = list.createEl("div", { cls: "yl-sub-item" });
-      item.createEl("span", { text: langLabelOf(entry), cls: "yl-sub-lang" });
-      item.createEl("span", { text: basenameOf(entry.path), cls: "yl-sub-name" });
+      const item = list.createDiv({ cls: "yl-sub-item" });
+      item.createSpan({ text: langLabelOf(entry), cls: "yl-sub-lang" });
+      item.createSpan({ text: basenameOf(entry.path), cls: "yl-sub-name" });
       item
-        .createEl("span", { text: "×", cls: "yl-sub-rm", attr: { title: "移除这份" } })
+        .createSpan({ text: "×", cls: "yl-sub-rm", attr: { title: "移除这份" } })
         .addEventListener("click", (event) => {
           event.stopPropagation(); // 别把「移除」当成「再加一份」
           this.removeSubtitle(entry.path);
@@ -251,7 +249,7 @@ export class ImportModal extends DialogModal {
     }
     if (this.subs.length < MAX_SUBTITLES) {
       list
-        .createEl("div", { text: "＋ 再加一份", cls: "yl-sub-add" })
+        .createDiv({ text: "＋ 再加一份", cls: "yl-sub-add" })
         .addEventListener("click", (event) => {
           event.stopPropagation();
           this.pickSubtitle();
@@ -308,20 +306,23 @@ export class ImportModal extends DialogModal {
     body: string,
     action: { text: string; onClick: () => void } | null,
   ): void {
-    const box = parent.createEl("div", { cls: `yl-alert is-${tone}` });
-    box.createEl("span", { cls: "yl-alert-ico" }).innerHTML = tone === "danger" ? ICON_WARN : ICON_INFO;
-    const text = box.createEl("div", { cls: "yl-alert-text" });
+    const box = parent.createDiv({ cls: `yl-alert is-${tone}` });
+    setMarkup(
+      box.createSpan({ cls: "yl-alert-ico" }),
+      tone === "danger" ? ICON_WARN : ICON_INFO,
+    );
+    const text = box.createDiv({ cls: "yl-alert-text" });
     text.createEl("b", { text: title });
-    text.createEl("span", { text: body });
+    text.createSpan({ text: body });
     if (action) {
       createButton(box, { shape: "alert", text: action.text, onClick: action.onClick });
     }
   }
 
   private renderNameField(parent: HTMLElement): void {
-    const box = parent.createEl("div", { cls: "yl-name" });
-    const label = box.createEl("div", { text: "视频名称", cls: "yl-name-label" });
-    label.createEl("span", { cls: "yl-req", text: "*" });
+    const box = parent.createDiv({ cls: "yl-name" });
+    const label = box.createDiv({ text: "视频名称", cls: "yl-name-label" });
+    label.createSpan({ cls: "yl-req", text: "*" });
     const input = box.createEl("input", {
       type: "text",
       cls: "yl-name-input",
@@ -336,8 +337,8 @@ export class ImportModal extends DialogModal {
     this.nameInputEl = input;
 
     // 只在识别结果确实等于当前名字时才亮徽标；没有徽标时这一行就空着
-    const foot = box.createEl("div", { cls: "yl-name-foot" });
-    this.guessTagEl = foot.createEl("span", { cls: "yl-tag" });
+    const foot = box.createDiv({ cls: "yl-name-foot" });
+    this.guessTagEl = foot.createSpan({ cls: "yl-tag" });
     this.updateGuessTag();
   }
 
@@ -348,10 +349,10 @@ export class ImportModal extends DialogModal {
    * 那个约定藏在说明小字里，用户根本猜不到。点一下就重铺下面的字段。
    */
   private renderKindField(parent: HTMLElement): void {
-    const box = parent.createEl("div", { cls: "yl-field" });
-    const label = box.createEl("div", { text: "作品类型", cls: "yl-field-label" });
-    label.createEl("span", { cls: "yl-req", text: "*" });
-    const seg = box.createEl("div", { cls: "yl-seg" });
+    const box = parent.createDiv({ cls: "yl-field" });
+    const label = box.createDiv({ text: "作品类型", cls: "yl-field-label" });
+    label.createSpan({ cls: "yl-req", text: "*" });
+    const seg = box.createDiv({ cls: "yl-seg" });
     this.segEl = seg;
     for (const option of KIND_OPTIONS) {
       const btn = seg.createEl("button", {
@@ -429,11 +430,11 @@ export class ImportModal extends DialogModal {
     placeholder: string,
     required: boolean,
   ): void {
-    const row = parent.createEl("div", { cls: "yl-meta-row" });
-    const info = row.createEl("div", { cls: "yl-meta-info" });
-    const nameEl = info.createEl("div", { text: name, cls: "yl-meta-name" });
-    if (required) nameEl.createEl("span", { cls: "yl-req", text: "*" });
-    if (desc) info.createEl("div", { text: desc, cls: "yl-meta-desc" });
+    const row = parent.createDiv({ cls: "yl-meta-row" });
+    const info = row.createDiv({ cls: "yl-meta-info" });
+    const nameEl = info.createDiv({ text: name, cls: "yl-meta-name" });
+    if (required) nameEl.createSpan({ cls: "yl-req", text: "*" });
+    if (desc) info.createDiv({ text: desc, cls: "yl-meta-desc" });
     const input = row.createEl("input", {
       type: "text",
       cls: "yl-meta-input",
@@ -866,9 +867,7 @@ function pathFromDrop(event: DragEvent): string | null {
  * 两条都拿不到（理论上不会发生）就退回拖拽 —— 卡片本身是拖放目标。
  */
 function pickFilePath(accept: string, onPick: (path: string) => void): void {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = accept;
+  const input = createEl("input", { type: "file", attr: { accept } });
   input.addEventListener("change", () => {
     const file = input.files?.[0];
     if (!file) return;

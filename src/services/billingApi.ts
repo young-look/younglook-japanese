@@ -8,6 +8,7 @@
 import { AiUnavailableError } from "./ai/client";
 import { hostedBase, resolveToken } from "./ai/hosted";
 import type { PluginSettings } from "../settings/types";
+import { httpFetch } from "./http";
 
 export interface WalletTransactionRow {
   /** 流水 id —— 窗口内滚动加载的游标就是它（before_id） */
@@ -127,8 +128,9 @@ export async function fetchWallet(
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
 
   const call = async (token: string) =>
-    fetch(`${base}/api/v1/billing/wallet/${suffix}`, {
+    httpFetch(`${base}/api/v1/billing/wallet/${suffix}`, {
       headers: { Authorization: `Bearer ${token}` },
+      timeoutMs: 20_000,
     });
 
   let token = await resolveToken(settings, false);

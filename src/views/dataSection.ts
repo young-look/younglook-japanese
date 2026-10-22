@@ -33,6 +33,7 @@ import type {
 import { collectInventory } from "../services/dataInventory";
 import { openFolderInShell, revealInShell } from "../services/revealPath";
 import { createButton } from "../ui/button";
+import { setMarkup } from "../ui/safeHtml";
 import { DeleteWorkMediaModal } from "./DeleteWorkMediaModal";
 
 /** 素材筛选（「视频与字幕」展开后那排）。 */
@@ -166,7 +167,7 @@ export class DataPane {
     const bar = left.createDiv({ cls: "yl-dt-bar" });
     for (const [cls, bytes] of parts) {
       const seg = bar.createDiv({ cls });
-      seg.style.width = `${barPercent(bytes, denom)}%`;
+      seg.setCssStyles({ width: `${barPercent(bytes, denom)}%` });
     }
     const key = left.createDiv({ cls: "yl-dt-bar-key" });
     keyRow(key, "var(--yl-acc-mid)", `视频、字幕与录音 ${humanSize(inv.media.bytes)}`);
@@ -611,14 +612,13 @@ function iconEl(parent: HTMLElement, name: string, extra = ""): HTMLElement {
 function keyRow(parent: HTMLElement, color: string, text: string): void {
   const item = parent.createSpan();
   const swatch = item.createEl("i");
-  swatch.style.background = color;
+  swatch.setCssStyles({ background: color });
   item.appendText(text);
 }
 
 /** 造一个带类名的 div（独立于某个宿主节点时用：素材行、去向标签这些）。 */
-function makeDiv(cls: string): HTMLElement {  const el = document.createElement("div");
-  el.className = cls;
-  return el;
+function makeDiv(cls: string): HTMLElement {
+  return createDiv({ cls });
 }
 
 function fileKind(file: MediaFileRow): "video" | "subtitle" {
@@ -643,7 +643,7 @@ const STORE_ICON_SVG: Record<StoreIcon, string> = {
 
 function customIconEl(parent: HTMLElement, name: StoreIcon, extra = ""): HTMLElement {
   const el = parent.createDiv({ cls: extra ? `yl-dt-ic ${extra}` : "yl-dt-ic" });
-  el.innerHTML = STORE_ICON_SVG[name];
+  setMarkup(el, STORE_ICON_SVG[name]);
   // 素材里只留了 viewBox，宽高交给外层那格（`.yl-dt-ic` 定尺寸）——
   // 不写这一句，svg 会按素材自带的 800×800 撑破版面。
   const svg = el.firstElementChild;

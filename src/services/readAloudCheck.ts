@@ -153,12 +153,12 @@ interface ReadAloudData {
 }
 
 /**
- * AudioContext 的取法。走 globalThis 而不是裸 `window`：插件永远跑在
- * Obsidian 渲染进程里（有 window），但纯函数测试跑在 node 里（没有）——
- * 取不到就返回 null，调用方按"判不了"处理。
+ * AudioContext 的取法。走 `window` 而不是 globalThis：**弹窗里 globalThis 不是
+ * 那扇窗**，AudioContext 就拿不到了。取不到返回 null，调用方按"转不了"处理
+ * （WAV 转不出来时按原始容器兜底，服务端有 ffmpeg 会救一手）。
  */
 function audioContextCtor(): typeof AudioContext | null {
-  const env = globalThis as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+  const env = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
   return env.AudioContext ?? env.webkitAudioContext ?? null;
 }
 

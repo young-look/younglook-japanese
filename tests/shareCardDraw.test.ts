@@ -11,6 +11,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { drawShareCard, type ShareCardPayload } from "../src/services/shareCard";
+import { installObsidianDomHelpers } from "./obsidianDom";
 
 const PAYLOAD: ShareCardPayload = {
   nickname: "小满",
@@ -22,6 +23,8 @@ const PAYLOAD: ShareCardPayload = {
 
 describe("drawShareCard", () => {
   it("画布不可用时拒绝（而不是抛出一半的卡）", async () => {
+    // drawShareCard 用 Obsidian 的全局 createEl 建 canvas（不用 document.createElement）
+    installObsidianDomHelpers();
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     await expect(
       drawShareCard(PAYLOAD, {

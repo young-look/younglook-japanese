@@ -93,8 +93,6 @@ export const LOCAL_ONLY_STORES = ["sentences", "lines", "recordings", "aiUsage",
 /** 客户端簿记字段：不参与「用户数据」本体，上云前剥掉（服务端拉回时补默认值）。 */
 const BOOKKEEPING = ["rev", "rowDigest"] as const;
 
-/** 没赶上时间戳补盖的老条目兜底用：纪元 0，任何真实编辑都比它新。 */
-const EPOCH_TS = new Date(0).toISOString();
 
 /**
  * 素材元数据白名单（与服务端 `FIELD_WHITELIST['assets']` 一致）。
@@ -215,7 +213,7 @@ async function buildAllRows(
   db: VaultDb,
   settings: PluginSettings,
 ): Promise<Record<SnapshotCollection, RawRow[]>> {
-  const [progress, words, days, records, assets, sessions, sentences, lines, meta] =
+  const [progress, words, days, records, assets, sessions, sentences, lines] =
     await Promise.all([
       db.getAll<ProgressRow>(STORE.progress),
       db.getAll<WordRow>(STORE.words),
@@ -225,7 +223,6 @@ async function buildAllRows(
       db.getAll<SessionRow>(STORE.sessions),
       db.getAll<SentenceRow>(STORE.sentences),
       db.getAll<RecordLineRow>(STORE.lines),
-      db.getAll<{ key: string; value: string }>(STORE.meta),
     ]);
 
   const liveRecords = records.filter((row) => !row.deletedAt);
@@ -486,7 +483,7 @@ async function mergeCidRows(
   for (const pulled of rows) {
     if (!sane(pulled)) continue;
     const local = await db.get<Plain>(store, pulled.cid);
-    if (local && tsMs(String(local.clientUpdatedAt ?? "")) >= tsMs(pulled.client_updated_at)) continue;
+    if (local && tsMs(typeof local.clientUpdatedAt === "string" ? local.clientUpdatedAt : "") >= tsMs(pulled.client_updated_at)) continue;
     const data: Plain = {
       ...(transform ? transform(pulled.data) : pulled.data),
       cid: pulled.cid,
@@ -581,7 +578,7 @@ export async function applySnapshotPull(
     if (!day || day !== pulled.cid) continue;
     const local = await db.get<StudyDayRow>(STORE.studyDays, day);
     if (local && tsMs(local.clientUpdatedAt) >= tsMs(pulled.client_updated_at)) continue;
-    await db.put(STORE.studyDays, { ...pulled.data, day, clientUpdatedAt: pulled.client_updated_at } as unknown as Plain);
+    await db.put(STORE.studyDays, { ...pulled.data, day, clientUpdatedAt: pulled.client_updated_at });
     applied += 1;
   }
 

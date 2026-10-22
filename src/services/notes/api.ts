@@ -11,6 +11,7 @@
 import type { PluginSettings } from "../../settings/types";
 import { AiUnavailableError } from "../ai/client";
 import { hostedBase, resolveToken } from "../ai/hosted";
+import { httpFetch, type HttpResponseLike } from "../http";
 
 /** 别人的共享笔记（抽屉下半区的一张卡）。 */
 export interface SharedNote {
@@ -59,28 +60,28 @@ async function call<T>(
     );
   }
 
-  const doFetch = (bearer: string): Promise<Response> => {
+  const doCall = async (bearer: string): Promise<HttpResponseLike> => {
     try {
-      return fetch(`${base}/api/v1/notes/${path}`, {
+      return await httpFetch(`${base}/api/v1/notes/${path}`, {
         method: init.method,
         headers: {
           Authorization: `Bearer ${bearer}`,
           ...(init.body ? { "Content-Type": "application/json" } : {}),
         },
         body: init.body ? JSON.stringify(init.body) : undefined,
-        signal: AbortSignal.timeout(20_000),
+        timeoutMs: 20_000,
       });
-    } catch (error) {
+    } catch {
       throw new AiUnavailableError("连不上服务器，稍后再试。");
     }
   };
 
-  let response = await doFetch(token);
+  let response = await doCall(token);
   if (response.status === 401) {
     const fresh = await resolveToken(settings, true);
     if (fresh && fresh !== token) {
       token = fresh;
-      response = await doFetch(token);
+      response = await doCall(token);
     }
   }
 

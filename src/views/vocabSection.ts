@@ -39,7 +39,7 @@ export interface VocabSectionDeps {
   /** 全量词（未筛选未排序）；壳子每次 refilter 现取，数据方可在打开期间换缓存 */
   all: () => VocabEntry[];
   /** 排序比较器（视图状态管排序，壳子只管筛与分页） */
-  compare(a: VocabEntry, b: VocabEntry): number;
+  compare: (a: VocabEntry, b: VocabEntry) => number;
   /** 画一行词条（parent 是 .yl-vb-list 容器） */
   renderRow(parent: HTMLElement, entry: VocabEntry): void;
   /**

@@ -37,7 +37,6 @@
 import {
   EMPTY_EXPLANATION_SECTIONS,
   EXPLANATION_SECTIONS,
-  type ExplanationSections,
   type SentenceAnalysis,
   type StudySentence,
   type Token,
@@ -145,7 +144,7 @@ export function buildAnalysis(opts: {
   /** 门控不放行 → 居中弹「配置模型」小窗（不再就地跳登录）。确认后进个人中心账户页 */
   onNeedSetup(): void;
   /** 提示语里的「充值」被点时打开充值页 —— 跳转只发生在这一下，不自动跳 */
-  onRecharge(): void;
+  onRecharge: () => void;
   /**
    * 这一句已经解析过、用户又点了「重新解析」：弹确认窗，**点了确认才真的发请求**。
    *

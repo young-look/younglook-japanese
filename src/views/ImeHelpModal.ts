@@ -36,7 +36,7 @@ export class ImeHelpModal extends DialogModal {
       variant: "center",
     });
     body.createEl("p", {
-      text: "您需要日语输入法才能打日语。建议安装谷歌日语输入法，装好后用 Win+空格 切换即可。",
+      text: "您需要日语输入法才能打日语。建议安装谷歌日语输入法，装好后用系统的输入法切换快捷键（徽标键＋空格）切换即可。",
       cls: "yl-lead",
     });
     this.fillFoot(foot, {

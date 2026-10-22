@@ -60,7 +60,6 @@ function userAgent(): string {
 const REQUEST_TIMEOUT_MS = 6000;
 
 const SUBJECT_TTL_MS = 180 * 24 * 60 * 60 * 1000; // 收录信息基本不变，缓半年
-const MISS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 查无结果也别天天撞
 const EPISODES_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** 搜索结果里相似度至少要这么高才敢自动填，低了宁可让人手填。 */
@@ -165,7 +164,7 @@ function cacheGet<T>(key: string, ttlMs: number): T | undefined {
     if (!raw) return undefined;
     const entry = JSON.parse(raw) as { at?: number; value?: T };
     if (typeof entry?.at !== "number" || Date.now() - entry.at > ttlMs) return undefined;
-    return entry.value as T;
+    return entry.value;
   } catch {
     return undefined;
   }
@@ -236,7 +235,9 @@ async function bgmRequest<T>(path: string, init?: { method?: string; body?: stri
       body: init?.body,
       throw: false,
     });
-    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), REQUEST_TIMEOUT_MS));
+    const timeout = new Promise<null>((resolve) =>
+      window.setTimeout(() => resolve(null), REQUEST_TIMEOUT_MS),
+    );
     const response = await Promise.race([request, timeout]);
     if (!response || response.status !== 200) return null;
     return (response.json ?? null) as T | null;

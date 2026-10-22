@@ -392,11 +392,12 @@ async function collectRest(deps: InventoryDeps): Promise<{
   cloud: InventoryCloudPart;
 }> {
   const { db, settings } = deps;
-  const [pluginFiles, archiveParts, cloud] = await Promise.all([
+  const [pluginFiles, archiveParts] = await Promise.all([
     collectPluginPart(deps),
     collectArchivePart(db, settings),
-    collectCloudPart(settings),
   ]);
+  // collectCloudPart 是纯同步的（只读设置字段），不必塞进 Promise.all
+  const cloud = collectCloudPart(settings);
 
   // 「偏好与页面记忆」是唯一跟着账号走的设置 —— 归进学习档案（2026-10-10 用户拍板：
   // 它记着上次学到哪一页，是学习记录的一部分）；其余设置与用量只留本机。

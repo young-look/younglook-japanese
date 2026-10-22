@@ -113,13 +113,6 @@ export function migrateVaultFolder(given: Partial<PluginSettings>): string {
   return stored;
 }
 
-/** 老配置里带的游标可能是不认识的结构（别的版本写的），坏了就当没有。 */
-function isPlainRecord(value: unknown): value is Record<string, number> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.values(value as Record<string, unknown>).every(
-    (item) => typeof item === "number" && Number.isFinite(item),
-  );
-}
 
 /**
  * 本机空间表的补齐与自愈。

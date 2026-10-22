@@ -27,7 +27,9 @@ const args = process.argv.slice(2);
 const forceProd = args.includes("production");
 const forceDev = args.includes("dev");
 const watchMode = args.includes("--watch");
-const prod = forceProd ? true : forceDev ? false : branch === "master";
+// ⚠️ `main` 必须算线上：公开仓库（young-look/younglook-japanese）的默认分支叫 main，
+// 只认 master 的话，在公开仓库里 `npm run build` 会**静默产出连本机的 dev 包**。
+const prod = forceProd ? true : forceDev ? false : branch === "master" || branch === "main";
 /** Obsidian 在运行时提供 `obsidian` / `electron` / 内置 CodeMirror 模块，不能打进产物。 */
 const external = [
   "obsidian",

@@ -8,6 +8,7 @@
  */
 
 import { log } from "../../core/logger";
+import { httpFetch, type FetchLike } from "../http";
 
 export interface RefreshedSession {
   access: string;
@@ -28,15 +29,6 @@ export type RefreshOutcome =
   | { kind: "invalid" }
   | { kind: "transient" };
 
-/**
- * fetch 的最小形状。
- *
- * 不直接用 `typeof fetch`：它的重载签名要求第一个参数能收 `URL | Request`，
- * 测试里注入的假实现只处理字符串，会被判成不兼容 —— 而「能注入假 fetch」
- * 恰恰是这段逻辑唯一靠谱的测试方式。
- */
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-
 function normalizeUrl(serverUrl: string): string {
   return serverUrl.trim().replace(/\/+$/u, "");
 }
@@ -48,7 +40,7 @@ function normalizeUrl(serverUrl: string): string {
 export async function refreshSession(
   serverUrl: string,
   refreshToken: string,
-  fetchImpl: FetchLike = fetch as unknown as FetchLike,
+  fetchImpl: FetchLike = httpFetch,
 ): Promise<RefreshOutcome> {
   const base = normalizeUrl(serverUrl);
   const refresh = (refreshToken ?? "").trim();
@@ -62,7 +54,7 @@ export async function refreshSession(
       headers: { "Content-Type": "application/json" },
       // 服务端优先读 httpOnly cookie，没有才看 body —— 插件没有 cookie，走 body
       body: JSON.stringify({ refresh }),
-      signal: AbortSignal.timeout(15_000),
+      timeoutMs: 15_000,
     });
     if (!response.ok) {
       // 只有服务端明确拒绝这个令牌才算登录态失效；5xx 是服务端自己的事
