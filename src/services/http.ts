@@ -9,9 +9,10 @@
  * 用户中断。详见 ai/client.ts 里 readSse 上方的说明。
  *
  * ── 为什么不直接 import obsidian ──────────────────────────────────────────
- * `import type` 会被编译期擦除（不产生 require），运行时再 `await import`
- * 动态取 `requestUrl` —— 静态引入会让 node 侧单测直接崩（node 里没有
- * obsidian 运行时）。与 `services/bangumi.ts` 的先例一致。
+ * `import type` 会被编译期擦除（不产生 require），运行时再取 —— 静态引入会让
+ * node 侧单测直接崩（node 里没有 obsidian 运行时）。取法见 loadRequestUrl：
+ * **require 优先**（Obsidian 注入的解析器认 "obsidian"），动态 import 只是
+ * ESM 兜底。
  *
  * ── 对外形状为什么还是 Response 那一套 ────────────────────────────────────
  * 各 service 本来就通过 `FetchLike` 参数接收注入的实现，单测里注入的是
@@ -19,7 +20,9 @@
  * 切换实现时调用点一行都不用改，单测也一行都不用改。
  */
 
-import type { RequestUrlResponse } from "obsidian";
+import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
+
+type RequestUrlFn = (request: RequestUrlParam) => Promise<RequestUrlResponse>;
 
 /** 与 fetch 的 Response **结构兼容**（真的 Response 也满足它），便于单测注入。 */
 export interface HttpResponseLike {
@@ -53,10 +56,42 @@ export function httpFetch(input: string, init?: YlInit): Promise<HttpResponseLik
   return (injected ?? requestUrlFetch)(input, init);
 }
 
+/**
+ * 拿到 requestUrl 本体。
+ *
+ * 🔥 **必须走 `require`，不能 `await import("obsidian")`**：插件代码被 Obsidian 用
+ * `window.eval("(function anonymous(require,module,exports){…})")` 包起来执行，
+ * 注入的 `require` 才认 "obsidian"（映射表里 `obsidian` 对应官方 API）；
+ * 动态 `import()` 走的是**浏览器模块解析**，裸说明符对着 `app://obsidian.md`
+ * 解析必然失败 —— 旧版 bangumi.ts 就是这么静默挂掉的（fail-soft 没人发现）。
+ * 动态 import 只留给 ESM 环境（单测里永远走不到这里，有注入桩兜着）。
+ */
+let cachedRequestUrl: RequestUrlFn | null | undefined;
+
+/** 取 requestUrl 本体（require 优先，import 兜底）。bangumi.ts 的直连请求也用它。 */
+export async function loadRequestUrl(): Promise<RequestUrlFn> {
+  if (cachedRequestUrl) return cachedRequestUrl;
+  if (typeof require === "function") {
+    try {
+      const mod = require("obsidian") as { requestUrl?: RequestUrlFn };
+      if (typeof mod?.requestUrl === "function") {
+        cachedRequestUrl = mod.requestUrl;
+        return cachedRequestUrl;
+      }
+    } catch {
+      // 拿不到就落到下面的动态 import 再试一次
+    }
+  }
+  const mod = (await import(/* @vite-ignore */ "obsidian")) as { requestUrl?: RequestUrlFn };
+  if (typeof mod?.requestUrl !== "function") {
+    throw new Error("拿不到 Obsidian 的 requestUrl（当前环境不是 Obsidian？）");
+  }
+  cachedRequestUrl = mod.requestUrl;
+  return cachedRequestUrl;
+}
+
 async function requestUrlFetch(input: string, init?: YlInit): Promise<HttpResponseLike> {
-  // @vite-ignore：让单测的转换器别去解析 obsidian 包；esbuild 打包时 obsidian 是
-  // external，这里原样保留，Obsidian 运行时正常。
-  const { requestUrl } = await import(/* @vite-ignore */ "obsidian");
+  const requestUrl = await loadRequestUrl();
   const request = requestUrl({
     url: input,
     method: init?.method ?? (init?.body ? "POST" : "GET"),

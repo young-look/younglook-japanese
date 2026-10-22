@@ -152,7 +152,19 @@ try {
   parent = directGit(["rev-parse", "FETCH_HEAD"], { silent: true }).trim();
   console.log(`父提交 ${parent.slice(0, 8)}（公开库当前 main 顶端）`);
 } catch {
-  console.log("公开库还没有 main（首次发布）→ 造无父的 Initial commit");
+  // 🔥 绝不能把「fetch 失败」当成「仓库为空」：那会造一个无父提交，
+  // 推上去要么被非快进拒绝（2026-10-22 0.1.7 首次尝试就是栽在这），
+  // 要么（万一强推）把公开库历史整个清掉。先拿 ls-remote 判真假。
+  let remoteHasMain = false;
+  try {
+    remoteHasMain = directGit(["ls-remote", "--heads", REMOTE, "main"], { silent: true }).trim() !== "";
+  } catch {
+    fail(`连不上公开库 ${REMOTE}（网络/凭证？）—— 这次什么都没做，重跑即可。`);
+  }
+  if (remoteHasMain) {
+    fail("公开库有 main 但 fetch 没拿下来（多半是网络抖动）—— 重跑即可，绝不发无父提交。");
+  }
+  console.log("公开库确实还没有 main（首次发布）→ 造无父的 Initial commit");
 }
 
 const IDX = "/tmp/yl-release-orphan.index";

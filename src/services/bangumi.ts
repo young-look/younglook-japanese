@@ -8,11 +8,14 @@
  *    本来就是纯本地的，这里只是锦上添花，绝不能拦路。
  *  - **守规矩**：Bangumi 要求自定义 User-Agent（默认浏览器 UA 会被限流），
  *    所以必须走 obsidian 的 requestUrl（Electron 主进程能改 UA，渲染层
- *    fetch 禁改）。于是 obsidian 模块只能**惰性引入** —— 单测只测本模块
- *    的纯函数，不能让 node 去解析 obsidian 包。
+ *    fetch 禁改）。obsidian 模块的取法统一走 http.ts 的 loadRequestUrl
+ *    （require 优先 —— 在插件沙箱里动态 import("obsidian") 解析不到，
+ *    旧写法在这里静默挂过）；单测只测本模块的纯函数，不碰网络。
  *  - **少打扰**：同一个识别词的查询结果进 localStorage（连「查无结果」
  *    也负缓存），缓存未过期绝不二次请求。
  */
+
+import { loadRequestUrl } from "./http";
 
 export interface BgmSubject {
   id: number;
@@ -225,9 +228,9 @@ async function bgmSearch(keyword: string): Promise<BgmSubject | null> {
 
 async function bgmRequest<T>(path: string, init?: { method?: string; body?: string }): Promise<T | null> {
   try {
-    // @vite-ignore 让单测的转换器别去解析 obsidian 包（node 里没有它的运行时）；
-    // esbuild 打包时 obsidian 是 external，这里原样保留，Obsidian 运行时正常。
-    const { requestUrl } = await import(/* @vite-ignore */ "obsidian");
+    // requestUrl 的取法统一走 http.ts 的 loadRequestUrl（require 优先 ——
+    // 动态 import("obsidian") 在插件沙箱里解析不到，旧写法在这里静默挂过）
+    const requestUrl = await loadRequestUrl();
     const request = requestUrl({
       url: `${BGM_BASE}${path}`,
       method: init?.method ?? "GET",
